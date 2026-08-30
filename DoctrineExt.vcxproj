@@ -30,12 +30,18 @@
     <ClCompile Include="Phobos\src\Utilities\Patch.cpp" />
     <!-- Doctrine -->
     <ClCompile Include="src\Doctrine\Config.cpp" />
+    <ClCompile Include="src\Doctrine\Observations.cpp" />
+    <ClCompile Include="src\Doctrine\Engine.cpp" />
+    <ClCompile Include="src\Doctrine\Teams.cpp" />
   </ItemGroup>
 
   <!-- Header files -->
   <ItemGroup>
     <ClInclude Include="src\DoctrineExt.h" />
     <ClInclude Include="src\Doctrine\Config.h" />
+    <ClInclude Include="src\Doctrine\Observations.h" />
+    <ClInclude Include="src\Doctrine\Engine.h" />
+    <ClInclude Include="src\Doctrine\Teams.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">

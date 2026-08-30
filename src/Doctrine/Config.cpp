@@ -1,4 +1,6 @@
 #include "Doctrine/Config.h"
+#include "Doctrine/Engine.h"
+#include "Doctrine/Teams.h"
 
 #include <CCINIClass.h>
 #include <Utilities/Debug.h>
@@ -77,8 +79,9 @@ void DoctrineConfig::EnsureParsed()
 	cfg.RulePeriod = pINI->ReadInteger("Doctrine.General", "RulePeriod", cfg.RulePeriod);
 	cfg.MaxTeamSize = pINI->ReadInteger("Doctrine.General", "MaxTeamSize", cfg.MaxTeamSize);
 	cfg.MaxTeamCost = pINI->ReadInteger("Doctrine.General", "MaxTeamCost", cfg.MaxTeamCost);
-	Debug::Log("[DoctrineExt] [Doctrine.General]: RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d\n",
-		cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost);
+	cfg.DebugTicks = pINI->ReadBool("Doctrine.General", "DebugTicks", cfg.DebugTicks);
+	Debug::Log("[DoctrineExt] [Doctrine.General]: RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d\n",
+		cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");
@@ -162,6 +165,8 @@ void DoctrineConfig::EnsureParsed()
 DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 {
 	DoctrineConfig::Reset();
+	Engine::Reset();
+	Teams::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

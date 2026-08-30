@@ -49,6 +49,7 @@ public:
 	int RulePeriod = 150;    // frames between sense ticks
 	int MaxTeamSize = 12;    // hard clamp on any procedural team
 	int MaxTeamCost = 10000; // hard clamp on any procedural team's cost
+	bool DebugTicks = false; // log every rule evaluation (verbose)
 
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;

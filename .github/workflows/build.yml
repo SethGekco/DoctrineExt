@@ -1,0 +1,58 @@
+name: Build DoctrineExt
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Same-address hooks chain legally; hooks at DIFFERENT addresses whose byte
+      # ranges intersect silently corrupt each other's E9 rel32 into a wild jump.
+      # Both can be instruction-aligned, so only a range-intersection check finds
+      # it. Range-checked against every other injected framework's hooks.
+      - name: Check hook overlaps
+        shell: bash
+        run: |
+          curl -sSfL -o hooks.csv \
+            https://raw.githubusercontent.com/SethGekco/YR-Hook-Encyclopedia/main/registry/hooks.csv
+          python3 tools/check_hook_overlap.py hooks.csv src
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install ATL
+        shell: pwsh
+        run: |
+          $src14 = "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231"
+          $dst14 = "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.29.30133"
+          if (Test-Path "$src14\atlmfc\include") {
+            Copy-Item "$src14\atlmfc\include\*" "$dst14\include\" -Force
+            Copy-Item "$src14\atlmfc\lib\x86\atls.lib" "$dst14\lib\x86\" -Force
+            Write-Host "ATL headers and atls.lib copied"
+          } else {
+            Write-Host "ATL source not found at expected path, trying alternatives..."
+            $vsWhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+            $vsPath = & $vsWhere -latest -property installationPath
+            $atlPath = Get-ChildItem "$vsPath\VC\Tools\MSVC" | Sort-Object Name -Descending | Select-Object -First 1
+            Write-Host "Found MSVC at: $($atlPath.FullName)"
+          }
+
+      - name: Build
+        run: msbuild DoctrineExt.sln /p:Configuration=DevBuild /p:Platform=x86
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DoctrineExt
+          path: |
+            DevBuild\DoctrineExt.dll
+            DevBuild\DoctrineExt.map

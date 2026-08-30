@@ -1,0 +1,8 @@
+[submodule "YRpp"]
+	path = YRpp
+	url = https://github.com/Phobos-developers/YRpp.git
+	branch = phobos-dev
+[submodule "Phobos"]
+	path = Phobos
+	url = https://github.com/Phobos-developers/Phobos.git
+	branch = develop

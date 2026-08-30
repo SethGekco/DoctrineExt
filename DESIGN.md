@@ -65,7 +65,7 @@ that emits this section). Lists are ordered **best first**:
 
 ```ini
 [Doctrine.Arsenal]
-AntiAir=FLAKTRK,SAM,ZEP...        ; tool-graded, best first
+AntiAir=HTK,FLAKT,YTNK...        ; tool-graded, best first
 AntiArmor=TNKD,DRON,...
 AntiInfantry=DESO,...
 AceHunter=SNIPE,BORIS,...         ; single-target killers

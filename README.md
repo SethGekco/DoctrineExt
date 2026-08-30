@@ -18,7 +18,7 @@ MaxTeamSize=12
 MaxTeamCost=10000
 
 [Doctrine.Arsenal]
-AntiAir=FLAKTRK,SAM   ; role -> unit IDs, best first
+AntiAir=HTK,FLAKT   ; role -> unit IDs, best first
 
 [Doctrine.Rules]
 0=CounterAir

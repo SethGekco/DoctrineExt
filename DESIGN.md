@@ -79,7 +79,7 @@ tech state says *what's available*; the threat says *how many*.
 
 - Roles are open-ended strings — a rule can reference any role that has an
   arsenal line. No hardcoded role enum in the DLL.
-- Optional per-entry weight suffix later (`FLAKTRK:9.2`) if plain ordering
+- Optional per-entry weight suffix later (`HTK:9.2`) if plain ordering
   proves too coarse. Start with ordering only.
 
 ---

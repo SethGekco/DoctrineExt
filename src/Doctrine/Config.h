@@ -51,6 +51,7 @@ public:
 	int MaxTeamCost = 10000; // hard clamp on any procedural team's cost
 	bool DebugTicks = false; // log every rule evaluation (verbose)
 	int TeamTTL = 3600;      // frames before a stuck doctrine team is disbanded
+	int TeamsPerHouse = 2;   // concurrent doctrine teams per AI house
 
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;

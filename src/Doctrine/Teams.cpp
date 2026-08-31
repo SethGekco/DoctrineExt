@@ -18,7 +18,9 @@
 
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <set>
+#include <utility>
 
 namespace
 {
@@ -71,43 +73,54 @@ namespace
 				WarnOnce("arsenal " + role.Role + ": " + id + " is not a mobile unit, skipped");
 				continue;
 			}
-			if (pHouse->CanBuild(pType, false, true) == CanBuildResult::Buildable
-				|| CountOwned(pHouse, pType) > 0)
+			auto const canBuild = pHouse->CanBuild(pType, false, true);
+			int const owned = CountOwned(pHouse, pType);
+			// A live test showed Allied AIs picking Soviet units here — log the
+			// evidence for every candidate until that's root-caused.
+			if (DoctrineConfig::Instance.DebugTicks)
+				Debug::Log("[DoctrineExt]   candidate %s for %s#%d: CanBuild=%d owned=%d\n",
+					id.c_str(), pHouse->get_ID(), pHouse->ArrayIndex,
+					static_cast<int>(canBuild), owned);
+			if (canBuild == CanBuildResult::Buildable || owned > 0)
 				return pType;
 		}
 		return nullptr;
 	}
 
-	// The pool: 4 concurrent doctrine teams per game, rewritten per dispatch.
-	constexpr int PoolSize = 4;
-
-	// Frame each slot last dispatched. A slot whose team outlives TeamTTL is
-	// force-disbanded and reused — the first live test wedged all 4 slots on
-	// teams that never finished forming, starving every later dispatch.
-	int g_slotDispatchFrame[PoolSize] = {};
-
+	// The pool is per house: a global 4-slot pool starved ~25 AI houses in
+	// the second live test. Slot IDs encode house and slot ("DCTR22_1TM"),
+	// so each house cycles its own teams.
 	struct PoolSlot
 	{
+		int House;
 		int Index;
 		TeamTypeClass* Team;
 		TaskForceClass* TaskForce;
 		ScriptTypeClass* Script;
 	};
 
+	// (houseIndex, slotIndex) -> frame of last dispatch, for the TTL reaper.
+	std::map<std::pair<int, int>, int> g_slotDispatchFrame;
+
 	// Find-or-create the slot's trio by ID. Objects live in the engine's own
 	// type arrays (created with the game's allocator via GameCreate), so the
 	// engine owns their lifetime — ClearClasses destroys them with everything
 	// else, and we simply re-create next scenario.
-	bool AcquireSlot(PoolSlot& out, int const frame, int const ttl)
+	bool AcquireSlot(PoolSlot& out, HouseClass* const pHouse, int const frame, int const ttl)
 	{
+		int const perHouse = DoctrineConfig::Instance.TeamsPerHouse > 0
+			? DoctrineConfig::Instance.TeamsPerHouse : 1;
+		int const hIdx = pHouse->ArrayIndex;
+
 		char id[0x18];
-		for (int i = 0; i < PoolSize; ++i)
+		for (int i = 0; i < perHouse; ++i)
 		{
-			std::snprintf(id, sizeof(id), "DCTRTM%d", i);
+			std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, i);
 			auto pTeam = TeamTypeClass::Find(id);
 			if (pTeam && pTeam->cntInstances > 0)
 			{
-				if (frame - g_slotDispatchFrame[i] < ttl)
+				auto const it = g_slotDispatchFrame.find({ hIdx, i });
+				if (it != g_slotDispatchFrame.end() && frame - it->second < ttl)
 					continue; // a live team is still using this slot
 				Debug::Log("[DoctrineExt] slot %s exceeded TeamTTL, disbanding.\n", id);
 				pTeam->DestroyAllInstances();
@@ -118,12 +131,12 @@ namespace
 			if (!pTeam)
 				return false;
 
-			std::snprintf(id, sizeof(id), "DCTRTF%d", i);
+			std::snprintf(id, sizeof(id), "DCTR%d_%dTF", hIdx, i);
 			auto pTF = TaskForceClass::Find(id);
 			if (!pTF)
 				pTF = GameCreate<TaskForceClass>(id);
 
-			std::snprintf(id, sizeof(id), "DCTRSC%d", i);
+			std::snprintf(id, sizeof(id), "DCTR%d_%dSC", hIdx, i);
 			auto pScript = ScriptTypeClass::Find(id);
 			if (!pScript)
 				pScript = GameCreate<ScriptTypeClass>(id);
@@ -131,10 +144,10 @@ namespace
 			if (!pTF || !pScript)
 				return false;
 
-			out = { i, pTeam, pTF, pScript };
+			out = { hIdx, i, pTeam, pTF, pScript };
 			return true;
 		}
-		return false; // all slots busy
+		return false; // all of this house's slots busy
 	}
 }
 
@@ -164,6 +177,7 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	if (!pType)
 	{
 		WarnOnce("rule " + rule.Name + ": house " + std::string(pHouse->get_ID())
+			+ "#" + std::to_string(pHouse->ArrayIndex)
 			+ " has no buildable/owned unit in role " + rule.Respond);
 		return false;
 	}
@@ -185,13 +199,14 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 
 	int const frame = Unsorted::CurrentFrame;
 	PoolSlot slot;
-	if (!AcquireSlot(slot, frame, cfg.TeamTTL > 0 ? cfg.TeamTTL : 3600))
+	if (!AcquireSlot(slot, pHouse, frame, cfg.TeamTTL > 0 ? cfg.TeamTTL : 3600))
 	{
-		Debug::Log("[DoctrineExt] dispatch %s for %s#%d skipped: all %d team slots busy.\n",
-			rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex, PoolSize);
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] dispatch %s for %s#%d skipped: house's team slots busy.\n",
+				rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex);
 		return false;
 	}
-	g_slotDispatchFrame[slot.Index] = frame;
+	g_slotDispatchFrame[{ slot.House, slot.Index }] = frame;
 
 	// Rewrite the trio for this dispatch. Only touch what we mean to set;
 	// everything else keeps the game's own constructor defaults.
@@ -264,6 +279,5 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 void Teams::Reset()
 {
 	g_warned.clear();
-	for (auto& f : g_slotDispatchFrame)
-		f = 0;
+	g_slotDispatchFrame.clear();
 }

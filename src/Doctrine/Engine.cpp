@@ -15,6 +15,10 @@ namespace
 {
 	// (houseIndex, ruleIndex) -> frame the rule may fire again.
 	std::map<std::pair<int, int>, int> g_cooldownUntil;
+	// houseIndex -> last frame we ticked. The game re-runs HouseClass::Update
+	// with a frozen frame counter while paused, which turned one tick into a
+	// burst of identical ones.
+	std::map<int, int> g_lastTickFrame;
 	std::set<std::string> g_unknownObsWarned;
 
 	bool Compare(double const value, const std::string& op, double const threshold)
@@ -47,6 +51,11 @@ void Engine::TickHouse(HouseClass* pHouse)
 	if ((frame + pHouse->ArrayIndex * 7) % period != 0)
 		return;
 
+	auto const lastIt = g_lastTickFrame.find(pHouse->ArrayIndex);
+	if (lastIt != g_lastTickFrame.end() && lastIt->second == frame)
+		return;
+	g_lastTickFrame[pHouse->ArrayIndex] = frame;
+
 	for (size_t ri = 0; ri < cfg.Rules.size(); ++ri)
 	{
 		auto const& rule = cfg.Rules[ri];
@@ -68,9 +77,9 @@ void Engine::TickHouse(HouseClass* pHouse)
 		}
 
 		if (cfg.DebugTicks)
-			Debug::Log("[DoctrineExt] tick house=%s rule=%s %s=%.1f (want %s%.1f)\n",
-				pHouse->get_ID(), rule.Name.c_str(), rule.WhenObs.c_str(), value,
-				rule.WhenOp.c_str(), rule.WhenValue);
+			Debug::Log("[DoctrineExt] tick house=%s#%d rule=%s %s=%.1f (want %s%.1f)\n",
+				pHouse->get_ID(), pHouse->ArrayIndex, rule.Name.c_str(),
+				rule.WhenObs.c_str(), value, rule.WhenOp.c_str(), rule.WhenValue);
 
 		if (!Compare(value, rule.WhenOp, rule.WhenValue))
 			continue;
@@ -82,12 +91,19 @@ void Engine::TickHouse(HouseClass* pHouse)
 			int const wait = rule.Cooldown > 0 ? rule.Cooldown : period;
 			g_cooldownUntil[key] = frame + wait;
 		}
+		else
+		{
+			// A failed dispatch (no slot, nothing buildable) retries after
+			// one period instead of spamming every tick.
+			g_cooldownUntil[key] = frame + period;
+		}
 	}
 }
 
 void Engine::Reset()
 {
 	g_cooldownUntil.clear();
+	g_lastTickFrame.clear();
 	g_unknownObsWarned.clear();
 }
 

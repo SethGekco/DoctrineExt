@@ -16,6 +16,9 @@ class TechnoClass;
 //     — kill count of the deadliest living enemy unit (KillTracker);
 //       identifies that unit as the observation's target, so rules can say
 //       Target=ThatUnit.
+//   EnemyAirIncoming
+//     — summed DPS of enemy aircraft airborne within AirAlertRadius cells
+//       of the base RIGHT NOW; targets the nearest raider (for Intercept).
 namespace Observations
 {
 	// Evaluate a named observation for the given house. Returns false if the

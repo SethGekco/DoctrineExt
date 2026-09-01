@@ -160,11 +160,14 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 {
 	auto const& cfg = DoctrineConfig::Instance;
 
-	bool const hunt = rule.Mission == "HuntTarget";
+	// Intercept behaves like HuntTarget (aggressive, target-bound) — the
+	// difference is which observation feeds it: HuntAce chases the enemy's
+	// deadliest unit, Intercept sallies out at the nearest incoming raider.
+	bool const hunt = rule.Mission == "HuntTarget" || rule.Mission == "Intercept";
 	if (!hunt && rule.Mission != "DefendBase")
 	{
 		WarnOnce("rule " + rule.Name + ": mission " + rule.Mission
-			+ " not implemented yet (DefendBase, HuntTarget)");
+			+ " not implemented yet (DefendBase, HuntTarget, Intercept)");
 		return false;
 	}
 	if (hunt && rule.Target == "ThatUnit" && !pTarget)

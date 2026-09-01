@@ -1,7 +1,9 @@
 #include "Doctrine/Observations.h"
 #include "Doctrine/KillTracker.h"
+#include "Doctrine/Config.h"
 
 #include <HouseClass.h>
+#include <TechnoClass.h>
 #include <AircraftTypeClass.h>
 #include <WeaponTypeClass.h>
 #include <BulletTypeClass.h>
@@ -47,6 +49,57 @@ namespace
 		return total;
 	}
 
+	bool IsEnemyOf(HouseClass* const pOwner, HouseClass* const pOther)
+	{
+		return pOther && pOther != pOwner
+			&& !pOther->Defeated && !pOther->IsObserver() && !pOther->IsNeutral()
+			&& !pOwner->IsAlliedWith(pOther);
+	}
+
+	// The "harriers inbound" alarm: summed DPS of enemy aircraft AIRBORNE
+	// within AirAlertRadius cells of our base right now. outTarget = the
+	// nearest one (sync-safe tie-break on the synced UniqueID), so an
+	// Intercept mission can sally out to meet the raid instead of waiting
+	// for it over the base.
+	double EnemyAirIncoming(HouseClass* const pOwner, TechnoClass** const outTarget)
+	{
+		auto const& base = pOwner->GetBaseCenter();
+		if (base.X == 0 && base.Y == 0)
+			return 0.0;
+
+		int const radius = DoctrineConfig::Instance.AirAlertRadius;
+		int const r2 = radius * radius;
+
+		double total = 0.0;
+		TechnoClass* pNearest = nullptr;
+		int nearestD2 = 0;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pTechno = TechnoClass::Array.GetItem(i);
+			if (!pTechno || pTechno->InLimbo || pTechno->Health <= 0) continue;
+			if (pTechno->WhatAmI() != AbstractType::Aircraft) continue;
+			if (!pTechno->IsInAir()) continue;
+			if (!IsEnemyOf(pOwner, pTechno->Owner)) continue;
+
+			CellStruct cell;
+			pTechno->GetMapCoords(&cell);
+			int const dx = cell.X - base.X;
+			int const dy = cell.Y - base.Y;
+			int const d2 = dx * dx + dy * dy;
+			if (d2 > r2) continue;
+
+			total += TypeDPS(pTechno->GetTechnoType());
+			if (!pNearest || d2 < nearestD2
+				|| (d2 == nearestD2 && pTechno->UniqueID < pNearest->UniqueID))
+			{
+				pNearest = pTechno;
+				nearestD2 = d2;
+			}
+		}
+		if (outTarget) *outTarget = pNearest;
+		return total;
+	}
+
 	// Summed DPS of every aircraft owned by every enemy of pOwner.
 	double EnemyAirDPS(HouseClass* const pOwner)
 	{
@@ -84,6 +137,12 @@ bool Observations::Get(HouseClass* pOwner, const std::string& name, double& outV
 		auto const ace = KillTracker::TopEnemyAce(pOwner);
 		outValue = static_cast<double>(ace.Kills);
 		if (outTarget) *outTarget = ace.Unit;
+		return true;
+	}
+
+	if (name == "EnemyAirIncoming")
+	{
+		outValue = EnemyAirIncoming(pOwner, outTarget);
 		return true;
 	}
 

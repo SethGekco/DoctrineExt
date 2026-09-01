@@ -270,6 +270,16 @@ DoctrineExt-side approach is to *steer or veto* through downstream funnels
 planner; consult the encyclopedia for the placement-decision sites before
 committing to a hook map.
 
+**Interception & ambush (started 2026-09-01).** "Detect incoming harriers and
+sally out to meet them": the `EnemyAirIncoming` observation (airborne enemy
+aircraft inside `AirAlertRadius` of the base, nearest one targeted) feeds a
+`Mission=Intercept` team that drives at the raid instead of guarding in
+place. True *ambush* — lurking on the predicted approach lane before the
+raid arrives — needs the §6.3 travel-lane heatmap (per-bearing air-approach
+history → intercept waypoint on the lane); that's the follow-up. Longer term:
+`[Doctrine.Personality]` profiles (per-house multipliers on Scale/thresholds/
+aggression) so different AIs read as different commanders.
+
 **Garrison doctrine.** Two parts: (1) fix the known vanilla bug where the AI
 *attacks* a building it meant to garrison (needs RE of the garrison-decision
 path — separate investigation); (2) a weight-and-grade system scoring every

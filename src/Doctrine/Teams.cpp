@@ -155,17 +155,20 @@ namespace
 	}
 }
 
-bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsValue)
+bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsValue,
+	TechnoClass* pTarget)
 {
 	auto const& cfg = DoctrineConfig::Instance;
 
-	// Phase 1 renders one canned mission.
-	if (rule.Mission != "DefendBase")
+	bool const hunt = rule.Mission == "HuntTarget";
+	if (!hunt && rule.Mission != "DefendBase")
 	{
 		WarnOnce("rule " + rule.Name + ": mission " + rule.Mission
-			+ " not implemented yet, only DefendBase");
+			+ " not implemented yet (DefendBase, HuntTarget)");
 		return false;
 	}
+	if (hunt && rule.Target == "ThatUnit" && !pTarget)
+		return false; // nothing concrete to hunt this tick
 
 	const DoctrineArsenalRole* pRole = nullptr;
 	for (auto const& role : cfg.Arsenal)
@@ -218,8 +221,18 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	slot.TaskForce->Entries[0] = { count, pType };
 	slot.TaskForce->Group = -1;
 
-	slot.Script->ActionsCount = 1;
-	slot.Script->ScriptActions[0] = { 5, 60 }; // Guard Area, then disband
+	if (hunt)
+	{
+		// Set Mission -> Hunt: engage the assigned target, then roam (the
+		// wave tool's own "keep engaging afterward" idiom, action 11 arg 7).
+		slot.Script->ActionsCount = 1;
+		slot.Script->ScriptActions[0] = { 11, 7 };
+	}
+	else
+	{
+		slot.Script->ActionsCount = 1;
+		slot.Script->ScriptActions[0] = { 5, 60 }; // Guard Area, then disband
+	}
 
 	auto const pTT = slot.Team;
 	pTT->TaskForce = slot.TaskForce;
@@ -237,9 +250,9 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	pTT->Recruiter = true;    // under-strength teams keep pulling free units
 	pTT->LooseRecruit = true;
 	pTT->AreTeamMembersRecruitable = false; // no poaching by other teams
-	pTT->IsBaseDefense = true;
+	pTT->IsBaseDefense = !hunt; // slots are rewritten, so set BOTH ways
 	pTT->Full = false;
-	pTT->Aggressive = false;
+	pTT->Aggressive = hunt;
 	pTT->Whiner = false;
 	pTT->Annoyance = false;
 	pTT->GuardSlower = false;
@@ -273,10 +286,16 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 			++got;
 	}
 
-	Debug::Log("[DoctrineExt] DISPATCH %s: house=%s#%d obs=%.1f -> %d x %s (%s), "
+	if (hunt && pTarget)
+		pTeam->AssignMissionTarget(pTarget);
+
+	Debug::Log("[DoctrineExt] DISPATCH %s: house=%s#%d obs=%.1f -> %d x %s (%s%s%s), "
 		"recruited %d now, slot=%s.\n",
 		rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex, obsValue, count,
-		pType->ID, rule.Mission.c_str(), got, pTT->ID);
+		pType->ID, rule.Mission.c_str(),
+		(hunt && pTarget) ? " target=" : "",
+		(hunt && pTarget) ? pTarget->GetTechnoType()->ID : "",
+		got, pTT->ID);
 	return true;
 }
 

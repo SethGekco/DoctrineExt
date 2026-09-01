@@ -255,7 +255,32 @@ builds these at runtime:
   scores for the future Antares placement work.
 - **Phase 4 — anomaly detection.** The statistical layer.
 
-## 10. Standing traps that apply here
+## 10. Future doctrine families (Rex, 2026-09-01)
+
+Two requested extensions, both natural consumers of the sensing layer:
+
+**Construction doctrine — base building takeover.** Vanilla places defenses
+blindly (a NASAM in the back corner). Wanted: placement feasibility driven by
+the same sensing (§6.2 death zones, §6.3 travel lanes → defenses cover real
+approach paths, maximise a defense's strategic overshadow), plus modder
+control of AI build order and direct directives (build X, sell Y). Boundary
+caveat from §8: Antares owns base-node planning (`Hooks.BasePlan.cpp`) — the
+DoctrineExt-side approach is to *steer or veto* through downstream funnels
+(`CanBuildingTypeBePlacedHere` is the placement gate) rather than replace the
+planner; consult the encyclopedia for the placement-decision sites before
+committing to a hook map.
+
+**Garrison doctrine.** Two parts: (1) fix the known vanilla bug where the AI
+*attacks* a building it meant to garrison (needs RE of the garrison-decision
+path — separate investigation); (2) a weight-and-grade system scoring every
+garrisonable building: near own base, overlooking high-traffic lanes (§6.3
+feeds this directly), near tech buildings, near ore deposits, near spawn
+exits (enemy spawns especially) — and *low* for corner buildings near no
+strategic interest. Doctrine teams then garrison the top-scored buildings.
+Score = Σ(weight × factor), weights modder-tunable in a
+`[Doctrine.Garrison]` section.
+
+## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption
 (run the range check), submodule-gitlink `git add -A` deletion, YRpp RX/R0

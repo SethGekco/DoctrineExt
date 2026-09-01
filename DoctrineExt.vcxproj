@@ -33,6 +33,7 @@
     <ClCompile Include="src\Doctrine\Observations.cpp" />
     <ClCompile Include="src\Doctrine\Engine.cpp" />
     <ClCompile Include="src\Doctrine\Teams.cpp" />
+    <ClCompile Include="src\Doctrine\KillTracker.cpp" />
   </ItemGroup>
 
   <!-- Header files -->
@@ -42,6 +43,7 @@
     <ClInclude Include="src\Doctrine\Observations.h" />
     <ClInclude Include="src\Doctrine\Engine.h" />
     <ClInclude Include="src\Doctrine\Teams.h" />
+    <ClInclude Include="src\Doctrine\KillTracker.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">

@@ -4,6 +4,7 @@
 #include "Doctrine/Teams.h"
 
 #include <HouseClass.h>
+#include <TechnoClass.h>
 #include <Fundamentals.h>
 #include <Utilities/Debug.h>
 #include <Utilities/Macro.h>
@@ -68,7 +69,8 @@ void Engine::TickHouse(HouseClass* pHouse)
 			continue;
 
 		double value = 0.0;
-		if (!Observations::Get(pHouse, rule.WhenObs, value))
+		TechnoClass* pTarget = nullptr;
+		if (!Observations::Get(pHouse, rule.WhenObs, value, &pTarget))
 		{
 			if (g_unknownObsWarned.insert(rule.WhenObs).second)
 				Debug::Log("[DoctrineExt] WARNING: rule %s uses unknown observation "
@@ -84,7 +86,7 @@ void Engine::TickHouse(HouseClass* pHouse)
 		if (!Compare(value, rule.WhenOp, rule.WhenValue))
 			continue;
 
-		if (Teams::Dispatch(pHouse, rule, value))
+		if (Teams::Dispatch(pHouse, rule, value, pTarget))
 		{
 			// Cooldown=0 still waits one period, or a satisfied condition
 			// would re-dispatch every tick until the threat clears.

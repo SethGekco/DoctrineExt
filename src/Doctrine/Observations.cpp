@@ -1,4 +1,5 @@
 #include "Doctrine/Observations.h"
+#include "Doctrine/KillTracker.h"
 
 #include <HouseClass.h>
 #include <AircraftTypeClass.h>
@@ -68,7 +69,8 @@ namespace
 	}
 }
 
-bool Observations::Get(HouseClass* pOwner, const std::string& name, double& outValue)
+bool Observations::Get(HouseClass* pOwner, const std::string& name, double& outValue,
+	TechnoClass** outTarget)
 {
 	if (!pOwner) return false;
 
@@ -76,6 +78,14 @@ bool Observations::Get(HouseClass* pOwner, const std::string& name, double& outV
 	if (name == "OwnerZoneThreatArmor")    { outValue = SumZoneThreat(pOwner, ZoneKind::Armor);    return true; }
 	if (name == "OwnerZoneThreatInfantry") { outValue = SumZoneThreat(pOwner, ZoneKind::Infantry); return true; }
 	if (name == "EnemyAirDPS")             { outValue = EnemyAirDPS(pOwner);                       return true; }
+
+	if (name == "EnemyUnitKills")
+	{
+		auto const ace = KillTracker::TopEnemyAce(pOwner);
+		outValue = static_cast<double>(ace.Kills);
+		if (outTarget) *outTarget = ace.Unit;
+		return true;
+	}
 
 	return false;
 }

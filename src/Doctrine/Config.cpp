@@ -1,6 +1,7 @@
 #include "Doctrine/Config.h"
 #include "Doctrine/Engine.h"
 #include "Doctrine/Teams.h"
+#include "Doctrine/KillTracker.h"
 
 #include <CCINIClass.h>
 #include <Utilities/Debug.h>
@@ -170,6 +171,7 @@ DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 	DoctrineConfig::Reset();
 	Engine::Reset();
 	Teams::Reset();
+	KillTracker::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

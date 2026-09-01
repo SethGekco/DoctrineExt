@@ -82,8 +82,9 @@ void DoctrineConfig::EnsureParsed()
 	cfg.DebugTicks = pINI->ReadBool("Doctrine.General", "DebugTicks", cfg.DebugTicks);
 	cfg.TeamTTL = pINI->ReadInteger("Doctrine.General", "TeamTTL", cfg.TeamTTL);
 	cfg.TeamsPerHouse = pINI->ReadInteger("Doctrine.General", "TeamsPerHouse", cfg.TeamsPerHouse);
-	Debug::Log("[DoctrineExt] [Doctrine.General]: RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d\n",
-		cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.TeamTTL, cfg.TeamsPerHouse);
+	cfg.StrictOwnership = pINI->ReadBool("Doctrine.General", "StrictOwnership", cfg.StrictOwnership);
+	Debug::Log("[DoctrineExt] [Doctrine.General]: RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d\n",
+		cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");

@@ -52,6 +52,8 @@ public:
 	bool DebugTicks = false; // log every rule evaluation (verbose)
 	int TeamTTL = 3600;      // frames before a stuck doctrine team is disbanded
 	int TeamsPerHouse = 2;   // concurrent doctrine teams per AI house
+	bool StrictOwnership = true; // re-check Owner= on arsenal picks (CanBuild
+	                             // proved cross-faction-leaky in this stack)
 
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;

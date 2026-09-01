@@ -75,13 +75,17 @@ namespace
 			}
 			auto const canBuild = pHouse->CanBuild(pType, false, true);
 			int const owned = CountOwned(pHouse, pType);
-			// A live test showed Allied AIs picking Soviet units here — log the
-			// evidence for every candidate until that's root-caused.
+			// Live tests showed CanBuild returning Buildable cross-faction in
+			// this modded stack (an Allied AI picked and built Flak Tracks),
+			// so the build path re-checks Owner= itself unless the modder
+			// opts out. Units the house physically owns are always usable.
+			bool const ownerOK = !DoctrineConfig::Instance.StrictOwnership
+				|| pHouse->InOwners(pType);
 			if (DoctrineConfig::Instance.DebugTicks)
-				Debug::Log("[DoctrineExt]   candidate %s for %s#%d: CanBuild=%d owned=%d\n",
+				Debug::Log("[DoctrineExt]   candidate %s for %s#%d: CanBuild=%d inOwners=%d owned=%d\n",
 					id.c_str(), pHouse->get_ID(), pHouse->ArrayIndex,
-					static_cast<int>(canBuild), owned);
-			if (canBuild == CanBuildResult::Buildable || owned > 0)
+					static_cast<int>(canBuild), ownerOK, owned);
+			if ((canBuild == CanBuildResult::Buildable && ownerOK) || owned > 0)
 				return pType;
 		}
 		return nullptr;

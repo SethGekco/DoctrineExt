@@ -55,6 +55,8 @@ public:
 	bool StrictOwnership = true; // re-check Owner= on arsenal picks (CanBuild
 	                             // proved cross-faction-leaky in this stack)
 	int AirAlertRadius = 40;     // cells: EnemyAirIncoming's alarm bubble
+	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
+	                             // not base-defense buildings racking up kills
 
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;

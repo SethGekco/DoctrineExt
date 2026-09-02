@@ -1,4 +1,5 @@
 #include "Doctrine/KillTracker.h"
+#include "Doctrine/Config.h"
 
 #include <TechnoClass.h>
 #include <TechnoTypeClass.h>
@@ -35,10 +36,22 @@ KillTracker::Ace KillTracker::TopEnemyAce(HouseClass* pOwner)
 {
 	Ace best;
 	DWORD bestId = 0;
+	bool const mobileOnly = DoctrineConfig::Instance.AceMobileOnly;
 	for (auto const& [pUnit, stats] : g_kills)
 	{
 		if (!pUnit || IsStale(pUnit, stats)) continue;
 		if (pUnit->InLimbo || pUnit->Health <= 0) continue;
+		// An "ace" is a mobile threat by default — a base defense (Building)
+		// racking up kills should not send the AI charging into a base to
+		// hunt a turret. Its kills are still tracked (useful for the future
+		// death-zone sensor), just not selectable as a hunt target here.
+		if (mobileOnly)
+		{
+			auto const what = pUnit->WhatAmI();
+			if (what != AbstractType::Infantry && what != AbstractType::Unit
+				&& what != AbstractType::Aircraft)
+				continue;
+		}
 		auto const pEnemy = pUnit->Owner;
 		if (!pEnemy || pEnemy == pOwner || pEnemy->Defeated) continue;
 		if (pEnemy->IsNeutral() || pEnemy->IsObserver()) continue;

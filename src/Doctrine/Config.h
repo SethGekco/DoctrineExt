@@ -31,6 +31,8 @@ struct DoctrineRule
 	std::string Target;    // empty or "ThatUnit"
 	double Scale = 1.0;
 	int Cooldown = 0;      // frames; 0 = no cooldown
+	int Priority = 0;      // higher wins slot contention + can preempt a
+	                       // live lower-priority team (urgent > passive guard)
 };
 
 // One [Doctrine.Arsenal] line: role -> unit IDs, best first. Phase 0 keeps

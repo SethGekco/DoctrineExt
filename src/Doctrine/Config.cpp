@@ -142,6 +142,7 @@ void DoctrineConfig::EnsureParsed()
 		rule.Target = buf;
 		rule.Scale = pINI->ReadDouble(section, "Scale", rule.Scale);
 		rule.Cooldown = pINI->ReadInteger(section, "Cooldown", rule.Cooldown);
+		rule.Priority = pINI->ReadInteger(section, "Priority", rule.Priority);
 
 		if (!ParseWhen(rule))
 			Debug::Log("[DoctrineExt] WARNING: rule %s has unparseable When=%s, rule is inert.\n",
@@ -155,10 +156,10 @@ void DoctrineConfig::EnsureParsed()
 			Debug::Log("[DoctrineExt] WARNING: rule %s responds with unknown role %s.\n",
 				section, rule.Respond.c_str());
 
-		Debug::Log("[DoctrineExt] rule %s: When=%s (obs=%s op=%s val=%.2f) Respond=%s Scale=%.2f Mission=%s Target=%s Cooldown=%d\n",
+		Debug::Log("[DoctrineExt] rule %s: When=%s (obs=%s op=%s val=%.2f) Respond=%s Scale=%.2f Mission=%s Target=%s Cooldown=%d Priority=%d\n",
 			rule.Name.c_str(), rule.WhenRaw.c_str(), rule.WhenObs.c_str(), rule.WhenOp.c_str(),
 			rule.WhenValue, rule.Respond.c_str(), rule.Scale, rule.Mission.c_str(),
-			rule.Target.c_str(), rule.Cooldown);
+			rule.Target.c_str(), rule.Cooldown, rule.Priority);
 		cfg.Rules.push_back(std::move(rule));
 	}
 

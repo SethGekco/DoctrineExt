@@ -106,53 +106,95 @@ namespace
 
 	// (houseIndex, slotIndex) -> frame of last dispatch, for the TTL reaper.
 	std::map<std::pair<int, int>, int> g_slotDispatchFrame;
+	// (houseIndex, slotIndex) -> priority of the rule holding the slot, so a
+	// higher-priority rule can preempt a passive one when all slots are busy.
+	std::map<std::pair<int, int>, int> g_slotPriority;
 
-	// Find-or-create the slot's trio by ID. Objects live in the engine's own
-	// type arrays (created with the game's allocator via GameCreate), so the
-	// engine owns their lifetime — ClearClasses destroys them with everything
-	// else, and we simply re-create next scenario.
-	bool AcquireSlot(PoolSlot& out, HouseClass* const pHouse, int const frame, int const ttl)
+	// Build (or reuse) the trio for a chosen slot index. Objects live in the
+	// engine's own type arrays (created with the game's allocator via
+	// GameCreate), so the engine owns their lifetime — ClearClasses destroys
+	// them with everything else, and we simply re-create next scenario.
+	bool FillSlot(PoolSlot& out, int const hIdx, int const i)
+	{
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, i);
+		auto pTeam = TeamTypeClass::Find(id);
+		if (!pTeam)
+			pTeam = GameCreate<TeamTypeClass>(id);
+		if (!pTeam)
+			return false;
+
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTF", hIdx, i);
+		auto pTF = TaskForceClass::Find(id);
+		if (!pTF)
+			pTF = GameCreate<TaskForceClass>(id);
+
+		std::snprintf(id, sizeof(id), "DCTR%d_%dSC", hIdx, i);
+		auto pScript = ScriptTypeClass::Find(id);
+		if (!pScript)
+			pScript = GameCreate<ScriptTypeClass>(id);
+
+		if (!pTF || !pScript)
+			return false;
+
+		out = { hIdx, i, pTeam, pTF, pScript };
+		return true;
+	}
+
+	// Find a slot for a dispatch of the given priority. Prefers a free slot
+	// (empty, or a live team past its TTL); if all slots hold live teams, a
+	// strictly-higher-priority request preempts the lowest-priority holder so
+	// an urgent aggressive rule is never starved by passive guarding.
+	bool AcquireSlot(PoolSlot& out, HouseClass* const pHouse, int const frame,
+		int const ttl, int const priority)
 	{
 		int const perHouse = DoctrineConfig::Instance.TeamsPerHouse > 0
 			? DoctrineConfig::Instance.TeamsPerHouse : 1;
 		int const hIdx = pHouse->ArrayIndex;
 
 		char id[0x18];
+		int victim = -1, victimPriority = 0;
 		for (int i = 0; i < perHouse; ++i)
 		{
 			std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, i);
 			auto pTeam = TeamTypeClass::Find(id);
-			if (pTeam && pTeam->cntInstances > 0)
+			bool const live = pTeam && pTeam->cntInstances > 0;
+			if (live)
 			{
 				auto const it = g_slotDispatchFrame.find({ hIdx, i });
-				if (it != g_slotDispatchFrame.end() && frame - it->second < ttl)
-					continue; // a live team is still using this slot
+				bool const expired = it == g_slotDispatchFrame.end()
+					|| frame - it->second >= ttl;
+				if (!expired)
+				{
+					// Track the weakest live holder as a preemption candidate.
+					int const held = g_slotPriority.count({ hIdx, i })
+						? g_slotPriority[{ hIdx, i }] : 0;
+					if (victim < 0 || held < victimPriority)
+					{
+						victim = i;
+						victimPriority = held;
+					}
+					continue;
+				}
 				Debug::Log("[DoctrineExt] slot %s exceeded TeamTTL, disbanding.\n", id);
 				pTeam->DestroyAllInstances();
 			}
-
-			if (!pTeam)
-				pTeam = GameCreate<TeamTypeClass>(id);
-			if (!pTeam)
-				return false;
-
-			std::snprintf(id, sizeof(id), "DCTR%d_%dTF", hIdx, i);
-			auto pTF = TaskForceClass::Find(id);
-			if (!pTF)
-				pTF = GameCreate<TaskForceClass>(id);
-
-			std::snprintf(id, sizeof(id), "DCTR%d_%dSC", hIdx, i);
-			auto pScript = ScriptTypeClass::Find(id);
-			if (!pScript)
-				pScript = GameCreate<ScriptTypeClass>(id);
-
-			if (!pTF || !pScript)
-				return false;
-
-			out = { hIdx, i, pTeam, pTF, pScript };
-			return true;
+			return FillSlot(out, hIdx, i); // free slot
 		}
-		return false; // all of this house's slots busy
+
+		// No free slot — preempt the weakest holder if we outrank it.
+		if (victim >= 0 && priority > victimPriority)
+		{
+			std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, victim);
+			if (auto const pTeam = TeamTypeClass::Find(id))
+			{
+				Debug::Log("[DoctrineExt] slot %s preempted (prio %d > held %d).\n",
+					id, priority, victimPriority);
+				pTeam->DestroyAllInstances();
+			}
+			return FillSlot(out, hIdx, victim);
+		}
+		return false; // all slots busy with equal-or-higher priority teams
 	}
 }
 
@@ -210,7 +252,7 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 
 	int const frame = Unsorted::CurrentFrame;
 	PoolSlot slot;
-	if (!AcquireSlot(slot, pHouse, frame, cfg.TeamTTL > 0 ? cfg.TeamTTL : 3600))
+	if (!AcquireSlot(slot, pHouse, frame, cfg.TeamTTL > 0 ? cfg.TeamTTL : 3600, rule.Priority))
 	{
 		if (cfg.DebugTicks)
 			Debug::Log("[DoctrineExt] dispatch %s for %s#%d skipped: house's team slots busy.\n",
@@ -218,6 +260,7 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 		return false;
 	}
 	g_slotDispatchFrame[{ slot.House, slot.Index }] = frame;
+	g_slotPriority[{ slot.House, slot.Index }] = rule.Priority;
 
 	// Rewrite the trio for this dispatch. Only touch what we mean to set;
 	// everything else keeps the game's own constructor defaults.
@@ -344,4 +387,5 @@ void Teams::Reset()
 {
 	g_warned.clear();
 	g_slotDispatchFrame.clear();
+	g_slotPriority.clear();
 }

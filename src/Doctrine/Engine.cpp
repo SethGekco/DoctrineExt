@@ -9,8 +9,10 @@
 #include <Utilities/Debug.h>
 #include <Utilities/Macro.h>
 
+#include <algorithm>
 #include <map>
 #include <set>
+#include <vector>
 
 namespace
 {
@@ -57,8 +59,18 @@ void Engine::TickHouse(HouseClass* pHouse)
 		return;
 	g_lastTickFrame[pHouse->ArrayIndex] = frame;
 
-	for (size_t ri = 0; ri < cfg.Rules.size(); ++ri)
+	// Evaluate high-priority rules first so an urgent aggressive rule claims
+	// (and can preempt for) a team slot before passive rules fill them. Stable
+	// order within equal priority keeps behaviour predictable.
+	std::vector<size_t> order(cfg.Rules.size());
+	for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+	std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+		return cfg.Rules[a].Priority > cfg.Rules[b].Priority;
+	});
+
+	for (size_t oi = 0; oi < order.size(); ++oi)
 	{
+		size_t const ri = order[oi];
 		auto const& rule = cfg.Rules[ri];
 		if (rule.WhenObs.empty())
 			continue; // inert (unparseable When=, warned at parse time)

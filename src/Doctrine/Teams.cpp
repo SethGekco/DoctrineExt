@@ -292,13 +292,16 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	if (hunt && pTarget)
 		pTeam->AssignMissionTarget(pTarget);
 
+	// Money at dispatch: an empty team (recruited 0) that never fills is
+	// almost always the house being unable to afford count x cost right now.
+	int const money = static_cast<int>(pHouse->Available_Money());
 	Debug::Log("[DoctrineExt] DISPATCH %s: house=%s#%d obs=%.1f -> %d x %s (%s%s%s), "
-		"recruited %d now, slot=%s.\n",
+		"recruited %d now, $%d vs need $%d, slot=%s.\n",
 		rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex, obsValue, count,
 		pType->ID, rule.Mission.c_str(),
 		(hunt && pTarget) ? " target=" : "",
 		(hunt && pTarget) ? pTarget->GetTechnoType()->ID : "",
-		got, pTT->ID);
+		got, money, count * cost, pTT->ID);
 	return true;
 }
 

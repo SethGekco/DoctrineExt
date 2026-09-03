@@ -77,6 +77,7 @@ void DoctrineConfig::EnsureParsed()
 	char buf[1024] = { 0 };
 
 	// ─── [Doctrine.General] ─────────────────────────────────────────────
+	cfg.SenseInterval = pINI->ReadInteger("Doctrine.General", "SenseInterval", cfg.SenseInterval);
 	cfg.RulePeriod = pINI->ReadInteger("Doctrine.General", "RulePeriod", cfg.RulePeriod);
 	cfg.MaxTeamSize = pINI->ReadInteger("Doctrine.General", "MaxTeamSize", cfg.MaxTeamSize);
 	cfg.MaxTeamCost = pINI->ReadInteger("Doctrine.General", "MaxTeamCost", cfg.MaxTeamCost);
@@ -88,8 +89,8 @@ void DoctrineConfig::EnsureParsed()
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
-	Debug::Log("[DoctrineExt] [Doctrine.General]: RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
-		cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
+	Debug::Log("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
+		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");
@@ -143,6 +144,7 @@ void DoctrineConfig::EnsureParsed()
 		rule.Scale = pINI->ReadDouble(section, "Scale", rule.Scale);
 		rule.Cooldown = pINI->ReadInteger(section, "Cooldown", rule.Cooldown);
 		rule.Priority = pINI->ReadInteger(section, "Priority", rule.Priority);
+		rule.Period = pINI->ReadInteger(section, "Period", rule.Period);
 
 		if (!ParseWhen(rule))
 			Debug::Log("[DoctrineExt] WARNING: rule %s has unparseable When=%s, rule is inert.\n",
@@ -156,10 +158,10 @@ void DoctrineConfig::EnsureParsed()
 			Debug::Log("[DoctrineExt] WARNING: rule %s responds with unknown role %s.\n",
 				section, rule.Respond.c_str());
 
-		Debug::Log("[DoctrineExt] rule %s: When=%s (obs=%s op=%s val=%.2f) Respond=%s Scale=%.2f Mission=%s Target=%s Cooldown=%d Priority=%d\n",
+		Debug::Log("[DoctrineExt] rule %s: When=%s (obs=%s op=%s val=%.2f) Respond=%s Scale=%.2f Mission=%s Target=%s Cooldown=%d Priority=%d Period=%d\n",
 			rule.Name.c_str(), rule.WhenRaw.c_str(), rule.WhenObs.c_str(), rule.WhenOp.c_str(),
 			rule.WhenValue, rule.Respond.c_str(), rule.Scale, rule.Mission.c_str(),
-			rule.Target.c_str(), rule.Cooldown, rule.Priority);
+			rule.Target.c_str(), rule.Cooldown, rule.Priority, rule.Period);
 		cfg.Rules.push_back(std::move(rule));
 	}
 

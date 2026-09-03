@@ -18,6 +18,9 @@ namespace
 {
 	// (houseIndex, ruleIndex) -> frame the rule may fire again.
 	std::map<std::pair<int, int>, int> g_cooldownUntil;
+	// (houseIndex, ruleIndex) -> frame the rule was last evaluated, so each
+	// rule checks at its own Period even though the base tick is fast.
+	std::map<std::pair<int, int>, int> g_lastRuleEval;
 	// houseIndex -> last frame we ticked. The game re-runs HouseClass::Update
 	// with a frozen frame counter while paused, which turned one tick into a
 	// burst of identical ones.
@@ -47,17 +50,29 @@ void Engine::TickHouse(HouseClass* pHouse)
 		|| pHouse->IsObserver() || pHouse->IsNeutral())
 		return;
 
-	// Stagger: each house gets its own evaluation frame inside the period,
+	// Base tick: fast and cheap (steering + due-checks), staggered per house,
 	// deterministically (sync-safe — a pure function of synced state).
-	int const period = cfg.RulePeriod > 0 ? cfg.RulePeriod : 150;
+	int const sense = cfg.SenseInterval > 0 ? cfg.SenseInterval : 15;
+	int const defPeriod = cfg.RulePeriod > 0 ? cfg.RulePeriod : 150;
 	int const frame = Unsorted::CurrentFrame;
-	if ((frame + pHouse->ArrayIndex * 7) % period != 0)
+	if ((frame + pHouse->ArrayIndex * 7) % sense != 0)
 		return;
 
 	auto const lastIt = g_lastTickFrame.find(pHouse->ArrayIndex);
 	if (lastIt != g_lastTickFrame.end() && lastIt->second == frame)
 		return;
 	g_lastTickFrame[pHouse->ArrayIndex] = frame;
+
+	// Steering pass (every base tick, so pursuit tracks the raid closely): keep
+	// live intercept teams pointed at the current nearest raider. Skipped for
+	// houses without an active intercept so the raider scan isn't paid for.
+	if (Teams::HasActiveIntercept(pHouse))
+	{
+		double v = 0.0;
+		TechnoClass* pRaider = nullptr;
+		Observations::Get(pHouse, "EnemyAirIncoming", v, &pRaider);
+		Teams::SteerIntercepts(pHouse, pRaider);
+	}
 
 	// Evaluate high-priority rules first so an urgent aggressive rule claims
 	// (and can preempt for) a team slot before passive rules fill them. Stable
@@ -76,6 +91,16 @@ void Engine::TickHouse(HouseClass* pHouse)
 			continue; // inert (unparseable When=, warned at parse time)
 
 		auto const key = std::make_pair(pHouse->ArrayIndex, static_cast<int>(ri));
+
+		// Per-rule evaluation cadence: a rule only checks every its Period
+		// (default RulePeriod), so fast air polls often while expensive rules
+		// stay slow even though the base tick is frequent.
+		int const rulePeriod = rule.Period > 0 ? rule.Period : defPeriod;
+		auto const evIt = g_lastRuleEval.find(key);
+		if (evIt != g_lastRuleEval.end() && frame - evIt->second < rulePeriod)
+			continue;
+		g_lastRuleEval[key] = frame;
+
 		auto const it = g_cooldownUntil.find(key);
 		if (it != g_cooldownUntil.end() && frame < it->second)
 			continue;
@@ -102,14 +127,14 @@ void Engine::TickHouse(HouseClass* pHouse)
 		{
 			// Cooldown=0 still waits one period, or a satisfied condition
 			// would re-dispatch every tick until the threat clears.
-			int const wait = rule.Cooldown > 0 ? rule.Cooldown : period;
+			int const wait = rule.Cooldown > 0 ? rule.Cooldown : rulePeriod;
 			g_cooldownUntil[key] = frame + wait;
 		}
 		else
 		{
 			// A failed dispatch (no slot, nothing buildable) retries after
 			// one period instead of spamming every tick.
-			g_cooldownUntil[key] = frame + period;
+			g_cooldownUntil[key] = frame + rulePeriod;
 		}
 	}
 }
@@ -117,6 +142,7 @@ void Engine::TickHouse(HouseClass* pHouse)
 void Engine::Reset()
 {
 	g_cooldownUntil.clear();
+	g_lastRuleEval.clear();
 	g_lastTickFrame.clear();
 	g_unknownObsWarned.clear();
 }

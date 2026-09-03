@@ -15,6 +15,7 @@
 #include <AircraftTypeClass.h>
 #include <Memory.h>
 #include <Fundamentals.h>
+#include <GeneralDefinitions.h>
 #include <Utilities/Debug.h>
 
 #include <cmath>
@@ -109,6 +110,9 @@ namespace
 	// (houseIndex, slotIndex) -> priority of the rule holding the slot, so a
 	// higher-priority rule can preempt a passive one when all slots are busy.
 	std::map<std::pair<int, int>, int> g_slotPriority;
+	// Slots currently holding an intercept team, steered toward the live raider
+	// each tick. A slot leaves the set when reused for a non-intercept mission.
+	std::set<std::pair<int, int>> g_interceptSlots;
 
 	// Build (or reuse) the trio for a chosen slot index. Objects live in the
 	// engine's own type arrays (created with the game's allocator via
@@ -261,6 +265,10 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	}
 	g_slotDispatchFrame[{ slot.House, slot.Index }] = frame;
 	g_slotPriority[{ slot.House, slot.Index }] = rule.Priority;
+	if (rule.Mission == "Intercept")
+		g_interceptSlots.insert({ slot.House, slot.Index });
+	else
+		g_interceptSlots.erase({ slot.House, slot.Index });
 
 	// Rewrite the trio for this dispatch. Only touch what we mean to set;
 	// everything else keeps the game's own constructor defaults.
@@ -383,9 +391,54 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	return true;
 }
 
+bool Teams::HasActiveIntercept(HouseClass* pHouse)
+{
+	int const hIdx = pHouse->ArrayIndex;
+	char id[0x18];
+	for (auto const& key : g_interceptSlots)
+	{
+		if (key.first != hIdx) continue;
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, key.second);
+		auto const pTeam = TeamTypeClass::Find(id);
+		if (pTeam && pTeam->cntInstances > 0)
+			return true;
+	}
+	return false;
+}
+
+void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
+{
+	if (!pRaider) return; // no live raider in the bubble; leave teams be
+	int const hIdx = pHouse->ArrayIndex;
+	char id[0x18];
+	for (auto const& key : g_interceptSlots)
+	{
+		if (key.first != hIdx) continue;
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, key.second);
+		auto const pType = TeamTypeClass::Find(id);
+		if (!pType || pType->cntInstances <= 0) continue;
+		auto const pTeam = pType->FindFirstInstance();
+		if (!pTeam) continue;
+
+		// Re-point the team and drive each member to attack the raider. Because
+		// the target is the aircraft OBJECT, a unit told to attack it keeps
+		// pathing toward it as it moves — visible pursuit within the alert
+		// bubble. EnemyAirIncoming only yields raiders inside AirAlertRadius,
+		// so interceptors never chase far past the base.
+		pTeam->AssignMissionTarget(pRaider);
+		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
+		{
+			if (pFoot->InLimbo || pFoot->Health <= 0) continue;
+			pFoot->SetTarget(pRaider);
+			pFoot->QueueMission(Mission::Attack, false);
+		}
+	}
+}
+
 void Teams::Reset()
 {
 	g_warned.clear();
 	g_slotDispatchFrame.clear();
 	g_slotPriority.clear();
+	g_interceptSlots.clear();
 }

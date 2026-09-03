@@ -18,5 +18,14 @@ namespace Teams
 	bool Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsValue,
 		TechnoClass* pTarget);
 
+	// True if the house has at least one live intercept team (so the caller
+	// can skip the raider scan for houses that aren't intercepting).
+	bool HasActiveIntercept(HouseClass* pHouse);
+
+	// Re-point every live intercept team of the house at the current raider,
+	// so interceptors keep moving toward the raid as it moves (the visible
+	// pursuit) instead of parking where they were first dispatched.
+	void SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider);
+
 	void Reset();
 }

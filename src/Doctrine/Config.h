@@ -33,6 +33,8 @@ struct DoctrineRule
 	int Cooldown = 0;      // frames; 0 = no cooldown
 	int Priority = 0;      // higher wins slot contention + can preempt a
 	                       // live lower-priority team (urgent > passive guard)
+	int Period = 0;        // frames between this rule's evaluations; 0 = use
+	                       // the global RulePeriod (e.g. air raids poll faster)
 };
 
 // One [Doctrine.Arsenal] line: role -> unit IDs, best first. Phase 0 keeps
@@ -48,7 +50,10 @@ class DoctrineConfig
 {
 public:
 	// [Doctrine.General]
-	int RulePeriod = 150;    // frames between sense ticks
+	int SenseInterval = 15;  // frames between base ticks (~1s): steering +
+	                         // rule-due checks run this often (cheap work)
+	int RulePeriod = 150;    // default frames between a rule's evaluations
+	                         // (~10s); a rule's Period= overrides this
 	int MaxTeamSize = 12;    // hard clamp on any procedural team
 	int MaxTeamCost = 10000; // hard clamp on any procedural team's cost
 	bool DebugTicks = false; // log every rule evaluation (verbose)

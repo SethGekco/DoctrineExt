@@ -9,6 +9,7 @@
 #include <TaskForceClass.h>
 #include <ScriptTypeClass.h>
 #include <TechnoTypeClass.h>
+#include <FactoryClass.h>
 #include <InfantryTypeClass.h>
 #include <UnitTypeClass.h>
 #include <AircraftTypeClass.h>
@@ -292,16 +293,50 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	if (hunt && pTarget)
 		pTeam->AssignMissionTarget(pTarget);
 
-	// Money at dispatch: an empty team (recruited 0) that never fills is
-	// almost always the house being unable to afford count x cost right now.
+	// Hybrid fielding (Rex, 2026-09-02): the recruit loop above uses units the
+	// house already owns; if that leaves the team short and the house doesn't
+	// build this unit on its own (proven: a $479k Allied AI never made IFVs),
+	// top up by DEMANDING production — capped so doctrine tops up to the team's
+	// need but never floods the AI's economy or fights its own build order.
 	int const money = static_cast<int>(pHouse->Available_Money());
+	int queued = 0;
+	if (cfg.AutoProduce && got < count)
+	{
+		auto const pFactory = pHouse->GetPrimaryFactory(
+			pType->WhatAmI(), pType->Naval, BuildCat::DontCare);
+		if (pFactory)
+		{
+			// Produce enough that owned + already-queued reaches the team's
+			// need (owned already includes the units we just recruited), then
+			// cap per dispatch and by affordability.
+			int const inProduction = pFactory->CountTotal(pType);
+			int const owned = CountOwned(pHouse, pType);
+			int deficit = count - owned - inProduction;
+			int const perDispatchCap = cfg.MaxProducePerDispatch > 0
+				? cfg.MaxProducePerDispatch : 2;
+			if (deficit > perDispatchCap) deficit = perDispatchCap;
+			int const affordable = cost > 0 ? money / cost : deficit;
+			if (deficit > affordable) deficit = affordable;
+			for (int i = 0; i < deficit; ++i)
+			{
+				pFactory->DemandProduction(pType, pHouse, true);
+				++queued;
+			}
+		}
+		else
+		{
+			WarnOnce("rule " + rule.Name + ": house " + std::string(pHouse->get_ID())
+				+ " has no factory to build " + std::string(pType->ID));
+		}
+	}
+
 	Debug::Log("[DoctrineExt] DISPATCH %s: house=%s#%d obs=%.1f -> %d x %s (%s%s%s), "
-		"recruited %d now, $%d vs need $%d, slot=%s.\n",
+		"recruited %d, queued %d, $%d vs need $%d, slot=%s.\n",
 		rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex, obsValue, count,
 		pType->ID, rule.Mission.c_str(),
 		(hunt && pTarget) ? " target=" : "",
 		(hunt && pTarget) ? pTarget->GetTechnoType()->ID : "",
-		got, money, count * cost, pTT->ID);
+		got, queued, money, count * cost, pTT->ID);
 	return true;
 }
 

@@ -57,6 +57,10 @@ public:
 	int AirAlertRadius = 40;     // cells: EnemyAirIncoming's alarm bubble
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
+	bool AutoProduce = true;     // top up under-strength teams by demanding
+	                             // production of the arsenal unit (hybrid)
+	int MaxProducePerDispatch = 2; // cap on units queued per dispatch, so
+	                             // doctrine never floods the AI's economy
 
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;

@@ -62,6 +62,8 @@ public:
 	bool StrictOwnership = true; // re-check Owner= on arsenal picks (CanBuild
 	                             // proved cross-faction-leaky in this stack)
 	int AirAlertRadius = 40;     // cells: EnemyAirIncoming's alarm bubble
+	int InterceptStandoff = 12;  // cells from base toward the raider where
+	                             // interceptors form their screen (path block)
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

@@ -10,6 +10,8 @@
 #include <ScriptTypeClass.h>
 #include <TechnoTypeClass.h>
 #include <FactoryClass.h>
+#include <MapClass.h>
+#include <CellClass.h>
 #include <InfantryTypeClass.h>
 #include <UnitTypeClass.h>
 #include <AircraftTypeClass.h>
@@ -56,6 +58,45 @@ namespace
 		return what == AbstractType::InfantryType
 			|| what == AbstractType::UnitType
 			|| what == AbstractType::AircraftType;
+	}
+
+	// The OBJECT abstract a TechnoType produces (UnitType -> Unit, etc.).
+	AbstractType ProducedObjectType(TechnoTypeClass* const pType)
+	{
+		switch (pType->WhatAmI())
+		{
+		case AbstractType::UnitType:     return AbstractType::Unit;
+		case AbstractType::InfantryType: return AbstractType::Infantry;
+		case AbstractType::AircraftType: return AbstractType::Aircraft;
+		default:                         return AbstractType::None;
+		}
+	}
+
+	// Find a factory of the house that can take a production demand for pType.
+	// GetPrimaryFactory alone is unreliable for the AI (the "primary" flag is a
+	// human-sidebar concept, so a $480k AI with a war factory returned null and
+	// nothing was ever queued). Fall back to a factory already building this
+	// type, then to any of the house's factories currently producing the same
+	// object category (its own army) — DemandProduction(...,queue) appends to
+	// that queue.
+	FactoryClass* FindHouseFactory(HouseClass* const pHouse, TechnoTypeClass* const pType)
+	{
+		if (auto const f = pHouse->GetPrimaryFactory(
+			pType->WhatAmI(), pType->Naval, BuildCat::DontCare))
+			return f;
+		if (auto const f = FactoryClass::FindByOwnerAndProduct(pHouse, pType))
+			return f;
+
+		auto const objAbs = ProducedObjectType(pType);
+		if (objAbs == AbstractType::None)
+			return nullptr;
+		for (auto const pFact : FactoryClass::Array)
+		{
+			if (pFact->Owner != pHouse) continue;
+			if (pFact->Object && pFact->Object->WhatAmI() == objAbs)
+				return pFact;
+		}
+		return nullptr;
 	}
 
 	// Walk the role's list best-first; take the first type the house can
@@ -353,8 +394,7 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	int queued = 0;
 	if (cfg.AutoProduce && got < count)
 	{
-		auto const pFactory = pHouse->GetPrimaryFactory(
-			pType->WhatAmI(), pType->Naval, BuildCat::DontCare);
+		auto const pFactory = FindHouseFactory(pHouse, pType);
 		if (pFactory)
 		{
 			// Produce enough that owned + already-queued reaches the team's
@@ -410,6 +450,30 @@ void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 {
 	if (!pRaider) return; // no live raider in the bubble; leave teams be
 	int const hIdx = pHouse->ArrayIndex;
+
+	// Interference, not pursuit (Rex, 2026-09-03): move to a point ON the line
+	// between the raider and the base — a forward screen in the raid's path —
+	// rather than chasing the aircraft around. The point tracks the raider each
+	// tick, so the team repositions to stay between it and the base.
+	auto const baseCoord = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	auto const raiderCoord = pRaider->GetCoords();
+	double const dx = raiderCoord.X - baseCoord.X;
+	double const dy = raiderCoord.Y - baseCoord.Y;
+	double const dist = std::sqrt(dx * dx + dy * dy);
+
+	int const standoffCells = DoctrineConfig::Instance.InterceptStandoff;
+	double const standoff = standoffCells * 256.0; // leptons per cell
+	double const reach = dist > 1.0 ? (standoff < dist ? standoff : dist) : 0.0;
+
+	CoordStruct screen = baseCoord;
+	if (dist > 1.0)
+	{
+		screen.X = baseCoord.X + static_cast<int>(dx / dist * reach);
+		screen.Y = baseCoord.Y + static_cast<int>(dy / dist * reach);
+	}
+	auto const pCell = MapClass::Instance->TryGetCellAt(screen);
+	if (!pCell) return;
+
 	char id[0x18];
 	for (auto const& key : g_interceptSlots)
 	{
@@ -420,17 +484,14 @@ void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 		auto const pTeam = pType->FindFirstInstance();
 		if (!pTeam) continue;
 
-		// Re-point the team and drive each member to attack the raider. Because
-		// the target is the aircraft OBJECT, a unit told to attack it keeps
-		// pathing toward it as it moves — visible pursuit within the alert
-		// bubble. EnemyAirIncoming only yields raiders inside AirAlertRadius,
-		// so interceptors never chase far past the base.
-		pTeam->AssignMissionTarget(pRaider);
+		// Drive members to the screen point; AA units auto-fire on aircraft in
+		// range as they hold the line, so they interfere without abandoning
+		// the base to chase a faster aircraft across the map.
 		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
 		{
 			if (pFoot->InLimbo || pFoot->Health <= 0) continue;
-			pFoot->SetTarget(pRaider);
-			pFoot->QueueMission(Mission::Attack, false);
+			pFoot->SetDestination(pCell, true);
+			pFoot->QueueMission(Mission::Move, false);
 		}
 	}
 }

@@ -26,6 +26,12 @@ namespace
 
 	std::map<TechnoClass*, KillStats> g_kills;
 
+	// SAFETY: this DEREFERENCES pUnit, so it is only sound on a pointer that is
+	// still alive. It is a reuse guard (did a NEW object land on a recycled
+	// address?), NOT a liveness test -- a freed pointer cannot be validated by
+	// reading through it. Liveness is guaranteed by the AnnounceInvalidPointer
+	// hook at the bottom of this file, which removes entries before the object
+	// goes away. Do not rely on IsStale alone.
 	bool IsStale(TechnoClass* const pUnit, const KillStats& stats)
 	{
 		return stats.Type != pUnit->GetTechnoType() || stats.Owner != pUnit->Owner;
@@ -76,6 +82,37 @@ KillTracker::Ace KillTracker::TopEnemyAce(HouseClass* pOwner)
 void KillTracker::Reset()
 {
 	g_kills.clear();
+}
+
+// Drop tracked pointers the moment the engine says they are going away.
+//
+// WHY THIS IS REQUIRED, not defensive polish: g_kills is keyed by raw
+// TechnoClass*, and RegisterDestruction (below) only fires when a unit is
+// KILLED. Every other removal path -- sold, despawned, limboed, absorbed,
+// scenario teardown -- left a dangling key behind. TopEnemyAce then walked it
+// and called IsStale(), which reaches the object through a VIRTUAL call
+// (`mov eax,[ebx]` / `call [eax+0x84]` = GetTechnoType). On a freed block whose
+// vtable had been zeroed that is `call [0x00000084]`:
+//
+//     C0000005, READ at 0x00000084, in KillTracker::TopEnemyAce+0x53
+//
+// You cannot validate a freed pointer by dereferencing it, so the identity
+// guard could never have caught this on its own.
+//
+// 0x7258D0 is the engine's own "this pointer is now invalid" broadcast:
+// ECX = the object, EDX = whether it was removed. Antares, Ares and Phobos all
+// co-hook this exact address, so chaining here as an observer (return 0) is the
+// established pattern and load-order independent.
+// Stolen bytes: push ecx/ebx/ebp/esi + `mov esi,ecx` = 6, resuming at 0x7258D6.
+DEFINE_HOOK(0x7258D0, DoctrineExt_AnnounceInvalidPointer_KillTracker, 0x6)
+{
+	GET(TechnoClass* const, pInvalid, ECX);
+
+	// Any AbstractClass may be announced; erasing by address is correct and
+	// costs nothing when the pointer was never tracked.
+	g_kills.erase(pInvalid);
+
+	return 0;
 }
 
 // Entry of TechnoClass::RegisterDestruction — ECX = the dying object,

@@ -471,7 +471,7 @@ void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 		screen.X = baseCoord.X + static_cast<int>(dx / dist * reach);
 		screen.Y = baseCoord.Y + static_cast<int>(dy / dist * reach);
 	}
-	auto const pCell = MapClass::Instance->TryGetCellAt(screen);
+	auto const pCell = MapClass::Instance.TryGetCellAt(screen);
 	if (!pCell) return;
 
 	char id[0x18];

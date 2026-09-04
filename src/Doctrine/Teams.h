@@ -32,5 +32,12 @@ namespace Teams
 	// pursuit) instead of parking where they were first dispatched.
 	void SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider);
 
+	// Move the house's DefendBase teams to its learned outer edge (perimeter),
+	// fanned toward the nearest enemy, so they hold the edge not the centre.
+	void SteerDefenders(HouseClass* pHouse);
+
+	// True if the house has at least one live DefendBase team.
+	bool HasActiveDefend(HouseClass* pHouse);
+
 	void Reset();
 }

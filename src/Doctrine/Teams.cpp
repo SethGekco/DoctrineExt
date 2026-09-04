@@ -12,6 +12,7 @@
 #include <FactoryClass.h>
 #include <MapClass.h>
 #include <CellClass.h>
+#include <BuildingClass.h>
 #include <InfantryTypeClass.h>
 #include <UnitTypeClass.h>
 #include <AircraftTypeClass.h>
@@ -25,6 +26,7 @@
 #include <map>
 #include <set>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -154,6 +156,27 @@ namespace
 	// Slots currently holding an intercept team, steered toward the live raider
 	// each tick. A slot leaves the set when reused for a non-intercept mission.
 	std::set<std::pair<int, int>> g_interceptSlots;
+	// Slots holding a DefendBase team, steered to the base's outer edge so they
+	// hold the perimeter instead of camping at the war-factory centre.
+	std::set<std::pair<int, int>> g_defendSlots;
+
+	// Order a live doctrine team's members to move to (and hold at) a cell.
+	void MoveDoctrineTeam(int const hIdx, int const slot, CellClass* const pCell)
+	{
+		if (!pCell) return;
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, slot);
+		auto const pType = TeamTypeClass::Find(id);
+		if (!pType || pType->cntInstances <= 0) return;
+		auto const pTeam = pType->FindFirstInstance();
+		if (!pTeam) return;
+		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
+		{
+			if (pFoot->InLimbo || pFoot->Health <= 0) continue;
+			pFoot->SetDestination(pCell, true);
+			pFoot->QueueMission(Mission::Move, false);
+		}
+	}
 
 	// Build (or reuse) the trio for a chosen slot index. Objects live in the
 	// engine's own type arrays (created with the game's allocator via
@@ -306,10 +329,13 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	}
 	g_slotDispatchFrame[{ slot.House, slot.Index }] = frame;
 	g_slotPriority[{ slot.House, slot.Index }] = rule.Priority;
+	auto const slotKey = std::make_pair(slot.House, slot.Index);
+	g_interceptSlots.erase(slotKey);
+	g_defendSlots.erase(slotKey);
 	if (rule.Mission == "Intercept")
-		g_interceptSlots.insert({ slot.House, slot.Index });
-	else
-		g_interceptSlots.erase({ slot.House, slot.Index });
+		g_interceptSlots.insert(slotKey);
+	else if (rule.Mission == "DefendBase")
+		g_defendSlots.insert(slotKey);
 
 	// Rewrite the trio for this dispatch. Only touch what we mean to set;
 	// everything else keeps the game's own constructor defaults.
@@ -468,6 +494,21 @@ void Teams::LogTeamFill(HouseClass* pHouse)
 	}
 }
 
+bool Teams::HasActiveDefend(HouseClass* pHouse)
+{
+	int const hIdx = pHouse->ArrayIndex;
+	char id[0x18];
+	for (auto const& key : g_defendSlots)
+	{
+		if (key.first != hIdx) continue;
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, key.second);
+		auto const pTeam = TeamTypeClass::Find(id);
+		if (pTeam && pTeam->cntInstances > 0)
+			return true;
+	}
+	return false;
+}
+
 void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 {
 	if (!pRaider) return; // no live raider in the bubble; leave teams be
@@ -496,25 +537,74 @@ void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 	auto const pCell = MapClass::Instance.TryGetCellAt(screen);
 	if (!pCell) return;
 
-	char id[0x18];
+	// Drive members to the screen point; AA units auto-fire on aircraft in
+	// range as they hold the line, so they interfere without abandoning the
+	// base to chase a faster aircraft across the map.
 	for (auto const& key : g_interceptSlots)
-	{
-		if (key.first != hIdx) continue;
-		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, key.second);
-		auto const pType = TeamTypeClass::Find(id);
-		if (!pType || pType->cntInstances <= 0) continue;
-		auto const pTeam = pType->FindFirstInstance();
-		if (!pTeam) continue;
+		if (key.first == hIdx)
+			MoveDoctrineTeam(hIdx, key.second, pCell);
+}
 
-		// Drive members to the screen point; AA units auto-fire on aircraft in
-		// range as they hold the line, so they interfere without abandoning
-		// the base to chase a faster aircraft across the map.
-		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
+void Teams::SteerDefenders(HouseClass* pHouse)
+{
+	if (!DoctrineConfig::Instance.DefendPerimeter) return;
+	int const hIdx = pHouse->ArrayIndex;
+
+	// Collect this house's live defend slots.
+	std::vector<int> slots;
+	for (auto const& key : g_defendSlots)
+		if (key.first == hIdx)
+			slots.push_back(key.second);
+	if (slots.empty()) return;
+
+	auto const center = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	if (center.X == 0 && center.Y == 0) return;
+
+	// Learn the base's outer edge: the farthest owned building from the centre,
+	// plus a margin. This is the perimeter the defenders should hold instead of
+	// camping at the centre.
+	double radius = 0.0;
+	for (auto const pBld : pHouse->Buildings)
+	{
+		if (!pBld) continue;
+		auto const c = pBld->GetCoords();
+		double const d = std::sqrt(double(c.X - center.X) * (c.X - center.X)
+			+ double(c.Y - center.Y) * (c.Y - center.Y));
+		if (d > radius) radius = d;
+	}
+	radius += DoctrineConfig::Instance.BaseEdgeMargin * 256.0;
+	if (radius < 5 * 256.0) radius = 5 * 256.0; // floor for tiny/new bases
+
+	// Face the fan toward the nearest enemy base (the threatened front).
+	double baseAngle = 0.0;
+	double bestD = 1e18;
+	for (int i = 0; i < HouseClass::Array.Count; ++i)
+	{
+		auto const pOther = HouseClass::Array.GetItem(i);
+		if (!pOther || pOther == pHouse || pOther->Defeated) continue;
+		if (pOther->IsObserver() || pOther->IsNeutral()) continue;
+		if (pHouse->IsAlliedWith(pOther)) continue;
+		auto const ec = CellClass::Cell2Coord(pOther->GetBaseCenter());
+		double const d = std::sqrt(double(ec.X - center.X) * (ec.X - center.X)
+			+ double(ec.Y - center.Y) * (ec.Y - center.Y));
+		if (d < bestD)
 		{
-			if (pFoot->InLimbo || pFoot->Health <= 0) continue;
-			pFoot->SetDestination(pCell, true);
-			pFoot->QueueMission(Mission::Move, false);
+			bestD = d;
+			baseAngle = std::atan2(double(ec.Y - center.Y), double(ec.X - center.X));
 		}
+	}
+
+	// Fan the defenders across the enemy-facing arc of the perimeter.
+	int const n = static_cast<int>(slots.size());
+	double const spread = 1.047; // ~60 degrees total arc
+	for (int k = 0; k < n; ++k)
+	{
+		double const off = n > 1 ? (k - (n - 1) / 2.0) * (spread / (n - 1)) : 0.0;
+		double const a = baseAngle + off;
+		CoordStruct pt = center;
+		pt.X = center.X + static_cast<int>(std::cos(a) * radius);
+		pt.Y = center.Y + static_cast<int>(std::sin(a) * radius);
+		MoveDoctrineTeam(hIdx, slots[k], MapClass::Instance.TryGetCellAt(pt));
 	}
 }
 
@@ -524,4 +614,5 @@ void Teams::Reset()
 	g_slotDispatchFrame.clear();
 	g_slotPriority.clear();
 	g_interceptSlots.clear();
+	g_defendSlots.clear();
 }

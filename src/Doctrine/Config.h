@@ -64,6 +64,10 @@ public:
 	int AirAlertRadius = 40;     // cells: EnemyAirIncoming's alarm bubble
 	int InterceptStandoff = 12;  // cells from base toward the raider where
 	                             // interceptors form their screen (path block)
+	bool DefendPerimeter = true; // DefendBase teams hold the base outer edge
+	                             // (learned from buildings) not the centre
+	int BaseEdgeMargin = 2;      // cells beyond the outermost building for the
+	                             // defenders' perimeter ring
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

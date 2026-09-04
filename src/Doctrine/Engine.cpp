@@ -74,6 +74,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 		Teams::SteerIntercepts(pHouse, pRaider);
 	}
 
+	// Hold the base perimeter (learned outer edge), not the centre.
+	if (Teams::HasActiveDefend(pHouse))
+		Teams::SteerDefenders(pHouse);
+
 	// Team-fill trace (~every 5s under DebugTicks): shows produced units
 	// joining live doctrine teams via engine-side recruiting over time.
 	if (cfg.DebugTicks && (frame % (sense * 5)) < sense)

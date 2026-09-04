@@ -74,6 +74,11 @@ void Engine::TickHouse(HouseClass* pHouse)
 		Teams::SteerIntercepts(pHouse, pRaider);
 	}
 
+	// Team-fill trace (~every 5s under DebugTicks): shows produced units
+	// joining live doctrine teams via engine-side recruiting over time.
+	if (cfg.DebugTicks && (frame % (sense * 5)) < sense)
+		Teams::LogTeamFill(pHouse);
+
 	// Evaluate high-priority rules first so an urgent aggressive rule claims
 	// (and can preempt for) a team slot before passive rules fill them. Stable
 	// order within equal priority keeps behaviour predictable.

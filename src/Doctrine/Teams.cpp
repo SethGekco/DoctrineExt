@@ -446,6 +446,28 @@ bool Teams::HasActiveIntercept(HouseClass* pHouse)
 	return false;
 }
 
+void Teams::LogTeamFill(HouseClass* pHouse)
+{
+	int const perHouse = DoctrineConfig::Instance.TeamsPerHouse > 0
+		? DoctrineConfig::Instance.TeamsPerHouse : 1;
+	int const hIdx = pHouse->ArrayIndex;
+	char id[0x18];
+	for (int i = 0; i < perHouse; ++i)
+	{
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, i);
+		auto const pType = TeamTypeClass::Find(id);
+		if (!pType || pType->cntInstances <= 0) continue;
+		auto const pTeam = pType->FindFirstInstance();
+		if (!pTeam) continue;
+		int members = 0;
+		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
+			++members;
+		Debug::Log("[DoctrineExt] team %s: %d members (want %d).\n",
+			id, members, pTeam->Type ? pTeam->Type->TaskForce
+				? pTeam->Type->TaskForce->Entries[0].Amount : 0 : 0);
+	}
+}
+
 void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 {
 	if (!pRaider) return; // no live raider in the bubble; leave teams be

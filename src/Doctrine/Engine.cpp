@@ -26,6 +26,8 @@ namespace
 	// burst of identical ones.
 	std::map<int, int> g_lastTickFrame;
 	std::set<std::string> g_unknownObsWarned;
+	// Houses already logged in the human/AI census (once each per game).
+	std::set<int> g_censusLogged;
 
 	bool Compare(double const value, const std::string& op, double const threshold)
 	{
@@ -46,7 +48,23 @@ void Engine::TickHouse(HouseClass* pHouse)
 	if (cfg.Rules.empty())
 		return;
 
-	if (!pHouse || pHouse->Defeated || pHouse->IsControlledByHuman()
+	if (!pHouse)
+		return;
+
+	// One-time census of every house's human/AI status, so we can prove which
+	// houses DoctrineExt will act on vs skip — the human player must never be
+	// acted upon. IsControlledByHuman()/IsHumanPlayer are the sync-safe checks;
+	// IsCurrentPlayer() is per-machine (logged for context only, never used for
+	// logic — it would desync).
+	if (cfg.DebugTicks && g_censusLogged.insert(pHouse->ArrayIndex).second)
+		Debug::Log("[DoctrineExt] census house=%s#%d human=%d isHumanPlayer=%d "
+			"isCurrentPlayer=%d defeated=%d observer=%d neutral=%d\n",
+			pHouse->get_ID(), pHouse->ArrayIndex,
+			pHouse->IsControlledByHuman(), pHouse->IsHumanPlayer,
+			pHouse->IsCurrentPlayer(), pHouse->Defeated,
+			pHouse->IsObserver(), pHouse->IsNeutral());
+
+	if (pHouse->Defeated || pHouse->IsControlledByHuman()
 		|| pHouse->IsObserver() || pHouse->IsNeutral())
 		return;
 
@@ -154,6 +172,7 @@ void Engine::Reset()
 	g_lastRuleEval.clear();
 	g_lastTickFrame.clear();
 	g_unknownObsWarned.clear();
+	g_censusLogged.clear();
 }
 
 // HouseClass::Update, at the same entry point Ares/Antares hook for their

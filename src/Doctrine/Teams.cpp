@@ -601,6 +601,24 @@ void Teams::SteerDefenders(HouseClass* pHouse)
 		}
 	}
 
+	// Proof-of-orientation trace (throttled, DebugTicks): the bearing the
+	// defenders are actually fanning toward and whether it came from the
+	// learned lane or the geometric fallback.
+	if (DoctrineConfig::Instance.DebugTicks)
+	{
+		static std::map<int, int> lastLog;
+		int const now = Unsorted::CurrentFrame;
+		auto const it = lastLog.find(hIdx);
+		if (it == lastLog.end() || now - it->second >= 150)
+		{
+			lastLog[hIdx] = now;
+			Debug::Log("[DoctrineExt] defenders house=%s#%d fan bearing=%.2frad "
+				"(%s%d)\n", pHouse->get_ID(), hIdx, baseAngle,
+				laneStrength > 0 ? "lane strength=" : "fallback, no lane s=",
+				laneStrength);
+		}
+	}
+
 	// Fan the defenders across the enemy-facing arc of the perimeter.
 	int const n = static_cast<int>(slots.size());
 	double const spread = 1.047; // ~60 degrees total arc

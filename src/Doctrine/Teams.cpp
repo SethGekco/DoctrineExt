@@ -1,5 +1,6 @@
 #include "Doctrine/Teams.h"
 #include "Doctrine/Config.h"
+#include "Doctrine/LaneTracker.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -575,22 +576,28 @@ void Teams::SteerDefenders(HouseClass* pHouse)
 	radius += DoctrineConfig::Instance.BaseEdgeMargin * 256.0;
 	if (radius < 5 * 256.0) radius = 5 * 256.0; // floor for tiny/new bases
 
-	// Face the fan toward the nearest enemy base (the threatened front).
+	// Face the fan toward where the enemy ACTUALLY comes from: the hottest
+	// learned travel lane near the base (§6.3). Until the heatmap has data,
+	// fall back to the geometric bearing to the nearest enemy base.
 	double baseAngle = 0.0;
-	double bestD = 1e18;
-	for (int i = 0; i < HouseClass::Array.Count; ++i)
+	int laneStrength = 0;
+	if (!LaneTracker::HottestLaneBearing(pHouse, baseAngle, laneStrength))
 	{
-		auto const pOther = HouseClass::Array.GetItem(i);
-		if (!pOther || pOther == pHouse || pOther->Defeated) continue;
-		if (pOther->IsObserver() || pOther->IsNeutral()) continue;
-		if (pHouse->IsAlliedWith(pOther)) continue;
-		auto const ec = CellClass::Cell2Coord(pOther->GetBaseCenter());
-		double const d = std::sqrt(double(ec.X - center.X) * (ec.X - center.X)
-			+ double(ec.Y - center.Y) * (ec.Y - center.Y));
-		if (d < bestD)
+		double bestD = 1e18;
+		for (int i = 0; i < HouseClass::Array.Count; ++i)
 		{
-			bestD = d;
-			baseAngle = std::atan2(double(ec.Y - center.Y), double(ec.X - center.X));
+			auto const pOther = HouseClass::Array.GetItem(i);
+			if (!pOther || pOther == pHouse || pOther->Defeated) continue;
+			if (pOther->IsObserver() || pOther->IsNeutral()) continue;
+			if (pHouse->IsAlliedWith(pOther)) continue;
+			auto const ec = CellClass::Cell2Coord(pOther->GetBaseCenter());
+			double const d = std::sqrt(double(ec.X - center.X) * (ec.X - center.X)
+				+ double(ec.Y - center.Y) * (ec.Y - center.Y));
+			if (d < bestD)
+			{
+				bestD = d;
+				baseAngle = std::atan2(double(ec.Y - center.Y), double(ec.X - center.X));
+			}
 		}
 	}
 

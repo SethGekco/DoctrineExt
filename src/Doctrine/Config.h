@@ -68,6 +68,13 @@ public:
 	                             // (learned from buildings) not the centre
 	int BaseEdgeMargin = 2;      // cells beyond the outermost building for the
 	                             // defenders' perimeter ring
+	// Travel-lane heatmap (§6.3)
+	int LaneBucket = 6;          // cells per heatmap bucket
+	int LaneSampleInterval = 60; // frames between movement samples
+	int LaneDecayShift = 4;      // each sample a bucket loses 1/(2^shift)
+	int LaneBumpWeight = 16;     // per-sample increment for a moving enemy unit
+	int LaneRadius = 30;         // cells around the base considered for lanes
+	int LaneMinStrength = 32;    // min bucket value to trust a learned lane
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

@@ -2,6 +2,7 @@
 #include "Doctrine/Engine.h"
 #include "Doctrine/Teams.h"
 #include "Doctrine/KillTracker.h"
+#include "Doctrine/LaneTracker.h"
 
 #include <CCINIClass.h>
 #include <Utilities/Debug.h>
@@ -89,11 +90,17 @@ void DoctrineConfig::EnsureParsed()
 	cfg.InterceptStandoff = pINI->ReadInteger("Doctrine.General", "InterceptStandoff", cfg.InterceptStandoff);
 	cfg.DefendPerimeter = pINI->ReadBool("Doctrine.General", "DefendPerimeter", cfg.DefendPerimeter);
 	cfg.BaseEdgeMargin = pINI->ReadInteger("Doctrine.General", "BaseEdgeMargin", cfg.BaseEdgeMargin);
+	cfg.LaneBucket = pINI->ReadInteger("Doctrine.General", "LaneBucket", cfg.LaneBucket);
+	cfg.LaneSampleInterval = pINI->ReadInteger("Doctrine.General", "LaneSampleInterval", cfg.LaneSampleInterval);
+	cfg.LaneDecayShift = pINI->ReadInteger("Doctrine.General", "LaneDecayShift", cfg.LaneDecayShift);
+	cfg.LaneBumpWeight = pINI->ReadInteger("Doctrine.General", "LaneBumpWeight", cfg.LaneBumpWeight);
+	cfg.LaneRadius = pINI->ReadInteger("Doctrine.General", "LaneRadius", cfg.LaneRadius);
+	cfg.LaneMinStrength = pINI->ReadInteger("Doctrine.General", "LaneMinStrength", cfg.LaneMinStrength);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
-	Debug::Log("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
-		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.InterceptStandoff, cfg.DefendPerimeter, cfg.BaseEdgeMargin, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
+	Debug::Log("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d LaneBucket=%d LaneSampleInterval=%d LaneRadius=%d LaneMinStrength=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
+		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.InterceptStandoff, cfg.DefendPerimeter, cfg.BaseEdgeMargin, cfg.LaneBucket, cfg.LaneSampleInterval, cfg.LaneRadius, cfg.LaneMinStrength, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");
@@ -182,6 +189,7 @@ DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 	Engine::Reset();
 	Teams::Reset();
 	KillTracker::Reset();
+	LaneTracker::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

@@ -19,6 +19,9 @@ class TechnoClass;
 //   EnemyAirIncoming
 //     — summed DPS of enemy aircraft airborne within AirAlertRadius cells
 //       of the base RIGHT NOW; targets the nearest raider (for Intercept).
+//   LaneTraffic
+//     — strength of the hottest learned enemy-movement lane near the base
+//       (travel-lane heatmap, §6.3).
 namespace Observations
 {
 	// Evaluate a named observation for the given house. Returns false if the

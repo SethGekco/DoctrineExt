@@ -2,6 +2,7 @@
 #include "Doctrine/Config.h"
 #include "Doctrine/Observations.h"
 #include "Doctrine/Teams.h"
+#include "Doctrine/LaneTracker.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -81,6 +82,9 @@ void Engine::TickHouse(HouseClass* pHouse)
 		return;
 	g_lastTickFrame[pHouse->ArrayIndex] = frame;
 
+	// Learn the map's movement lanes (self-throttled). Cheap and pointer-safe.
+	LaneTracker::Sample(frame);
+
 	// Steering pass (every base tick, so pursuit tracks the raid closely): keep
 	// live intercept teams pointed at the current nearest raider. Skipped for
 	// houses without an active intercept so the raider scan isn't paid for.
@@ -100,6 +104,16 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// joining live doctrine teams via engine-side recruiting over time.
 	if (cfg.DebugTicks && (frame % (sense * 5)) < sense)
 		Teams::LogTeamFill(pHouse);
+
+	// Lane-heatmap trace (~every 10s under DebugTicks): shows the learned
+	// hottest enemy-approach bearing/strength near this house's base.
+	if (cfg.DebugTicks && (frame % (sense * 10)) < sense)
+	{
+		double a = 0.0; int s = 0;
+		if (LaneTracker::HottestLaneBearing(pHouse, a, s))
+			Debug::Log("[DoctrineExt] lane house=%s#%d hottest bearing=%.2frad strength=%d\n",
+				pHouse->get_ID(), pHouse->ArrayIndex, a, s);
+	}
 
 	// Evaluate high-priority rules first so an urgent aggressive rule claims
 	// (and can preempt for) a team slot before passive rules fill them. Stable

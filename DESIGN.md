@@ -290,6 +290,65 @@ strategic interest. Doctrine teams then garrison the top-scored buildings.
 Score = Σ(weight × factor), weights modder-tunable in a
 `[Doctrine.Garrison]` section.
 
+## 10b. Threat-aware engagement — counters, scanning, safe approach (Rex, 2026-09-06)
+
+The vision: enemy humans camp a killer unit (or a few) in a strong spot and
+farm the AI's swarms. The AI should (1) notice the killer, (2) bring the right
+*counter*, and (3) approach the killer's **weak** side, not charge its
+advantageous point. This is the deepest AI layer and phases on top of the
+sensors already built.
+
+**What it reuses (all verified present):**
+- **Kill tracking** ([[§6.1]]) already ranks enemy units by kills/value — the
+  "problem unit" is the top enemy ace near a contested area. Overlaps with:
+- **Death zones (§6.2, to build)** — a pointer-safe decaying grid (mirror of
+  the §6.3 lane grid) of *where this house loses its own units*. A camping
+  killer shows up as a high-kill enemy unit sitting in a death-zone cluster.
+  That intersection = "priority problem to solve carefully," not "feed more
+  units into."
+- **The engine's rock-paper-scissors data** (ground truth, no guessing):
+  `WarheadTypeClass::Verses[11]` = damage multiplier vs each `Armor` class
+  (None/Flak/Plate/Light/Medium/Heavy/Wood/Steel/Concrete/Special1/2);
+  `ObjectTypeClass::Armor`; `WeaponTypeClass::Range/Projectile(AA,AG)/Warhead/
+  Damage/ROF/Speed`.
+
+**The engagement model:**
+1. **Scan the problem unit.** Read its Armor, its weapon(s) (Range, Warhead,
+   AA/AG, effective DPS), and its position.
+2. **Scan around it.** Count/assess supporting enemy units within a radius and
+   their bearings — this is the unit's "advantageous point" (where its support
+   and its own firepower face). Cross-reference the death-zone grid for the
+   killbox extent.
+3. **Pick the counter from the arsenal.** Score each buildable/owned arsenal
+   unit U against target T by:
+   - offense = effDPS(U vs T) = U.weapon.Damage·burst/(ROF/10)·Verses[T.Armor];
+   - survivability = 1 / effDPS(T vs U) (resist T's warhead vs U's armor);
+   - reach = U.weapon.Range vs T.weapon.Range (out-range = free hits);
+   - plus AA/AG match (can U even hit T's domain?).
+   Best composite = the counter. (Roles in `[Doctrine.Arsenal]` become
+   *candidate pools*; this scorer chooses within/across them per target.)
+4. **Plan a safe approach.** Choose an approach bearing that (a) avoids
+   death-zone buckets, (b) comes from the target's weak side (fewest
+   supporters / away from its facing), and (c) exploits reach (if we out-range,
+   stage at max range on the weak side). Use the lane/threat grids to route
+   around the strong axis rather than through it.
+5. **Commit** the counter force via the existing team/steering plumbing, with
+   the approach waypoint as the steering target (same MoveDoctrineTeam loop).
+
+**Phasing (build + test each):**
+- **6a — Counter selection.** The Verses/armor/range scorer, used first by
+  HuntAce to pick the arsenal unit that best counters the ace. Contained,
+  testable (log the chosen counter + why). *Recommended next build.*
+- **6b — Death zones.** The loss-location grid + `DeathZoneScore` observation;
+  make forces avoid routing through hot death buckets.
+- **6c — Weak-point approach.** Scan-around + approach-bearing planner (avoid
+  death zones + target's strong axis); steer the counter force in on the weak
+  side.
+- **6d — Anomaly detection (§6.4).** Unusual clusters/paths on top of the grids.
+
+Boundary: all sync-safe (integer grids, deterministic scans, no RNG); AI-only
+by default ([[unit-behavior-primitive-separate-dll]] keeps the human untouched).
+
 ## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption

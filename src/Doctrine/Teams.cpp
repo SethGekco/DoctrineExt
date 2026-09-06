@@ -10,6 +10,9 @@
 #include <TaskForceClass.h>
 #include <ScriptTypeClass.h>
 #include <TechnoTypeClass.h>
+#include <WeaponTypeClass.h>
+#include <WarheadTypeClass.h>
+#include <BulletTypeClass.h>
 #include <FactoryClass.h>
 #include <MapClass.h>
 #include <CellClass.h>
@@ -22,6 +25,7 @@
 #include <GeneralDefinitions.h>
 #include <Utilities/Debug.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -135,6 +139,119 @@ namespace
 				return pType;
 		}
 		return nullptr;
+	}
+
+	// Is pType usable by pHouse right now (buildable respecting Owner=, or
+	// already owned)? Same rule PickType applies, factored out for PickCounter.
+	bool IsEligible(HouseClass* const pHouse, TechnoTypeClass* const pType)
+	{
+		if (!pType || !IsTeamable(pType)) return false;
+		bool const ownerOK = !DoctrineConfig::Instance.StrictOwnership
+			|| pHouse->InOwners(pType);
+		return (pHouse->CanBuild(pType, false, true) == CanBuildResult::Buildable
+			&& ownerOK) || CountOwned(pHouse, pType) > 0;
+	}
+
+	// ─── Counter-selection (§10b Phase 6a) ──────────────────────────────────
+	// The engine's rock-paper-scissors: a warhead does Damage x Verses[armor]
+	// to a given armor class. We score each candidate by the 1v1 it would win
+	// against the problem unit, adjusted for reach.
+
+	// Best armor-adjusted DPS attacker's weapons can deal to a target of the
+	// given armor and domain (air vs ground). 0 if it cannot hit that domain.
+	double EffDPSVs(TechnoTypeClass* const pAttacker, int const targetArmor, bool const targetAir)
+	{
+		double best = 0.0;
+		for (int wi = 0; wi < 2; ++wi)
+		{
+			auto const pWS = pAttacker->GetWeapon(wi);
+			if (!pWS || !pWS->WeaponType) continue;
+			auto const w = pWS->WeaponType;
+			if (w->ROF <= 0 || w->Damage <= 1 || !w->Warhead || !w->Projectile) continue;
+			bool const canHit = targetAir ? w->Projectile->AA : w->Projectile->AG;
+			if (!canHit) continue;
+			int const burst = w->Burst > 0 ? w->Burst : 1;
+			double dps = double(w->Damage) * burst / (w->ROF / 10.0);
+			if (targetArmor >= 0 && targetArmor < 11)
+				dps *= w->Warhead->Verses[targetArmor];
+			if (dps > best) best = dps;
+		}
+		return best;
+	}
+
+	// Longest range among the attacker's weapons that can hit the target domain.
+	int BestRangeVs(TechnoTypeClass* const pAttacker, bool const targetAir)
+	{
+		int best = 0;
+		for (int wi = 0; wi < 2; ++wi)
+		{
+			auto const pWS = pAttacker->GetWeapon(wi);
+			if (!pWS || !pWS->WeaponType || !pWS->WeaponType->Projectile) continue;
+			auto const w = pWS->WeaponType;
+			bool const canHit = targetAir ? w->Projectile->AA : w->Projectile->AG;
+			if (canHit && w->Range > best) best = w->Range;
+		}
+		return best;
+	}
+
+	// How good a counter U is to the live target T. Higher = better; 0 = U
+	// cannot meaningfully engage T (can't hit its domain / does no real damage).
+	double CounterScore(TechnoTypeClass* const pU, TechnoClass* const pTarget)
+	{
+		auto const pT = pTarget->GetTechnoType();
+		if (!pT) return 0.0;
+		bool const tAir = pTarget->IsInAir();
+		bool const uAir = pU->WhatAmI() == AbstractType::AircraftType;
+
+		double const offense = EffDPSVs(pU, static_cast<int>(pT->Armor), tAir);
+		if (offense <= 0.0) return 0.0; // can't hurt the target
+
+		double const incoming = EffDPSVs(pT, static_cast<int>(pU->Armor), uAir);
+		int const uStr = pU->Strength > 0 ? pU->Strength : 1;
+		int const tStr = pT->Strength > 0 ? pT->Strength : 1;
+
+		// Duel outcome: (time T survives us) vs (time we survive T). >1 means we
+		// win the trade. incoming 0 (T can't hit us) = a free kill.
+		double const winRatio = incoming <= 0.0
+			? 4.0
+			: (double(uStr) * offense) / (double(tStr) * incoming);
+
+		// Reach: out-ranging T lets us hit for free; being out-ranged hurts.
+		int const uRange = BestRangeVs(pU, tAir);
+		int const tRange = BestRangeVs(pT, uAir);
+		double reach = 1.0;
+		if (tRange > 0)
+			reach = uRange >= tRange
+				? 1.0 + std::min(1.0, double(uRange - tRange) / tRange)
+				: std::max(0.3, double(uRange) / tRange);
+
+		return winRatio * reach;
+	}
+
+	// Pick the arsenal unit that best counters pTarget (highest CounterScore
+	// among eligible candidates). Falls back to null so the caller can use the
+	// plain best-first PickType when no counter is engageable.
+	TechnoTypeClass* PickCounter(HouseClass* const pHouse, const DoctrineArsenalRole& role,
+		TechnoClass* const pTarget)
+	{
+		TechnoTypeClass* best = nullptr;
+		double bestScore = 0.0;
+		for (auto const& id : role.Units)
+		{
+			auto const pType = TechnoTypeClass::Find(id.c_str());
+			if (!pType || !IsEligible(pHouse, pType)) continue;
+			double const score = CounterScore(pType, pTarget);
+			if (DoctrineConfig::Instance.DebugTicks)
+				Debug::Log("[DoctrineExt]   counter %s vs %s: score=%.2f\n",
+					id.c_str(), pTarget->GetTechnoType() ? pTarget->GetTechnoType()->ID : "?",
+					score);
+			if (score > bestScore)
+			{
+				bestScore = score;
+				best = pType;
+			}
+		}
+		return best;
 	}
 
 	// The pool is per house: a global 4-slot pool starved ~25 AI houses in
@@ -295,7 +412,15 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 		return false;
 	}
 
-	auto const pType = PickType(pHouse, *pRole);
+	// Counter-selection (§10b 6a): when the rule is bound to a concrete target
+	// (HuntTarget/Intercept on a specific unit), pick the arsenal unit that
+	// best COUNTERS it by the armor/weapon/range matchup; otherwise (and as a
+	// fallback if nothing can engage it) use the plain best-first pick.
+	TechnoTypeClass* pType = nullptr;
+	if (pTarget)
+		pType = PickCounter(pHouse, *pRole, pTarget);
+	if (!pType)
+		pType = PickType(pHouse, *pRole);
 	if (!pType)
 	{
 		WarnOnce("rule " + rule.Name + ": house " + std::string(pHouse->get_ID())

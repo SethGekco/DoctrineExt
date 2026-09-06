@@ -515,26 +515,34 @@ void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 	if (!pRaider) return; // no live raider in the bubble; leave teams be
 	int const hIdx = pHouse->ArrayIndex;
 
-	// Interference, not pursuit (Rex, 2026-09-03): move to a point ON the line
-	// between the raider and the base — a forward screen in the raid's path —
-	// rather than chasing the aircraft around. The point tracks the raider each
-	// tick, so the team repositions to stay between it and the base.
+	// Ambush on the LEARNED approach (Phase 5 wiring): position the screen along
+	// the hottest travel-lane bearing near the base — where raids actually come
+	// from — so interceptors hold the known air corridor instead of only the
+	// line to the current raider. Until the heatmap has data, fall back to the
+	// bearing toward the current raider (the prior interference behaviour).
 	auto const baseCoord = CellClass::Cell2Coord(pHouse->GetBaseCenter());
 	auto const raiderCoord = pRaider->GetCoords();
 	double const dx = raiderCoord.X - baseCoord.X;
 	double const dy = raiderCoord.Y - baseCoord.Y;
 	double const dist = std::sqrt(dx * dx + dy * dy);
 
+	double bearing = 0.0;
+	int laneStrength = 0;
+	if (!LaneTracker::HottestLaneBearing(pHouse, bearing, laneStrength))
+	{
+		if (dist <= 1.0) return; // raider on top of base, nothing sensible to do
+		bearing = std::atan2(dy, dx); // toward the current raider
+	}
+
 	int const standoffCells = DoctrineConfig::Instance.InterceptStandoff;
 	double const standoff = standoffCells * 256.0; // leptons per cell
-	double const reach = dist > 1.0 ? (standoff < dist ? standoff : dist) : 0.0;
+	// Don't screen past the raider when we're aiming at it; the lane path uses
+	// the full standoff (the raid may not have reached the corridor yet).
+	double const reach = (laneStrength == 0 && standoff > dist) ? dist : standoff;
 
 	CoordStruct screen = baseCoord;
-	if (dist > 1.0)
-	{
-		screen.X = baseCoord.X + static_cast<int>(dx / dist * reach);
-		screen.Y = baseCoord.Y + static_cast<int>(dy / dist * reach);
-	}
+	screen.X = baseCoord.X + static_cast<int>(std::cos(bearing) * reach);
+	screen.Y = baseCoord.Y + static_cast<int>(std::sin(bearing) * reach);
 	auto const pCell = MapClass::Instance.TryGetCellAt(screen);
 	if (!pCell) return;
 

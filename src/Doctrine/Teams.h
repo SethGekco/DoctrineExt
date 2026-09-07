@@ -39,5 +39,12 @@ namespace Teams
 	// True if the house has at least one live DefendBase team.
 	bool HasActiveDefend(HouseClass* pHouse);
 
+	// Steer the house's HuntTarget teams onto pTarget's weak side (away from
+	// its supporting units, avoiding our death zones) — the 6c approach.
+	void SteerHunters(HouseClass* pHouse, TechnoClass* pTarget);
+
+	// True if the house has at least one live HuntTarget team.
+	bool HasActiveHunt(HouseClass* pHouse);
+
 	void Reset();
 }

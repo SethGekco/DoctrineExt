@@ -103,6 +103,9 @@ void DoctrineConfig::EnsureParsed()
 	cfg.DeathZoneBumpWeight = pINI->ReadInteger("Doctrine.General", "DeathZoneBumpWeight", cfg.DeathZoneBumpWeight);
 	cfg.DeathZoneRadius = pINI->ReadInteger("Doctrine.General", "DeathZoneRadius", cfg.DeathZoneRadius);
 	cfg.DeathZoneMinStrength = pINI->ReadInteger("Doctrine.General", "DeathZoneMinStrength", cfg.DeathZoneMinStrength);
+	cfg.MinCounterScore = pINI->ReadDouble("Doctrine.General", "MinCounterScore", cfg.MinCounterScore);
+	cfg.SupportScanRadius = pINI->ReadInteger("Doctrine.General", "SupportScanRadius", cfg.SupportScanRadius);
+	cfg.HuntStandoff = pINI->ReadInteger("Doctrine.General", "HuntStandoff", cfg.HuntStandoff);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

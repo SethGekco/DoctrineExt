@@ -1,6 +1,7 @@
 #include "Doctrine/Teams.h"
 #include "Doctrine/Config.h"
 #include "Doctrine/LaneTracker.h"
+#include "Doctrine/DeathZones.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -232,7 +233,7 @@ namespace
 	// among eligible candidates). Falls back to null so the caller can use the
 	// plain best-first PickType when no counter is engageable.
 	TechnoTypeClass* PickCounter(HouseClass* const pHouse, const DoctrineArsenalRole& role,
-		TechnoClass* const pTarget)
+		TechnoClass* const pTarget, double& outScore)
 	{
 		TechnoTypeClass* best = nullptr;
 		double bestScore = 0.0;
@@ -251,6 +252,7 @@ namespace
 				best = pType;
 			}
 		}
+		outScore = bestScore;
 		return best;
 	}
 
@@ -277,6 +279,8 @@ namespace
 	// Slots holding a DefendBase team, steered to the base's outer edge so they
 	// hold the perimeter instead of camping at the war-factory centre.
 	std::set<std::pair<int, int>> g_defendSlots;
+	// Slots holding a HuntTarget team, steered onto the target's weak side.
+	std::set<std::pair<int, int>> g_huntSlots;
 
 	// Order a live doctrine team's members to move to (and hold at) a cell.
 	void MoveDoctrineTeam(int const hIdx, int const slot, CellClass* const pCell)
@@ -417,8 +421,26 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	// best COUNTERS it by the armor/weapon/range matchup; otherwise (and as a
 	// fallback if nothing can engage it) use the plain best-first pick.
 	TechnoTypeClass* pType = nullptr;
+	double counterScore = 0.0;
 	if (pTarget)
-		pType = PickCounter(pHouse, *pRole, pTarget);
+		pType = PickCounter(pHouse, *pRole, pTarget, counterScore);
+
+	// "Don't feed the farm" (§10b 6c): for an aggressive hunt into the field,
+	// if the best available counter can't win the trade (score below the
+	// threshold), decline rather than send units to their death — wait for a
+	// better tool / more mass. Defensive missions (Intercept/DefendBase) still
+	// respond regardless.
+	if (pType && rule.Mission == "HuntTarget"
+		&& counterScore < DoctrineConfig::Instance.MinCounterScore)
+	{
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] %s declines hunt for %s#%d: best counter %s "
+				"scores %.2f < MinCounterScore %.2f (no viable counter).\n",
+				rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex, pType->ID,
+				counterScore, DoctrineConfig::Instance.MinCounterScore);
+		return false;
+	}
+
 	if (!pType)
 		pType = PickType(pHouse, *pRole);
 	if (!pType)
@@ -458,10 +480,13 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	auto const slotKey = std::make_pair(slot.House, slot.Index);
 	g_interceptSlots.erase(slotKey);
 	g_defendSlots.erase(slotKey);
+	g_huntSlots.erase(slotKey);
 	if (rule.Mission == "Intercept")
 		g_interceptSlots.insert(slotKey);
 	else if (rule.Mission == "DefendBase")
 		g_defendSlots.insert(slotKey);
+	else if (rule.Mission == "HuntTarget")
+		g_huntSlots.insert(slotKey);
 
 	// Rewrite the trio for this dispatch. Only touch what we mean to set;
 	// everything else keeps the game's own constructor defaults.
@@ -766,6 +791,103 @@ void Teams::SteerDefenders(HouseClass* pHouse)
 	}
 }
 
+bool Teams::HasActiveHunt(HouseClass* pHouse)
+{
+	int const hIdx = pHouse->ArrayIndex;
+	char id[0x18];
+	for (auto const& key : g_huntSlots)
+	{
+		if (key.first != hIdx) continue;
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, key.second);
+		auto const pTeam = TeamTypeClass::Find(id);
+		if (pTeam && pTeam->cntInstances > 0)
+			return true;
+	}
+	return false;
+}
+
+void Teams::SteerHunters(HouseClass* pHouse, TechnoClass* pTarget)
+{
+	if (!pTarget) return;
+	int const hIdx = pHouse->ArrayIndex;
+
+	// Weak-point approach (§10b 6c): instead of charging straight at the target
+	// (into its supporters and the killbox), approach from its WEAK side — the
+	// bearing away from where its supporting units mass — and avoid our own
+	// death-zone buckets on the way in.
+	auto const tc = pTarget->GetCoords();
+
+	// Support mass: sum unit-vectors from the target to nearby enemy units. The
+	// weak side is opposite that mass.
+	double sx = 0.0, sy = 0.0;
+	int supporters = 0;
+	int const scanCells = DoctrineConfig::Instance.SupportScanRadius > 0
+		? DoctrineConfig::Instance.SupportScanRadius : 8;
+	double const scanLep = scanCells * 256.0;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+	{
+		auto const pT2 = TechnoClass::Array.GetItem(i);
+		if (!pT2 || pT2 == pTarget || pT2->InLimbo || pT2->Health <= 0) continue;
+		auto const pO = pT2->Owner;
+		if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;
+		auto const c = pT2->GetCoords();
+		double const dxx = c.X - tc.X, dyy = c.Y - tc.Y;
+		double const d = std::sqrt(dxx * dxx + dyy * dyy);
+		if (d < 1.0 || d > scanLep) continue;
+		sx += dxx / d; sy += dyy / d;
+		++supporters;
+	}
+
+	double wdx, wdy; // weak-side unit vector (direction to approach FROM)
+	double const sl = std::sqrt(sx * sx + sy * sy);
+	if (supporters > 0 && sl > 0.01)
+	{
+		wdx = -sx / sl; wdy = -sy / sl; // opposite the support mass
+	}
+	else
+	{
+		// No support read: approach from our own base side (the safe home lane).
+		auto const bc = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+		double bx = bc.X - tc.X, by = bc.Y - tc.Y;
+		double const bl = std::sqrt(bx * bx + by * by);
+		if (bl < 1.0) return;
+		wdx = bx / bl; wdy = by / bl;
+	}
+
+	int const standoffCells = DoctrineConfig::Instance.HuntStandoff > 0
+		? DoctrineConfig::Instance.HuntStandoff : 5;
+	double const standoff = standoffCells * 256.0;
+
+	// Try the weak bearing; if the approach point sits in a hot death-zone
+	// bucket, rotate the approach around the target until it's clear.
+	static const double kRot[] = { 0.0, 0.52, -0.52, 1.05, -1.05, 1.57, -1.57 };
+	CellClass* pCell = nullptr;
+	for (double const rot : kRot)
+	{
+		double const ca = std::cos(rot), sa = std::sin(rot);
+		double const rx = wdx * ca - wdy * sa;
+		double const ry = wdx * sa + wdy * ca;
+		CoordStruct pt = tc;
+		pt.X = tc.X + static_cast<int>(rx * standoff);
+		pt.Y = tc.Y + static_cast<int>(ry * standoff);
+		auto const pC = MapClass::Instance.TryGetCellAt(pt);
+		if (!pC) continue;
+		CellStruct cs; cs.X = static_cast<short>(pt.X / 256); cs.Y = static_cast<short>(pt.Y / 256);
+		if (DeathZones::ScoreAtCell(pHouse, cs.X, cs.Y)
+			< DoctrineConfig::Instance.DeathZoneMinStrength)
+		{
+			pCell = pC; // clear of the killbox
+			break;
+		}
+		if (!pCell) pCell = pC; // remember first valid as fallback
+	}
+	if (!pCell) return;
+
+	for (auto const& key : g_huntSlots)
+		if (key.first == hIdx)
+			MoveDoctrineTeam(hIdx, key.second, pCell);
+}
+
 void Teams::Reset()
 {
 	g_warned.clear();
@@ -773,4 +895,5 @@ void Teams::Reset()
 	g_slotPriority.clear();
 	g_interceptSlots.clear();
 	g_defendSlots.clear();
+	g_huntSlots.clear();
 }

@@ -103,6 +103,15 @@ void Engine::TickHouse(HouseClass* pHouse)
 	if (Teams::HasActiveDefend(pHouse))
 		Teams::SteerDefenders(pHouse);
 
+	// Hunt teams approach the current top ace from its weak side (6c).
+	if (Teams::HasActiveHunt(pHouse))
+	{
+		double v = 0.0;
+		TechnoClass* pAce = nullptr;
+		Observations::Get(pHouse, "EnemyUnitKills", v, &pAce);
+		Teams::SteerHunters(pHouse, pAce);
+	}
+
 	// Team-fill trace (~every 5s under DebugTicks): shows produced units
 	// joining live doctrine teams via engine-side recruiting over time.
 	if (cfg.DebugTicks && (frame % (sense * 5)) < sense)

@@ -349,6 +349,38 @@ sensors already built.
 Boundary: all sync-safe (integer grids, deterministic scans, no RNG); AI-only
 by default ([[unit-behavior-primitive-separate-dll]] keeps the human untouched).
 
+## 10c. Letting aimd/AITriggers use Doctrine's engine (Rex, 2026-09-07)
+
+Question: can aimd.ini scripts use Doctrine's findings — avoid hotzones, seek
+weak points, hunt high-value targets — without breaking Doctrine's independence?
+Yes, and cleanly, via **custom ScriptType actions** rather than a DLL-to-DLL
+dependency.
+
+The plan: DoctrineExt registers a few new script-action numbers (above the
+vanilla/Ares/Phobos range — check the encyclopedia for a free block) by hooking
+the script-action execution point (TeamClass::Update script step; AITriggerTypeExt
+already co-hooks TeamClass::Update 0x6E9443). New verbs, each backed by the
+sensors/scorers already built:
+- **AvoidDeathZone / MoveSafeToWaypoint** — route the team around hot death-zone
+  buckets (§6.2 ScoreAtCell) to a waypoint.
+- **ApproachWeakPoint <target-selector>** — the 6c weak-side planner: position on
+  the target's weak side, avoiding death zones.
+- **HuntHighValue** — retarget the team onto the current top-kill enemy ace
+  (§6.1 TopEnemyAce), optionally counter-checked (6a CounterScore).
+- **HoldLane** — sit on the hottest learned approach lane (§6.3).
+
+Why this preserves independence: aimd merely *references action numbers* Doctrine
+defines — the standard modder extension path (numeric actions in aimd.ini) — and
+DoctrineExt owns the data + the implementation. No hard linkage; if DoctrineExt
+isn't loaded the actions are simply unavailable (author around them). The wave-gen
+tool would learn the new action ids and the script_validator grammar. This is the
+natural bridge between the *scripted playbook* (aimd) and the *reactive doctrine*
+(DoctrineExt): the playbook gains smart verbs. Candidate Phase 7.
+
+Traps: pick action ids clear of vanilla + Ares + Phobos custom actions
+(encyclopedia); the handler MUST advance the script (StepCompleted) or the team
+hangs; stay sync-safe (deterministic reads, as now); AI teams only.
+
 ## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption

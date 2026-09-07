@@ -82,6 +82,13 @@ public:
 	int DeathZoneBumpWeight = 64;    // per-death increment (a strong signal)
 	int DeathZoneRadius = 30;        // cells around the base considered
 	int DeathZoneMinStrength = 48;   // min bucket value to trust a killbox
+	// Weak-point approach (§6c)
+	double MinCounterScore = 1.0;    // below this, decline a HuntTarget (don't
+	                                 // feed the farm) — 1.0 = must at least trade
+	int SupportScanRadius = 8;       // cells around a target scanned for its
+	                                 // supporting units (defines its weak side)
+	int HuntStandoff = 5;            // cells from the target the hunt force
+	                                 // stages on its weak side
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

@@ -381,6 +381,40 @@ Traps: pick action ids clear of vanilla + Ares + Phobos custom actions
 (encyclopedia); the handler MUST advance the script (StepCompleted) or the team
 hangs; stay sync-safe (deterministic reads, as now); AI teams only.
 
+## 10d. Roster grading, idle borrowing, base-flood relief (Rex, 2026-09-07)
+
+Three related asks, all reusing machinery already built (6a scorer, the steering
+loop, the kill/lane/death grids).
+
+**(A) Runtime arsenal auto-grader (recycle the wave-gen tool).** The Python
+wave-gen (`taskforce_generator.py ROLE_METRIC_WEIGHTS`) grades every unit by
+dps-vs-{infantry,vehicle,building}, miner-killer, range, outranges-defenses,
+health, surv-per-cost, cost/time-to-spam, speed. Port that as a *runtime* grader:
+at scenario start scan all buildable TechnoTypes and build role lists keyed by
+what they optimise — kill-vs-each-armor (Verses offense per Armor 0-10),
+survivability-vs-a-weapon (their armor vs common warheads), air-vs-ground domain
+(Projectile AA/AG), range band, speed band. These auto-populate `[Doctrine.Arsenal]`
+(or supplement it), so Doctrine always has the right specialist to rally/build —
+fixes the recurring thin-arsenal → weak-counter problem (6a MGTK/HARV). Reuses
+6a's EffDPSVs/BestRangeVs directly, generalised over all armor classes. *Biggest,
+most foundational — recommended next major phase.*
+
+**(B) Borrow idle units for quick tasks.** Let Doctrine pull IDLE units — teamless,
+and (opt-in) even units staged waiting for an aimd attack wave — for temporary
+reactive jobs (base defence, kill a problem unit), then RETURN them. Truly teamless
+armed units are safe to command now; borrowing from a not-yet-started aimd team
+needs a save/restore of their team membership so the wave still fires later. Build
+teamless-first, wave-borrow as a guarded opt-in.
+
+**(C) Base-flood relief (new awareness).** AIs hoard units that belong to no
+AITriggerType taskforce; the clog slows production/growth. Detect it: count the
+house's teamless ARMED units (no team + a real weapon = not harvesters/engineers/
+MCVs). On a flood alert (count > FloodThreshold) send a fraction (default half) to
+Hunt (roam+engage), hoard the rest; re-alert on a cooldown. Alt option: push
+valuable / taskforce-assigned units to a standby point OUTSIDE the base so they
+don't clog it. Sync-safe (deterministic scan/selection), AI-only, opt-in
+(FloodThreshold=0 off by default). *Most self-contained — building first.*
+
 ## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption

@@ -281,6 +281,37 @@ namespace
 	std::set<std::pair<int, int>> g_defendSlots;
 	// Slots holding a HuntTarget team, steered onto the target's weak side.
 	std::set<std::pair<int, int>> g_huntSlots;
+	// houseIndex -> last frame the base-flood relief fired (its own cooldown).
+	std::map<int, int> g_floodLastFire;
+
+	bool HasOffensiveWeapon(TechnoTypeClass* const pType)
+	{
+		for (int wi = 0; wi < 2; ++wi)
+		{
+			auto const pWS = pType->GetWeapon(wi);
+			if (pWS && pWS->WeaponType && pWS->WeaponType->Damage > 1)
+				return true;
+		}
+		return false;
+	}
+
+	// An "idle armed" unit: owned by the house, on NO team, alive, and carrying
+	// a real weapon — i.e. a combat unit that is hoarded, not a harvester /
+	// engineer / MCV (those have no offensive weapon) and not already tasked.
+	bool IsIdleArmed(TechnoClass* const pTechno, HouseClass* const pHouse)
+	{
+		if (!pTechno || pTechno->Owner != pHouse || pTechno->InLimbo
+			|| pTechno->Health <= 0)
+			return false;
+		auto const what = pTechno->WhatAmI();
+		if (what != AbstractType::Unit && what != AbstractType::Infantry
+			&& what != AbstractType::Aircraft)
+			return false;
+		if (static_cast<FootClass*>(pTechno)->Team)
+			return false; // already on a team (aimd wave, our team, etc.)
+		auto const pType = pTechno->GetTechnoType();
+		return pType && HasOffensiveWeapon(pType);
+	}
 
 	// Order a live doctrine team's members to move to (and hold at) a cell.
 	void MoveDoctrineTeam(int const hIdx, int const slot, CellClass* const pCell)
@@ -888,6 +919,54 @@ void Teams::SteerHunters(HouseClass* pHouse, TechnoClass* pTarget)
 			MoveDoctrineTeam(hIdx, key.second, pCell);
 }
 
+int Teams::CountIdleArmed(HouseClass* pHouse)
+{
+	int n = 0;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		if (IsIdleArmed(TechnoClass::Array.GetItem(i), pHouse))
+			++n;
+	return n;
+}
+
+void Teams::FloodResponse(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (cfg.FloodThreshold <= 0) return; // opt-in (off by default)
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const cd = cfg.FloodCooldown > 0 ? cfg.FloodCooldown : 900;
+	auto const it = g_floodLastFire.find(hIdx);
+	if (it != g_floodLastFire.end() && now - it->second < cd)
+		return;
+
+	std::vector<FootClass*> idle;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+	{
+		auto const pTechno = TechnoClass::Array.GetItem(i);
+		if (IsIdleArmed(pTechno, pHouse))
+			idle.push_back(static_cast<FootClass*>(pTechno));
+	}
+	if (static_cast<int>(idle.size()) <= cfg.FloodThreshold)
+		return; // not flooded
+
+	g_floodLastFire[hIdx] = now;
+
+	// Send a fraction of the hoard to Hunt (roam + engage) to relieve the clog;
+	// keep the rest. Deterministic selection (array order) keeps it sync-safe.
+	double const frac = cfg.FloodHuntFraction > 0.0 ? cfg.FloodHuntFraction : 0.5;
+	int send = static_cast<int>(idle.size() * frac);
+	if (send < 1) send = 1;
+	int sent = 0;
+	for (int k = 0; k < send && k < static_cast<int>(idle.size()); ++k)
+	{
+		idle[k]->ForceMission(Mission::Hunt);
+		++sent;
+	}
+	Debug::Log("[DoctrineExt] base flood: house=%s#%d idle=%u > %d, sent %d to Hunt.\n",
+		pHouse->get_ID(), hIdx, idle.size(), cfg.FloodThreshold, sent);
+}
+
 void Teams::Reset()
 {
 	g_warned.clear();
@@ -896,4 +975,5 @@ void Teams::Reset()
 	g_interceptSlots.clear();
 	g_defendSlots.clear();
 	g_huntSlots.clear();
+	g_floodLastFire.clear();
 }

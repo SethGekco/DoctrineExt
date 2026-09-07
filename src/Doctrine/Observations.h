@@ -25,6 +25,8 @@ class TechnoClass;
 //   DeathZoneScore
 //     — strength of the hottest killbox (where this house keeps losing units)
 //       near the base (death-zone heatmap, §6.2).
+//   IdleUnitCount
+//     — how many armed combat units the house is hoarding on no team (§10d).
 namespace Observations
 {
 	// Evaluate a named observation for the given house. Returns false if the

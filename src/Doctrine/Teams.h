@@ -46,5 +46,13 @@ namespace Teams
 	// True if the house has at least one live HuntTarget team.
 	bool HasActiveHunt(HouseClass* pHouse);
 
+	// Count the house's IDLE ARMED units — combat units on no team (hoarded).
+	int CountIdleArmed(HouseClass* pHouse);
+
+	// Base-flood relief (§10d C): when the house hoards more than FloodThreshold
+	// idle armed units, send a fraction to Hunt so they stop clogging the base.
+	// Self-throttled (FloodCooldown); opt-in (FloodThreshold=0 disables).
+	void FloodResponse(HouseClass* pHouse);
+
 	void Reset();
 }

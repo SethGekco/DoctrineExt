@@ -112,6 +112,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 		Teams::SteerHunters(pHouse, pAce);
 	}
 
+	// Base-flood relief (§10d C): unclog a hoarding base by sending idle armed
+	// units to Hunt. Self-throttled + opt-in (FloodThreshold=0 disables).
+	Teams::FloodResponse(pHouse);
+
 	// Team-fill trace (~every 5s under DebugTicks): shows produced units
 	// joining live doctrine teams via engine-side recruiting over time.
 	if (cfg.DebugTicks && (frame % (sense * 5)) < sense)

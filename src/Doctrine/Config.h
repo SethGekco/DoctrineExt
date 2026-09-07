@@ -89,6 +89,11 @@ public:
 	                                 // supporting units (defines its weak side)
 	int HuntStandoff = 5;            // cells from the target the hunt force
 	                                 // stages on its weak side
+	// Base-flood relief (§10d C)
+	int FloodThreshold = 0;          // idle armed units before relief fires
+	                                 // (0 = feature off)
+	double FloodHuntFraction = 0.5;  // fraction of the hoard sent to Hunt
+	int FloodCooldown = 900;         // frames between flood alerts per house
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

@@ -22,6 +22,9 @@ class TechnoClass;
 //   LaneTraffic
 //     — strength of the hottest learned enemy-movement lane near the base
 //       (travel-lane heatmap, §6.3).
+//   DeathZoneScore
+//     — strength of the hottest killbox (where this house keeps losing units)
+//       near the base (death-zone heatmap, §6.2).
 namespace Observations
 {
 	// Evaluate a named observation for the given house. Returns false if the

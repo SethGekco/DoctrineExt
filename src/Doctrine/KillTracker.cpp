@@ -1,5 +1,6 @@
 #include "Doctrine/KillTracker.h"
 #include "Doctrine/Config.h"
+#include "Doctrine/DeathZones.h"
 
 #include <TechnoClass.h>
 #include <TechnoTypeClass.h>
@@ -127,6 +128,10 @@ DEFINE_HOOK(0x702D40, DoctrineExt_TechnoClass_RegisterDestruction_KillTracker, 0
 
 	// The victim's own scoreboard dies with it.
 	g_kills.erase(pVictim);
+
+	// Feed the death-zone heatmap (§6.2): where does this house keep losing
+	// units? Same event, second consumer — no extra hook.
+	DeathZones::Record(pVictim);
 
 	if (pKiller && pKiller != pVictim && pKiller->Owner && pVictim->Owner
 		&& !pVictim->Owner->IsNeutral()

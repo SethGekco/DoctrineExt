@@ -75,6 +75,13 @@ public:
 	int LaneBumpWeight = 16;     // per-sample increment for a moving enemy unit
 	int LaneRadius = 30;         // cells around the base considered for lanes
 	int LaneMinStrength = 32;    // min bucket value to trust a learned lane
+	// Death-zone heatmap (§6.2)
+	int DeathZoneBucket = 6;         // cells per bucket
+	int DeathZoneDecayInterval = 150;// frames between decays (deaths are rarer)
+	int DeathZoneDecayShift = 3;     // each decay a bucket loses 1/(2^shift)
+	int DeathZoneBumpWeight = 64;    // per-death increment (a strong signal)
+	int DeathZoneRadius = 30;        // cells around the base considered
+	int DeathZoneMinStrength = 48;   // min bucket value to trust a killbox
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

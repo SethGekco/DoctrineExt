@@ -1,6 +1,7 @@
 #include "Doctrine/Observations.h"
 #include "Doctrine/KillTracker.h"
 #include "Doctrine/LaneTracker.h"
+#include "Doctrine/DeathZones.h"
 #include "Doctrine/Config.h"
 
 #include <HouseClass.h>
@@ -150,6 +151,12 @@ bool Observations::Get(HouseClass* pOwner, const std::string& name, double& outV
 	if (name == "LaneTraffic")
 	{
 		outValue = static_cast<double>(LaneTracker::MaxLaneNear(pOwner));
+		return true;
+	}
+
+	if (name == "DeathZoneScore")
+	{
+		outValue = static_cast<double>(DeathZones::MaxNear(pOwner));
 		return true;
 	}
 

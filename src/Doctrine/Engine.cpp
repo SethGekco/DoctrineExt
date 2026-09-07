@@ -3,6 +3,7 @@
 #include "Doctrine/Observations.h"
 #include "Doctrine/Teams.h"
 #include "Doctrine/LaneTracker.h"
+#include "Doctrine/DeathZones.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -84,6 +85,8 @@ void Engine::TickHouse(HouseClass* pHouse)
 
 	// Learn the map's movement lanes (self-throttled). Cheap and pointer-safe.
 	LaneTracker::Sample(frame);
+	// Fade the death-zone heatmap (self-throttled; deaths feed it via the hook).
+	DeathZones::Decay(frame);
 
 	// Steering pass (every base tick, so pursuit tracks the raid closely): keep
 	// live intercept teams pointed at the current nearest raider. Skipped for
@@ -113,6 +116,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 		if (LaneTracker::HottestLaneBearing(pHouse, a, s))
 			Debug::Log("[DoctrineExt] lane house=%s#%d hottest bearing=%.2frad strength=%d\n",
 				pHouse->get_ID(), pHouse->ArrayIndex, a, s);
+		double da = 0.0; int ds = 0;
+		if (DeathZones::HottestBearing(pHouse, da, ds))
+			Debug::Log("[DoctrineExt] deathzone house=%s#%d hottest bearing=%.2frad strength=%d\n",
+				pHouse->get_ID(), pHouse->ArrayIndex, da, ds);
 	}
 
 	// Evaluate high-priority rules first so an urgent aggressive rule claims

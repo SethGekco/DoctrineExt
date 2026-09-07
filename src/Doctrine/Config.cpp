@@ -3,6 +3,7 @@
 #include "Doctrine/Teams.h"
 #include "Doctrine/KillTracker.h"
 #include "Doctrine/LaneTracker.h"
+#include "Doctrine/DeathZones.h"
 
 #include <CCINIClass.h>
 #include <Utilities/Debug.h>
@@ -96,6 +97,12 @@ void DoctrineConfig::EnsureParsed()
 	cfg.LaneBumpWeight = pINI->ReadInteger("Doctrine.General", "LaneBumpWeight", cfg.LaneBumpWeight);
 	cfg.LaneRadius = pINI->ReadInteger("Doctrine.General", "LaneRadius", cfg.LaneRadius);
 	cfg.LaneMinStrength = pINI->ReadInteger("Doctrine.General", "LaneMinStrength", cfg.LaneMinStrength);
+	cfg.DeathZoneBucket = pINI->ReadInteger("Doctrine.General", "DeathZoneBucket", cfg.DeathZoneBucket);
+	cfg.DeathZoneDecayInterval = pINI->ReadInteger("Doctrine.General", "DeathZoneDecayInterval", cfg.DeathZoneDecayInterval);
+	cfg.DeathZoneDecayShift = pINI->ReadInteger("Doctrine.General", "DeathZoneDecayShift", cfg.DeathZoneDecayShift);
+	cfg.DeathZoneBumpWeight = pINI->ReadInteger("Doctrine.General", "DeathZoneBumpWeight", cfg.DeathZoneBumpWeight);
+	cfg.DeathZoneRadius = pINI->ReadInteger("Doctrine.General", "DeathZoneRadius", cfg.DeathZoneRadius);
+	cfg.DeathZoneMinStrength = pINI->ReadInteger("Doctrine.General", "DeathZoneMinStrength", cfg.DeathZoneMinStrength);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
@@ -190,6 +197,7 @@ DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 	Teams::Reset();
 	KillTracker::Reset();
 	LaneTracker::Reset();
+	DeathZones::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

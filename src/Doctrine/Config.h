@@ -94,6 +94,8 @@ public:
 	                                 // (0 = feature off)
 	double FloodHuntFraction = 0.5;  // fraction of the hoard sent to Hunt
 	int FloodCooldown = 900;         // frames between flood alerts per house
+	std::vector<std::string> FloodExclude; // unit IDs never sent by flood relief
+	std::vector<std::string> FloodInclude; // unit IDs always eligible (override)
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

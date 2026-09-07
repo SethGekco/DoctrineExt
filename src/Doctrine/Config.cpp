@@ -109,6 +109,10 @@ void DoctrineConfig::EnsureParsed()
 	cfg.FloodThreshold = pINI->ReadInteger("Doctrine.General", "FloodThreshold", cfg.FloodThreshold);
 	cfg.FloodHuntFraction = pINI->ReadDouble("Doctrine.General", "FloodHuntFraction", cfg.FloodHuntFraction);
 	cfg.FloodCooldown = pINI->ReadInteger("Doctrine.General", "FloodCooldown", cfg.FloodCooldown);
+	pINI->ReadString("Doctrine.General", "FloodExclude", "", buf, sizeof(buf));
+	cfg.FloodExclude = SplitList(buf);
+	pINI->ReadString("Doctrine.General", "FloodInclude", "", buf, sizeof(buf));
+	cfg.FloodInclude = SplitList(buf);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

@@ -297,7 +297,10 @@ namespace
 
 	// An "idle armed" unit: owned by the house, on NO team, alive, and carrying
 	// a real weapon — i.e. a combat unit that is hoarded, not a harvester /
-	// engineer / MCV (those have no offensive weapon) and not already tasked.
+	// engineer / MCV and not already tasked. ResourceGatherer excludes ore
+	// miners AND armed War Miners (which DO have a weapon, so the weapon test
+	// alone let them through — Rex saw them yanked off mining). A modder
+	// FloodExclude/FloodInclude list overrides by unit ID.
 	bool IsIdleArmed(TechnoClass* const pTechno, HouseClass* const pHouse)
 	{
 		if (!pTechno || pTechno->Owner != pHouse || pTechno->InLimbo
@@ -310,7 +313,18 @@ namespace
 		if (static_cast<FootClass*>(pTechno)->Team)
 			return false; // already on a team (aimd wave, our team, etc.)
 		auto const pType = pTechno->GetTechnoType();
-		return pType && HasOffensiveWeapon(pType);
+		if (!pType) return false;
+
+		auto const& cfg = DoctrineConfig::Instance;
+		std::string const id = pType->ID;
+		// Explicit exclude always wins; explicit include forces eligibility.
+		for (auto const& ex : cfg.FloodExclude)
+			if (ex == id) return false;
+		for (auto const& in : cfg.FloodInclude)
+			if (in == id) return true;
+
+		if (pType->ResourceGatherer) return false; // miners keep mining
+		return HasOffensiveWeapon(pType);
 	}
 
 	// Order a live doctrine team's members to move to (and hold at) a cell.

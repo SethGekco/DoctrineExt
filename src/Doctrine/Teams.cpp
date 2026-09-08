@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <deque>
 #include <map>
 #include <set>
 #include <utility>
@@ -285,6 +286,8 @@ namespace
 	std::map<int, int> g_floodLastFire;
 	// houseIndex -> last frame the reserve spender built (its own cooldown).
 	std::map<int, int> g_reserveLastFire;
+	// houseIndex -> rolling (frame, money) samples, for the growth trigger.
+	std::map<int, std::deque<std::pair<int, int>>> g_moneyHistory;
 
 	bool HasOffensiveWeapon(TechnoTypeClass* const pType)
 	{
@@ -986,13 +989,35 @@ void Teams::FloodResponse(HouseClass* pHouse)
 void Teams::ReserveSpend(HouseClass* pHouse)
 {
 	auto const& cfg = DoctrineConfig::Instance;
-	if (cfg.ReserveAmount <= 0 || cfg.ReserveBuild.empty()) return; // opt-in
+	if (cfg.ReserveBuild.empty()) return;
+	if (cfg.ReserveAmount <= 0 && cfg.ReserveGrowth <= 0) return; // opt-in
 
 	int const money = static_cast<int>(pHouse->Available_Money());
-	if (money <= cfg.ReserveAmount) return; // no surplus over the reserve floor
-
 	int const now = Unsorted::CurrentFrame;
 	int const hIdx = pHouse->ArrayIndex;
+
+	// Sample the money history each tick and prune to the growth window, so the
+	// growth trigger measures net accumulation over a rolling window.
+	int const window = cfg.ReserveGrowthWindow > 0 ? cfg.ReserveGrowthWindow : 1800;
+	auto& hist = g_moneyHistory[hIdx];
+	hist.emplace_back(now, money);
+	while (!hist.empty() && now - hist.front().first > window)
+		hist.pop_front();
+
+	// Trigger A: cash above the reserve floor. Trigger B: cash has grown by at
+	// least Growth over the window (accumulating faster than it spends) — with
+	// enough history to trust it. Either one arms a build.
+	bool const overAmount = cfg.ReserveAmount > 0 && money > cfg.ReserveAmount;
+	bool growing = false;
+	if (cfg.ReserveGrowth > 0 && hist.size() >= 2
+		&& now - hist.front().first >= window / 2)
+		growing = (money - hist.front().second) >= cfg.ReserveGrowth;
+	if (!overAmount && !growing) return;
+
+	// The floor to protect: the Amount reserve if set, else 0 (growth-only can
+	// spend the house down — expected; it self-regulates as growth then falls).
+	int const floor = cfg.ReserveAmount > 0 ? cfg.ReserveAmount : 0;
+
 	int const cd = cfg.ReserveCooldown > 0 ? cfg.ReserveCooldown : 300;
 	auto const it = g_reserveLastFire.find(hIdx);
 	if (it != g_reserveLastFire.end() && now - it->second < cd)
@@ -1011,14 +1036,15 @@ void Teams::ReserveSpend(HouseClass* pHouse)
 		if (!ownerOK) continue;
 		if (pHouse->CanBuild(pType, false, true) != CanBuildResult::Buildable) continue;
 		int const cost = pType->GetCost();
-		if (cost > 0 && money - cost < cfg.ReserveAmount) continue; // keep the floor
+		if (cost > 0 && money - cost < floor) continue; // keep the protected floor
 
 		auto const pFactory = FindHouseFactory(pHouse, pType);
 		if (!pFactory) continue;
 		pFactory->DemandProduction(pType, pHouse, true);
 		g_reserveLastFire[hIdx] = now;
-		Debug::Log("[DoctrineExt] reserve spend: house=%s#%d builds %s ($%d > reserve $%d).\n",
-			pHouse->get_ID(), hIdx, pType->ID, money, cfg.ReserveAmount);
+		Debug::Log("[DoctrineExt] reserve spend: house=%s#%d builds %s ($%d, %s).\n",
+			pHouse->get_ID(), hIdx, pType->ID, money,
+			growing ? "growth" : "over-amount");
 		return;
 	}
 }
@@ -1033,4 +1059,5 @@ void Teams::Reset()
 	g_huntSlots.clear();
 	g_floodLastFire.clear();
 	g_reserveLastFire.clear();
+	g_moneyHistory.clear();
 }

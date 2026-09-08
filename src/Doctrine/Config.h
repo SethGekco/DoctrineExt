@@ -100,6 +100,10 @@ public:
 	int ReserveAmount = 0;           // build from the list while money > this
 	                                 // (0 = feature off); generalises InfantryReserve
 	int ReserveCooldown = 300;       // frames between reserve builds per house
+	int ReserveGrowth = 0;           // if net cash rose >= this over GrowthWindow
+	                                 // (accumulating faster than spending), build
+	                                 // — spend to keep up on rich maps (0 = off)
+	int ReserveGrowthWindow = 1800;  // frames the growth is measured over
 	std::vector<std::string> ReserveBuild; // ordered unit IDs to build w/ surplus
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills

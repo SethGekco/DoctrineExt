@@ -415,6 +415,60 @@ valuable / taskforce-assigned units to a standby point OUTSIDE the base so they
 don't clog it. Sync-safe (deterministic scan/selection), AI-only, opt-in
 (FloodThreshold=0 off by default). *Most self-contained — building first.*
 
+## 10e. Idle-unit management — beyond "send to Hunt" (Rex, 2026-09-07)
+
+Base-flood relief works but is blunt. Generalise it into per-type idle behaviour
+so the modder controls WHAT happens to hoarded units, by unit ID / country:
+
+- **Behaviour classes** (per unit ID, modder-assigned):
+  - *Exclude* — never touched (done: ResourceGatherer + FloodExclude=).
+  - *Hunt* — send to roam+engage (current default).
+  - *MoveOutAndBack* — leave the base briefly to unclog, then return.
+  - *ParkOutside* — stage at an outside rally point indefinitely, or for a
+    modder-defined time, then return.
+- **Ordered re-entry**: a per-type wait time + a priority order so the modder
+  sequences who comes back first (an order of operations). Lets valuable /
+  transport-bound units stage outside while lower-priority units cycle.
+- **Gathering grounds**: named outside-base rally areas (e.g. transport-boarding
+  staging) that Doctrine treats as **defendable base extensions** — the
+  perimeter-defense (§6.2 edge) and lane (§6.3) systems extend to cover them, so
+  massed staging units aren't left undefended.
+- **Planned resting area tag**: an INI/map tag marking an area the AI keeps
+  strategically empty and builds defenses *around* (for maps with spare building
+  space) — a deliberate staging yard.
+
+Reuses: the idle-unit primitive (CountIdleArmed/IsIdleArmed) + the steering loop
+(MoveDoctrineTeam) + the perimeter/lane defense. Sync-safe, AI-only, opt-in.
+
+## 10f. Economy & expansion doctrine (Rex, 2026-09-07)
+
+The AI over-spams units with surplus cash (root cause of the flooding §10e
+treats downstream). Give it real economic sense:
+
+- **Configurable reserve (generalise InfantryReserve).** That vanilla tag may not
+  even work; implement our own. Per-COUNTRY lists of TYPES *and* BUILDINGS to
+  build when the cash reserve exceeds a threshold, each prereq-gated (only if the
+  house can actually build it). Modder defines everything — not just infantry.
+- **Growth-rate spending, not a flat floor.** Track income vs spend rate over a
+  window; if wealth is growing faster than it's being spent, spend FASTER (pull
+  more from the reserve lists) to push the reserve toward its limit rather than
+  hoarding cash.
+- **Ore scanning — local + map-wide.** Scan for ore/gem value near the base and
+  across the map (OverlayClass tiberium / resource layer). If X value sits
+  nearby, build Y miners to work it.
+- **Expansion beacons (the sanctioned aimd "fudge").** Doctrine drops special
+  beacons (waypoint-like markers) at rich distant ore that **ScriptTypes can
+  follow** (pairs with the §10c custom script-actions: a `MoveToBeacon` verb).
+  The AI then sends an MCV / base-expansion node (modder-defined type) and builds
+  a small outpost to chase the money — strategic map awareness, not just
+  home-base spam. This is the one place Doctrine deliberately reaches into the
+  aimd/script domain, via the loose beacon+action bridge (no hard dependency).
+
+Reuses: the RPS scorer (6a) for the reserve build lists, factory/DemandProduction
+(Phase 4) for building, the beacon+custom-action bridge (§10c). Big — its own
+phase. Boundary: base-node PLACEMENT still leans on Antares (§8); Doctrine
+decides WHAT/WHERE-roughly and issues production, Antares' planner places.
+
 ## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption

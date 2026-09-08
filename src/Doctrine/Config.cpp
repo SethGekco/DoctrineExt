@@ -113,6 +113,14 @@ void DoctrineConfig::EnsureParsed()
 	cfg.FloodExclude = SplitList(buf);
 	pINI->ReadString("Doctrine.General", "FloodInclude", "", buf, sizeof(buf));
 	cfg.FloodInclude = SplitList(buf);
+	// [Doctrine.Reserve] — spend surplus cash on a modder-defined build list.
+	cfg.ReserveAmount = pINI->ReadInteger("Doctrine.Reserve", "Amount", cfg.ReserveAmount);
+	cfg.ReserveCooldown = pINI->ReadInteger("Doctrine.Reserve", "Cooldown", cfg.ReserveCooldown);
+	pINI->ReadString("Doctrine.Reserve", "Build", "", buf, sizeof(buf));
+	cfg.ReserveBuild = SplitList(buf);
+	if (cfg.ReserveAmount > 0)
+		Debug::Log("[DoctrineExt] [Doctrine.Reserve]: Amount=%d Cooldown=%d Build=%s\n",
+			cfg.ReserveAmount, cfg.ReserveCooldown, buf);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

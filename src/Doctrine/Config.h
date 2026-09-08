@@ -96,6 +96,11 @@ public:
 	int FloodCooldown = 900;         // frames between flood alerts per house
 	std::vector<std::string> FloodExclude; // unit IDs never sent by flood relief
 	std::vector<std::string> FloodInclude; // unit IDs always eligible (override)
+	// Reserve spender ([Doctrine.Reserve], §10f first cut) — spend surplus cash
+	int ReserveAmount = 0;           // build from the list while money > this
+	                                 // (0 = feature off); generalises InfantryReserve
+	int ReserveCooldown = 300;       // frames between reserve builds per house
+	std::vector<std::string> ReserveBuild; // ordered unit IDs to build w/ surplus
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

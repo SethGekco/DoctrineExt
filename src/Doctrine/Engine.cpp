@@ -116,6 +116,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// units to Hunt. Self-throttled + opt-in (FloodThreshold=0 disables).
 	Teams::FloodResponse(pHouse);
 
+	// Reserve spender (§10f): spend surplus cash on the modder's build list
+	// instead of hoarding. Self-throttled + opt-in (ReserveAmount=0 disables).
+	Teams::ReserveSpend(pHouse);
+
 	// Team-fill trace (~every 5s under DebugTicks): shows produced units
 	// joining live doctrine teams via engine-side recruiting over time.
 	if (cfg.DebugTicks && (frame % (sense * 5)) < sense)

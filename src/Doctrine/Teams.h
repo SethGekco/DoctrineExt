@@ -54,5 +54,10 @@ namespace Teams
 	// Self-throttled (FloodCooldown); opt-in (FloodThreshold=0 disables).
 	void FloodResponse(HouseClass* pHouse);
 
+	// Reserve spender (§10f): while the house's cash exceeds ReserveAmount,
+	// build the next affordable item from ReserveBuild — spend surplus instead
+	// of hoarding. Self-throttled (ReserveCooldown); opt-in (Amount=0 off).
+	void ReserveSpend(HouseClass* pHouse);
+
 	void Reset();
 }

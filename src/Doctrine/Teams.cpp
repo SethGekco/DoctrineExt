@@ -283,6 +283,8 @@ namespace
 	std::set<std::pair<int, int>> g_huntSlots;
 	// houseIndex -> last frame the base-flood relief fired (its own cooldown).
 	std::map<int, int> g_floodLastFire;
+	// houseIndex -> last frame the reserve spender built (its own cooldown).
+	std::map<int, int> g_reserveLastFire;
 
 	bool HasOffensiveWeapon(TechnoTypeClass* const pType)
 	{
@@ -981,6 +983,46 @@ void Teams::FloodResponse(HouseClass* pHouse)
 		pHouse->get_ID(), hIdx, idle.size(), cfg.FloodThreshold, sent);
 }
 
+void Teams::ReserveSpend(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (cfg.ReserveAmount <= 0 || cfg.ReserveBuild.empty()) return; // opt-in
+
+	int const money = static_cast<int>(pHouse->Available_Money());
+	if (money <= cfg.ReserveAmount) return; // no surplus over the reserve floor
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const cd = cfg.ReserveCooldown > 0 ? cfg.ReserveCooldown : 300;
+	auto const it = g_reserveLastFire.find(hIdx);
+	if (it != g_reserveLastFire.end() && now - it->second < cd)
+		return;
+
+	// Build the first list item the house can build (prereqs + Owner=) and
+	// afford, queued behind its own production. Spends surplus toward the
+	// reserve floor over time instead of letting the AI hoard cash.
+	for (auto const& id : cfg.ReserveBuild)
+	{
+		auto const pType = TechnoTypeClass::Find(id.c_str());
+		if (!pType) continue;
+		if (!IsTeamable(pType)) continue; // units only in this first cut (buildings
+		                                  // need the Antares placement path)
+		bool const ownerOK = !cfg.StrictOwnership || pHouse->InOwners(pType);
+		if (!ownerOK) continue;
+		if (pHouse->CanBuild(pType, false, true) != CanBuildResult::Buildable) continue;
+		int const cost = pType->GetCost();
+		if (cost > 0 && money - cost < cfg.ReserveAmount) continue; // keep the floor
+
+		auto const pFactory = FindHouseFactory(pHouse, pType);
+		if (!pFactory) continue;
+		pFactory->DemandProduction(pType, pHouse, true);
+		g_reserveLastFire[hIdx] = now;
+		Debug::Log("[DoctrineExt] reserve spend: house=%s#%d builds %s ($%d > reserve $%d).\n",
+			pHouse->get_ID(), hIdx, pType->ID, money, cfg.ReserveAmount);
+		return;
+	}
+}
+
 void Teams::Reset()
 {
 	g_warned.clear();
@@ -990,4 +1032,5 @@ void Teams::Reset()
 	g_defendSlots.clear();
 	g_huntSlots.clear();
 	g_floodLastFire.clear();
+	g_reserveLastFire.clear();
 }

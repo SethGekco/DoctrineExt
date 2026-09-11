@@ -120,6 +120,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// instead of hoarding. Self-throttled + opt-in (ReserveAmount=0 disables).
 	Teams::ReserveSpend(pHouse);
 
+	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
+	// allied AIs converge on the same target. Self-throttled + opt-in.
+	Teams::RushCheck(pHouse);
+
 	// Team-fill trace (~every 5s under DebugTicks): shows produced units
 	// joining live doctrine teams via engine-side recruiting over time.
 	if (cfg.DebugTicks && (frame % (sense * 5)) < sense)

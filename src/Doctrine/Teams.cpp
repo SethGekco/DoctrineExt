@@ -288,6 +288,55 @@ namespace
 	std::map<int, int> g_reserveLastFire;
 	// houseIndex -> rolling (frame, money) samples, for the growth trigger.
 	std::map<int, std::deque<std::pair<int, int>>> g_moneyHistory;
+	// houseIndex -> last frame this house committed an all-in rush.
+	std::map<int, int> g_rushLastFire;
+
+	// Raw armor-agnostic DPS of a type (both weapons), for military-power sums.
+	double RawDPS(TechnoTypeClass* const pType)
+	{
+		double total = 0.0;
+		for (int wi = 0; wi < 2; ++wi)
+		{
+			auto const pWS = pType->GetWeapon(wi);
+			if (!pWS || !pWS->WeaponType) continue;
+			auto const w = pWS->WeaponType;
+			if (w->ROF <= 0 || w->Damage <= 1) continue;
+			int const burst = w->Burst > 0 ? w->Burst : 1;
+			total += double(w->Damage) * burst / (w->ROF / 10.0);
+		}
+		return total;
+	}
+
+	// Per-house military power (Σ living armed technos' DPS: units + defensive
+	// buildings, minus miners), cached per frame — one pass serves every house.
+	std::map<int, double> g_powerTable;
+	int g_powerFrame = -1;
+	void BuildPowerTable(int const frame)
+	{
+		if (frame == g_powerFrame) return;
+		g_powerFrame = frame;
+		g_powerTable.clear();
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->InLimbo || pT->Health <= 0) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Unit && what != AbstractType::Infantry
+				&& what != AbstractType::Aircraft && what != AbstractType::Building)
+				continue;
+			auto const pType = pT->GetTechnoType();
+			if (!pType || pType->ResourceGatherer) continue;
+			double const dps = RawDPS(pType);
+			if (dps <= 0.0) continue;
+			if (pT->Owner)
+				g_powerTable[pT->Owner->ArrayIndex] += dps;
+		}
+	}
+	double PowerOf(int const idx)
+	{
+		auto const it = g_powerTable.find(idx);
+		return it != g_powerTable.end() ? it->second : 0.0;
+	}
 
 	bool HasOffensiveWeapon(TechnoTypeClass* const pType)
 	{
@@ -1049,9 +1098,74 @@ void Teams::ReserveSpend(HouseClass* pHouse)
 	}
 }
 
+void Teams::RushCheck(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (cfg.RushRatio <= 0.0) return; // opt-in
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const cd = cfg.RushCooldown > 0 ? cfg.RushCooldown : 1800;
+	auto const it = g_rushLastFire.find(hIdx);
+	if (it != g_rushLastFire.end() && now - it->second < cd)
+		return;
+
+	BuildPowerTable(now);
+
+	// Combined allied power (self + allies) vs the enemies. Weakest enemy is the
+	// rush target; a powered-DOWN enemy counts as weaker (defenses offline).
+	double allied = 0.0, totalEnemy = 0.0, weakestPow = 1e18;
+	HouseClass* pTarget = nullptr;
+	for (int i = 0; i < HouseClass::Array.Count; ++i)
+	{
+		auto const pH = HouseClass::Array.GetItem(i);
+		if (!pH || pH->Defeated || pH->IsObserver() || pH->IsNeutral()) continue;
+		double const p = PowerOf(pH->ArrayIndex);
+		if (pH == pHouse || pHouse->IsAlliedWith(pH))
+		{
+			allied += p;
+			continue;
+		}
+		totalEnemy += p;
+		double eff = p;
+		if (pH->PowerDrain > pH->PowerOutput) eff *= 0.5; // power-down = softer
+		if (eff < weakestPow) { weakestPow = eff; pTarget = pH; }
+	}
+	if (!pTarget) return; // no enemies
+
+	// Only commit when we dominate the target AND won't leave ourselves weaker
+	// than the rest of the enemies (don't overextend in a multi-way game).
+	if (allied < weakestPow * cfg.RushRatio) return;
+	if (allied < totalEnemy * (cfg.RushSafety > 0 ? cfg.RushSafety : 1.0)) return;
+
+	// Rush with everything idle: send all teamless armed units to Hunt. Allied
+	// AIs run this same deterministic test and pile onto the same weakest enemy
+	// — coordinated without any comms channel.
+	int sent = 0;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+	{
+		auto const pT = TechnoClass::Array.GetItem(i);
+		if (IsIdleArmed(pT, pHouse))
+		{
+			static_cast<FootClass*>(pT)->ForceMission(Mission::Hunt);
+			++sent;
+		}
+	}
+	if (sent == 0) return; // nothing to commit yet; retry next window
+
+	g_rushLastFire[hIdx] = now;
+	Debug::Log("[DoctrineExt] RUSH: house=%s#%d -> %s#%d alliedPow=%.0f targetPow=%.0f "
+		"totalEnemy=%.0f, committed %d.\n",
+		pHouse->get_ID(), hIdx, pTarget->get_ID(), pTarget->ArrayIndex,
+		allied, weakestPow, totalEnemy, sent);
+}
+
 void Teams::Reset()
 {
 	g_warned.clear();
+	g_rushLastFire.clear();
+	g_powerTable.clear();
+	g_powerFrame = -1;
 	g_slotDispatchFrame.clear();
 	g_slotPriority.clear();
 	g_interceptSlots.clear();

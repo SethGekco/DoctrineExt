@@ -469,6 +469,63 @@ Reuses: the RPS scorer (6a) for the reserve build lists, factory/DemandProductio
 phase. Boundary: base-node PLACEMENT still leans on Antares (§8); Doctrine
 decides WHAT/WHERE-roughly and issues production, Antares' planner places.
 
+## 10g. Force-comparison rush + silent ally coordination (Rex, 2026-09-08)
+
+Feasible now — reuses DPS-sum, idle enumeration, hunt dispatch, ZoneInfos, and
+`HouseClass::Power_Output/Drain`.
+
+- **Military-power metric**: sum each house's living armed technos' DPS (units +
+  defensive buildings). Cheap, deterministic.
+- **Rush trigger**: for AI house H, pick the weakest enemy (lowest power, or
+  power-DOWN — `Power_Drain > Power_Output` means its defenses are offline = prime
+  time). Rush when combined **allied** power ≥ target × `RushRatio` AND ≥ total
+  enemy power × `RushSafety` (don't overextend vs other enemies) AND H's own base
+  isn't under heavy threat (ZoneInfos). Then commit all idle armed units at the
+  target's base.
+- **Silent ally coordination = emergent, no messaging.** Every allied AI runs the
+  same deterministic weakest-enemy pick and the same combined-force test, so they
+  independently converge on the *same* target and pile on together — coordinated
+  without a comms channel, and each only commits when the *combined* force is safe.
+- Config: RushRatio (0=off), RushSafety, RushCooldown. 1v1 falls out naturally
+  (one enemy = target = total).
+
+## 10h. Tech-tree decapitation — understand, don't script (Rex, 2026-09-08)
+
+The engine gives the real graph: `TechnoTypeClass::Prerequisite` (building-type
+indices). Doctrine can *understand* how to disable a player's rebuild chain in
+order, not follow a script:
+
+Priority ladder (deny the ability to recover, top-down): ConYard (GACNST) →
+the buildings that gate the **MCV** (so it can't re-ConYard) → economy (refineries
+/ miners) → vehicle production → aircraft → infantry. The subtlety Rex named: a
+prereq is only denied when **every** provider is gone — if the enemy has 3 service
+depots and 1 war factory and the MCV needs "depot OR factory", you must destroy
+*all* of one class, not mix. So: for each production category, resolve which of the
+enemy's *owned* buildings satisfy its prereq, and target the **minimal complete
+cut** (all providers of the cheapest-to-remove gating class). Feed that as target
+weights into the existing counter/hunt target selection. Reuses the
+PrerequisiteExt graph thinking. Big phase.
+
+## 10i. Crate doctrine (Rex, 2026-09-08)
+
+Engine has `OverlayTypeClass::Crate`/`CrateTrigger` and `CellClass::CollectCrate`
+— crates are cell overlays, so scan for them. Behaviours: chase crates with fast
+grabbers (a modder list *plus* speed-graded auto-pick — CLEG best, DRON/HTK/FV
+good); deny enemy crate runs (race/intercept); when short-game is OFF, **firesale
+just before grabbing a crate** to guarantee the MCV crate outcome; allied AIs
+assist. Needs a crate-scan pass + the firesale/MCV game knowledge. Medium phase.
+
+## 10j. Beacon comms — loose human↔AI protocol (Rex, 2026-09-08)
+
+Two parts, both RE-heavy / uncertain (flag as research-required):
+(a) Re-enable beacon **sound + typing** for offline skirmish (uimd.ini gates it) —
+find and patch the offline disable. (b) A **keyword protocol**: read the beacon's
+typed text, match keywords ("kill", "defend", "help"), and have AI teammates reply
+with pre-written messages and act (e.g. "kill" on a beaconed unit → an AI that can
+counter it replies "on it" and dispatches, reusing 6a/6c). No LLM in-engine, just
+keyword→canned-response→doctrine-action. Very cool for human-AI coop; deepest RE of
+this batch — research the beacon creation/read hooks first.
+
 ## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption

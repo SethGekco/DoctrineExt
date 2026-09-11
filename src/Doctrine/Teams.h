@@ -59,5 +59,11 @@ namespace Teams
 	// of hoarding. Self-throttled (ReserveCooldown); opt-in (Amount=0 off).
 	void ReserveSpend(HouseClass* pHouse);
 
+	// Force-comparison rush (§10g): when combined allied power dominates the
+	// weakest enemy (and won't overextend), commit all idle armed units to an
+	// all-in Hunt. Allied AIs converge on the same target deterministically
+	// (silent coordination). Self-throttled; opt-in (RushRatio=0 off).
+	void RushCheck(HouseClass* pHouse);
+
 	void Reset();
 }

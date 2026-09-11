@@ -105,6 +105,12 @@ public:
 	                                 // — spend to keep up on rich maps (0 = off)
 	int ReserveGrowthWindow = 1800;  // frames the growth is measured over
 	std::vector<std::string> ReserveBuild; // ordered unit IDs to build w/ surplus
+	// Force-comparison rush ([Doctrine.General], §10g)
+	double RushRatio = 0.0;          // allied power must be >= target x this to
+	                                 // rush (0 = feature off)
+	double RushSafety = 1.0;         // AND allied power >= total enemy x this
+	                                 // (don't overextend in multi-way games)
+	int RushCooldown = 1800;         // frames between all-in rushes per house
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

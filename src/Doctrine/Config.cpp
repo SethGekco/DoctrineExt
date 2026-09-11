@@ -123,6 +123,9 @@ void DoctrineConfig::EnsureParsed()
 	if (cfg.ReserveAmount > 0 || cfg.ReserveGrowth > 0)
 		Debug::Log("[DoctrineExt] [Doctrine.Reserve]: Amount=%d Growth=%d/%df Cooldown=%d Build=%s\n",
 			cfg.ReserveAmount, cfg.ReserveGrowth, cfg.ReserveGrowthWindow, cfg.ReserveCooldown, buf);
+	cfg.RushRatio = pINI->ReadDouble("Doctrine.General", "RushRatio", cfg.RushRatio);
+	cfg.RushSafety = pINI->ReadDouble("Doctrine.General", "RushSafety", cfg.RushSafety);
+	cfg.RushCooldown = pINI->ReadInteger("Doctrine.General", "RushCooldown", cfg.RushCooldown);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

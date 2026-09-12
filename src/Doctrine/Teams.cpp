@@ -18,6 +18,7 @@
 #include <MapClass.h>
 #include <CellClass.h>
 #include <BuildingClass.h>
+#include <BuildingTypeClass.h>
 #include <InfantryTypeClass.h>
 #include <UnitTypeClass.h>
 #include <AircraftTypeClass.h>
@@ -336,6 +337,66 @@ namespace
 	{
 		auto const it = g_powerTable.find(idx);
 		return it != g_powerTable.end() ? it->second : 0.0;
+	}
+
+	// ─── Tech-tree decapitation (§10h) ──────────────────────────────────────
+	enum class DecapRole { ConYard, Refinery, Vehicle, Aircraft, Infantry, Defense, Other, COUNT };
+
+	DecapRole RoleOf(BuildingTypeClass* const bt)
+	{
+		if (!bt) return DecapRole::Other;
+		if (bt->ConstructionYard) return DecapRole::ConYard;
+		if (bt->Refinery) return DecapRole::Refinery;
+		if (bt->WeaponsFactory || bt->Factory == AbstractType::UnitType) return DecapRole::Vehicle;
+		if (bt->Helipad || bt->Factory == AbstractType::AircraftType) return DecapRole::Aircraft;
+		if (bt->Factory == AbstractType::InfantryType) return DecapRole::Infantry;
+		if (bt->IsBaseDefense) return DecapRole::Defense;
+		return DecapRole::Other;
+	}
+
+	int RoleWeight(DecapRole const r)
+	{
+		auto const& c = DoctrineConfig::Instance;
+		switch (r)
+		{
+		case DecapRole::ConYard:  return c.DecapConYard;
+		case DecapRole::Refinery: return c.DecapRefinery;
+		case DecapRole::Vehicle:  return c.DecapVehicle;
+		case DecapRole::Aircraft: return c.DecapAircraft;
+		case DecapRole::Infantry: return c.DecapInfantry;
+		case DecapRole::Defense:  return c.DecapDefense;
+		default:                  return c.DecapOther;
+		}
+	}
+
+	// The enemy building most worth killing to dismantle its rebuild chain:
+	// score = role weight / providers-of-that-role, so a role that's a cheaper
+	// COMPLETE cut (fewer buildings to destroy to deny the category) wins — a
+	// lone war factory beats three service depots that jointly gate the MCV.
+	BuildingClass* DecapTarget(HouseClass* const pEnemy)
+	{
+		int count[static_cast<int>(DecapRole::COUNT)] = {};
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || pB->Owner != pEnemy || pB->InLimbo || pB->Health <= 0) continue;
+			count[static_cast<int>(RoleOf(pB->Type))]++;
+		}
+
+		BuildingClass* best = nullptr;
+		double bestScore = -1.0;
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || pB->Owner != pEnemy || pB->InLimbo || pB->Health <= 0) continue;
+			auto const role = RoleOf(pB->Type);
+			int const w = RoleWeight(role);
+			if (w <= 0) continue;
+			int const n = count[static_cast<int>(role)];
+			double const score = static_cast<double>(w) / (n > 0 ? n : 1);
+			if (score > bestScore) { bestScore = score; best = pB; }
+		}
+		return best;
 	}
 
 	bool HasOffensiveWeapon(TechnoTypeClass* const pType)
@@ -1142,27 +1203,37 @@ void Teams::RushCheck(HouseClass* pHouse)
 	if (allied < weakestPow * cfg.RushRatio) return;
 	if (allied < totalEnemy * (cfg.RushSafety > 0 ? cfg.RushSafety : 1.0)) return;
 
-	// Rush with everything idle: send all teamless armed units to Hunt. Allied
-	// AIs run this same deterministic test and pile onto the same weakest enemy
-	// — coordinated without any comms channel.
+	// Aim the rush at the decapitation target — the enemy building whose loss
+	// most cripples its rebuild chain (§10h) — so an all-in strikes the ConYard
+	// / production rather than just roaming. Fall back to Hunt if none found.
+	BuildingClass* const pDecap = cfg.DecapEnable ? DecapTarget(pTarget) : nullptr;
+
 	int sent = 0;
 	for (int i = 0; i < TechnoClass::Array.Count; ++i)
 	{
 		auto const pT = TechnoClass::Array.GetItem(i);
-		if (IsIdleArmed(pT, pHouse))
+		if (!IsIdleArmed(pT, pHouse)) continue;
+		auto const pFoot = static_cast<FootClass*>(pT);
+		if (pDecap)
 		{
-			static_cast<FootClass*>(pT)->ForceMission(Mission::Hunt);
-			++sent;
+			pFoot->SetTarget(pDecap);
+			pFoot->QueueMission(Mission::Attack, false);
 		}
+		else
+		{
+			pFoot->ForceMission(Mission::Hunt);
+		}
+		++sent;
 	}
 	if (sent < (cfg.RushMinUnits > 0 ? cfg.RushMinUnits : 1))
 		return; // too few idle units to be a real rush; retry when massed
 
 	g_rushLastFire[hIdx] = now;
 	Debug::Log("[DoctrineExt] RUSH: house=%s#%d -> %s#%d alliedPow=%.0f targetPow=%.0f "
-		"totalEnemy=%.0f, committed %d.\n",
+		"totalEnemy=%.0f, committed %d, decap=%s.\n",
 		pHouse->get_ID(), hIdx, pTarget->get_ID(), pTarget->ArrayIndex,
-		allied, weakestPow, totalEnemy, sent);
+		allied, weakestPow, totalEnemy, sent,
+		pDecap && pDecap->Type ? pDecap->Type->ID : "(roam)");
 }
 
 void Teams::Reset()

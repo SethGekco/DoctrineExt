@@ -128,6 +128,14 @@ void DoctrineConfig::EnsureParsed()
 	cfg.RushCooldown = pINI->ReadInteger("Doctrine.General", "RushCooldown", cfg.RushCooldown);
 	cfg.RushMinUnits = pINI->ReadInteger("Doctrine.General", "RushMinUnits", cfg.RushMinUnits);
 	cfg.RushMinPower = pINI->ReadDouble("Doctrine.General", "RushMinPower", cfg.RushMinPower);
+	cfg.DecapEnable = pINI->ReadBool("Doctrine.Decap", "Enable", cfg.DecapEnable);
+	cfg.DecapConYard = pINI->ReadInteger("Doctrine.Decap", "ConYard", cfg.DecapConYard);
+	cfg.DecapRefinery = pINI->ReadInteger("Doctrine.Decap", "Refinery", cfg.DecapRefinery);
+	cfg.DecapVehicle = pINI->ReadInteger("Doctrine.Decap", "Vehicle", cfg.DecapVehicle);
+	cfg.DecapAircraft = pINI->ReadInteger("Doctrine.Decap", "Aircraft", cfg.DecapAircraft);
+	cfg.DecapInfantry = pINI->ReadInteger("Doctrine.Decap", "Infantry", cfg.DecapInfantry);
+	cfg.DecapDefense = pINI->ReadInteger("Doctrine.Decap", "Defense", cfg.DecapDefense);
+	cfg.DecapOther = pINI->ReadInteger("Doctrine.Decap", "Other", cfg.DecapOther);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

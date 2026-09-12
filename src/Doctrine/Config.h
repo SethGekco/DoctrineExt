@@ -115,6 +115,18 @@ public:
 	                                 // to commit (a rush, not a lone scout)
 	double RushMinPower = 400.0;     // need at least this much allied power — so
 	                                 // an enemy at 0 power doesn't trivially arm it
+	// Tech-tree decapitation ([Doctrine.Decap], §10h) — priority target roles.
+	// A rush aims at the highest-scored enemy building; score = weight / how many
+	// of that role the enemy has (fewer providers = a cheaper COMPLETE cut, so a
+	// lone war factory outranks three service depots that jointly gate the MCV).
+	bool DecapEnable = true;
+	int DecapConYard = 100;          // construction yard — kills rebuild ability
+	int DecapRefinery = 60;          // economy
+	int DecapVehicle = 50;           // war factory
+	int DecapAircraft = 40;          // helipad / air
+	int DecapInfantry = 30;          // barracks
+	int DecapDefense = 10;           // base defenses
+	int DecapOther = 5;              // everything else
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

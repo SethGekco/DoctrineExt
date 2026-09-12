@@ -111,6 +111,10 @@ public:
 	double RushSafety = 1.0;         // AND allied power >= total enemy x this
 	                                 // (don't overextend in multi-way games)
 	int RushCooldown = 1800;         // frames between all-in rushes per house
+	int RushMinUnits = 6;            // need at least this many idle armed units
+	                                 // to commit (a rush, not a lone scout)
+	double RushMinPower = 400.0;     // need at least this much allied power — so
+	                                 // an enemy at 0 power doesn't trivially arm it
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

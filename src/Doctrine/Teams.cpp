@@ -1133,6 +1133,10 @@ void Teams::RushCheck(HouseClass* pHouse)
 	}
 	if (!pTarget) return; // no enemies
 
+	// Need a real army first — otherwise an enemy at 0 power (early game) makes
+	// "allied >= target x ratio" trivially true and we "rush" with a lone scout.
+	if (allied < cfg.RushMinPower) return;
+
 	// Only commit when we dominate the target AND won't leave ourselves weaker
 	// than the rest of the enemies (don't overextend in a multi-way game).
 	if (allied < weakestPow * cfg.RushRatio) return;
@@ -1151,7 +1155,8 @@ void Teams::RushCheck(HouseClass* pHouse)
 			++sent;
 		}
 	}
-	if (sent == 0) return; // nothing to commit yet; retry next window
+	if (sent < (cfg.RushMinUnits > 0 ? cfg.RushMinUnits : 1))
+		return; // too few idle units to be a real rush; retry when massed
 
 	g_rushLastFire[hIdx] = now;
 	Debug::Log("[DoctrineExt] RUSH: house=%s#%d -> %s#%d alliedPow=%.0f targetPow=%.0f "

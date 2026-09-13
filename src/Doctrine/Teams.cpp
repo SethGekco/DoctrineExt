@@ -144,6 +144,27 @@ namespace
 		return nullptr;
 	}
 
+	// STRICT buildability for anything DoctrineExt PRODUCES. This stack's
+	// CanBuild is leaky (it OK'd cross-faction builds, ignoring Owner=), so we
+	// don't trust it alone — explicitly enforce TechLevel (a TechLevel=11 unit
+	// is above the game's max-10 tech level, so never buildable) and Owner=,
+	// then let CanBuild cover prerequisites + build limits. Used before any
+	// DemandProduction; the recruit path may still USE already-owned units.
+	bool CanBuildStrict(HouseClass* const pHouse, TechnoTypeClass* const pType)
+	{
+		if (!pType) return false;
+		int const tl = pType->TechLevel;
+		if (tl < 0) return false;                          // -1 = disabled
+		// Compare to the house's tech level, but never above the game's max (10);
+		// so TechLevel=11 is unbuildable even if the house's field reads oddly.
+		int maxTL = (pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10)
+			? pHouse->TechLevel : 10;
+		if (tl > maxTL) return false;                      // e.g. TechLevel=11
+		if (DoctrineConfig::Instance.StrictOwnership && !pHouse->InOwners(pType))
+			return false;
+		return pHouse->CanBuild(pType, false, true) == CanBuildResult::Buildable;
+	}
+
 	// Is pType usable by pHouse right now (buildable respecting Owner=, or
 	// already owned)? Same rule PickType applies, factored out for PickCounter.
 	bool IsEligible(HouseClass* const pHouse, TechnoTypeClass* const pType)
@@ -729,7 +750,10 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	// need but never floods the AI's economy or fights its own build order.
 	int const money = static_cast<int>(pHouse->Available_Money());
 	int queued = 0;
-	if (cfg.AutoProduce && got < count)
+	// Only PRODUCE if the unit is legitimately buildable now (TechLevel + Owner=
+	// + prereqs). If pType was chosen only because the house already owns some
+	// (recruit path), we field those but never illegally build more.
+	if (cfg.AutoProduce && got < count && CanBuildStrict(pHouse, pType))
 	{
 		auto const pFactory = FindHouseFactory(pHouse, pType);
 		if (pFactory)
@@ -1142,9 +1166,9 @@ void Teams::ReserveSpend(HouseClass* pHouse)
 		if (!pType) continue;
 		if (!IsTeamable(pType)) continue; // units only in this first cut (buildings
 		                                  // need the Antares placement path)
-		bool const ownerOK = !cfg.StrictOwnership || pHouse->InOwners(pType);
-		if (!ownerOK) continue;
-		if (pHouse->CanBuild(pType, false, true) != CanBuildResult::Buildable) continue;
+		// Strict: TechLevel (no TechLevel=11), Owner=, prereqs — don't trust the
+		// leaky CanBuild alone.
+		if (!CanBuildStrict(pHouse, pType)) continue;
 		int const cost = pType->GetCost();
 		if (cost > 0 && money - cost < floor) continue; // keep the protected floor
 

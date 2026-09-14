@@ -1072,6 +1072,46 @@ void Teams::SteerHunters(HouseClass* pHouse, TechnoClass* pTarget)
 			MoveDoctrineTeam(hIdx, key.second, pCell);
 }
 
+namespace { std::set<std::pair<int, void*>> g_prereqAudited; }
+
+void Teams::PrereqAudit(HouseClass* pHouse)
+{
+	int const hIdx = pHouse->ArrayIndex;
+	int const maxTL = (pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10)
+		? pHouse->TechLevel : 10;
+
+	auto auditType = [&](TechnoTypeClass* const pType)
+	{
+		if (!pType) return;
+		int const owned = CountOwned(pHouse, pType);
+		if (owned <= 0) return;
+		auto const key = std::make_pair(hIdx, static_cast<void*>(pType));
+		if (g_prereqAudited.count(key)) return;
+
+		int const cb = static_cast<int>(pHouse->CanBuild(pType, false, true));
+		bool const techViolation = pType->TechLevel < 0 || pType->TechLevel > maxTL;
+		bool const cantBuild = cb != static_cast<int>(CanBuildResult::Buildable);
+		// Owns-but-can't-build = obtained WITHOUT normal production (base AI
+		// bypassing prereqs, or a map/free unit). TechLevel over max = a
+		// disabled (e.g. TechLevel=11) unit that exists anyway. Either is the
+		// evidence we're after; log once per (house,type).
+		if (techViolation || cantBuild)
+		{
+			g_prereqAudited.insert(key);
+			Debug::Log("[DoctrineExt] PREREQ-AUDIT: house=%s#%d owns %s x%d "
+				"TechLevel=%d (houseTL=%d maxTL=%d) CanBuild=%d%s%s\n",
+				pHouse->get_ID(), hIdx, pType->ID, owned, pType->TechLevel,
+				pHouse->TechLevel, maxTL, cb,
+				techViolation ? " TECHLEVEL-VIOLATION" : "",
+				cantBuild ? " OWNS-BUT-CANT-BUILD" : "");
+		}
+	};
+
+	for (auto const pType : InfantryTypeClass::Array) auditType(pType);
+	for (auto const pType : UnitTypeClass::Array)     auditType(pType);
+	for (auto const pType : AircraftTypeClass::Array) auditType(pType);
+}
+
 int Teams::CountIdleArmed(HouseClass* pHouse)
 {
 	int n = 0;
@@ -1273,5 +1313,6 @@ void Teams::Reset()
 	g_huntSlots.clear();
 	g_floodLastFire.clear();
 	g_reserveLastFire.clear();
+	g_prereqAudited.clear();
 	g_moneyHistory.clear();
 }

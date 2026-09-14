@@ -49,6 +49,11 @@ namespace Teams
 	// Count the house's IDLE ARMED units — combat units on no team (hoarded).
 	int CountIdleArmed(HouseClass* pHouse);
 
+	// Diagnostic (DebugTicks): log any combat unit type this house OWNS that it
+	// couldn't legitimately build now (CanBuild says no, or TechLevel over max)
+	// — confirms whether the base AI acquires prereq/TechLevel-illegal units.
+	void PrereqAudit(HouseClass* pHouse);
+
 	// Base-flood relief (§10d C): when the house hoards more than FloodThreshold
 	// idle armed units, send a fraction to Hunt so they stop clogging the base.
 	// Self-throttled (FloodCooldown); opt-in (FloodThreshold=0 disables).

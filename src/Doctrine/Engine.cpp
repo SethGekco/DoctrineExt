@@ -141,6 +141,8 @@ void Engine::TickHouse(HouseClass* pHouse)
 		if (DeathZones::HottestBearing(pHouse, da, ds))
 			Debug::Log("[DoctrineExt] deathzone house=%s#%d hottest bearing=%.2frad strength=%d\n",
 				pHouse->get_ID(), pHouse->ArrayIndex, da, ds);
+		// Prereq/TechLevel audit of this AI house's owned units (once per type).
+		Teams::PrereqAudit(pHouse);
 	}
 
 	// Evaluate high-priority rules first so an urgent aggressive rule claims

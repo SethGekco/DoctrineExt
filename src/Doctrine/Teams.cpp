@@ -1072,44 +1072,80 @@ void Teams::SteerHunters(HouseClass* pHouse, TechnoClass* pTarget)
 			MoveDoctrineTeam(hIdx, key.second, pCell);
 }
 
-namespace { std::set<std::pair<int, void*>> g_prereqAudited; }
+namespace
+{
+	std::set<std::pair<int, void*>> g_prereqAudited;
+
+	// Which of pType's SPECIFIC (positive) prerequisite buildings the house is
+	// missing right now. Generic prereqs (POWER/RADAR/TECH... encoded negative)
+	// are skipped — the concrete building check is the decisive signal (e.g. a
+	// SEAL owner with no GAPILE). Returns the missing IDs joined for the log.
+	bool MissingPrereqBuildings(HouseClass* const pHouse, TechnoTypeClass* const pType,
+		std::string& out)
+	{
+		bool missing = false;
+		for (int pre : pType->Prerequisite)
+		{
+			if (pre < 0 || pre >= BuildingTypeClass::Array.Count) continue;
+			auto const bt = BuildingTypeClass::Array.GetItem(pre);
+			if (!bt) continue;
+			if (pHouse->CountOwnedAndPresent(bt) <= 0)
+			{
+				missing = true;
+				if (!out.empty()) out += ",";
+				out += bt->ID;
+			}
+		}
+		return missing;
+	}
+}
 
 void Teams::PrereqAudit(HouseClass* pHouse)
 {
 	int const hIdx = pHouse->ArrayIndex;
+	int const frame = Unsorted::CurrentFrame;
 	int const maxTL = (pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10)
 		? pHouse->TechLevel : 10;
 
-	auto auditType = [&](TechnoTypeClass* const pType)
+	// Flag only a GENUINE illegality, filtering the benign cases the first pass
+	// exposed: harvesters/miners (ResourceGatherer), MCVs (DeploysInto), the
+	// starting ConYard (ConstructionYard), and build-limited units (CanBuild=-1
+	// = TemporarilyUnbuildable, e.g. a hero at its limit). What remains:
+	//  · TechLevel over the game max (e.g. TechLevel=11 owned anyway), or
+	//  · CanBuild==0 (permanently unbuildable) AND a concrete prereq building
+	//    missing = built/obtained without its prerequisite (the SEAL case).
+	auto auditType = [&](TechnoTypeClass* const pType, int const owned, bool const isBuilding)
 	{
-		if (!pType) return;
-		int const owned = CountOwned(pHouse, pType);
-		if (owned <= 0) return;
+		if (!pType || owned <= 0) return;
 		auto const key = std::make_pair(hIdx, static_cast<void*>(pType));
 		if (g_prereqAudited.count(key)) return;
 
+		if (pType->ResourceGatherer) return;                 // free harvesters
+		if (!isBuilding && pType->DeploysInto) return;       // MCV-type
+		if (isBuilding && static_cast<BuildingTypeClass*>(pType)->ConstructionYard)
+			return;                                          // starting ConYard
+
 		int const cb = static_cast<int>(pHouse->CanBuild(pType, false, true));
-		bool const techViolation = pType->TechLevel < 0 || pType->TechLevel > maxTL;
-		bool const cantBuild = cb != static_cast<int>(CanBuildResult::Buildable);
-		// Owns-but-can't-build = obtained WITHOUT normal production (base AI
-		// bypassing prereqs, or a map/free unit). TechLevel over max = a
-		// disabled (e.g. TechLevel=11) unit that exists anyway. Either is the
-		// evidence we're after; log once per (house,type).
-		if (techViolation || cantBuild)
-		{
-			g_prereqAudited.insert(key);
-			Debug::Log("[DoctrineExt] PREREQ-AUDIT: house=%s#%d owns %s x%d "
-				"TechLevel=%d (houseTL=%d maxTL=%d) CanBuild=%d%s%s\n",
-				pHouse->get_ID(), hIdx, pType->ID, owned, pType->TechLevel,
-				pHouse->TechLevel, maxTL, cb,
-				techViolation ? " TECHLEVEL-VIOLATION" : "",
-				cantBuild ? " OWNS-BUT-CANT-BUILD" : "");
-		}
+		bool const techViolation = pType->TechLevel > maxTL; // e.g. TechLevel=11
+		std::string miss;
+		bool const prereqBypass = cb == static_cast<int>(CanBuildResult::Unbuildable)
+			&& MissingPrereqBuildings(pHouse, pType, miss);
+		if (!techViolation && !prereqBypass) return;         // benign / build-limited
+
+		g_prereqAudited.insert(key);
+		Debug::Log("[DoctrineExt] PREREQ-AUDIT: house=%s#%d frame=%d %s %s x%d "
+			"TechLevel=%d (maxTL=%d) CanBuild=%d%s%s missing=[%s]\n",
+			pHouse->get_ID(), hIdx, frame, isBuilding ? "STRUCT" : "unit",
+			pType->ID, owned, pType->TechLevel, maxTL, cb,
+			techViolation ? " TECHLEVEL" : "",
+			prereqBypass ? " PREREQ-BYPASS" : "", miss.c_str());
 	};
 
-	for (auto const pType : InfantryTypeClass::Array) auditType(pType);
-	for (auto const pType : UnitTypeClass::Array)     auditType(pType);
-	for (auto const pType : AircraftTypeClass::Array) auditType(pType);
+	for (auto const pType : InfantryTypeClass::Array) auditType(pType, CountOwned(pHouse, pType), false);
+	for (auto const pType : UnitTypeClass::Array)     auditType(pType, CountOwned(pHouse, pType), false);
+	for (auto const pType : AircraftTypeClass::Array) auditType(pType, CountOwned(pHouse, pType), false);
+	for (auto const pType : BuildingTypeClass::Array)
+		auditType(pType, pHouse->CountOwnedAndPresent(pType), true);
 }
 
 int Teams::CountIdleArmed(HouseClass* pHouse)

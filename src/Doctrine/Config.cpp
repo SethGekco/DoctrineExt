@@ -4,6 +4,7 @@
 #include "Doctrine/KillTracker.h"
 #include "Doctrine/LaneTracker.h"
 #include "Doctrine/DeathZones.h"
+#include "Doctrine/ArsenalGrader.h"
 
 #include <CCINIClass.h>
 #include <Utilities/Debug.h>
@@ -136,6 +137,8 @@ void DoctrineConfig::EnsureParsed()
 	cfg.DecapInfantry = pINI->ReadInteger("Doctrine.Decap", "Infantry", cfg.DecapInfantry);
 	cfg.DecapDefense = pINI->ReadInteger("Doctrine.Decap", "Defense", cfg.DecapDefense);
 	cfg.DecapOther = pINI->ReadInteger("Doctrine.Decap", "Other", cfg.DecapOther);
+	cfg.AutoArsenal = pINI->ReadBool("Doctrine.General", "AutoArsenal", cfg.AutoArsenal);
+	cfg.AutoArsenalDepth = pINI->ReadInteger("Doctrine.General", "AutoArsenalDepth", cfg.AutoArsenalDepth);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
@@ -231,6 +234,7 @@ DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 	KillTracker::Reset();
 	LaneTracker::Reset();
 	DeathZones::Reset();
+	ArsenalGrader::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

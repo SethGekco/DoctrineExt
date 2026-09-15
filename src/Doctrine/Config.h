@@ -127,6 +127,10 @@ public:
 	int DecapInfantry = 30;          // barracks
 	int DecapDefense = 10;           // base defenses
 	int DecapOther = 5;              // everything else
+	// Arsenal auto-grader (§10d A)
+	bool AutoArsenal = true;         // auto-fill roles not explicitly listed in
+	                                 // [Doctrine.Arsenal] by grading the roster
+	int AutoArsenalDepth = 6;        // units kept per auto-graded role
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

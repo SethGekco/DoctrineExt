@@ -2,6 +2,7 @@
 #include "Doctrine/Config.h"
 #include "Doctrine/LaneTracker.h"
 #include "Doctrine/DeathZones.h"
+#include "Doctrine/ArsenalGrader.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -627,6 +628,11 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	for (auto const& role : cfg.Arsenal)
 		if (role.Role == rule.Respond)
 			pRole = &role;
+	// Fall back to the auto-graded roster for any role the modder didn't list
+	// explicitly (§10d A) — so roles populate themselves, faction-correct per
+	// house via the pick-time filters.
+	if (!pRole && cfg.AutoArsenal)
+		pRole = ArsenalGrader::RoleUnits(rule.Respond);
 	if (!pRole)
 	{
 		WarnOnce("rule " + rule.Name + ": no arsenal role " + rule.Respond);

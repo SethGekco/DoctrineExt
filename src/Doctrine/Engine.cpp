@@ -112,6 +112,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 		Teams::SteerHunters(pHouse, pAce);
 	}
 
+	// Decapitate teams press the enemy's current priority structure (§10h).
+	if (Teams::HasActiveDecap(pHouse))
+		Teams::SteerDecap(pHouse);
+
 	// Base-flood relief (§10d C): unclog a hoarding base by sending idle armed
 	// units to Hunt. Self-throttled + opt-in (FloodThreshold=0 disables).
 	Teams::FloodResponse(pHouse);

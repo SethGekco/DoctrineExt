@@ -167,5 +167,11 @@ bool Observations::Get(HouseClass* pOwner, const std::string& name, double& outV
 		return true;
 	}
 
+	if (name == "Always")   // unconditional trigger (fires on the rule's cooldown)
+	{
+		outValue = 1.0;
+		return true;
+	}
+
 	return false;
 }

@@ -304,6 +304,8 @@ namespace
 	std::set<std::pair<int, int>> g_defendSlots;
 	// Slots holding a HuntTarget team, steered onto the target's weak side.
 	std::set<std::pair<int, int>> g_huntSlots;
+	// Slots holding a Decapitate team, steered at the enemy's priority structure.
+	std::set<std::pair<int, int>> g_decapSlots;
 	// houseIndex -> last frame the base-flood relief fired (its own cooldown).
 	std::map<int, int> g_floodLastFire;
 	// houseIndex -> last frame the reserve spender built (its own cooldown).
@@ -358,6 +360,25 @@ namespace
 	{
 		auto const it = g_powerTable.find(idx);
 		return it != g_powerTable.end() ? it->second : 0.0;
+	}
+
+	// The weakest live enemy of pHouse by military power (powered-down counts
+	// softer) — the one most worth pressing. Shared by the rush and Decapitate.
+	HouseClass* WeakestEnemy(HouseClass* const pHouse)
+	{
+		BuildPowerTable(Unsorted::CurrentFrame);
+		HouseClass* best = nullptr;
+		double bestPow = 1e18;
+		for (int i = 0; i < HouseClass::Array.Count; ++i)
+		{
+			auto const pH = HouseClass::Array.GetItem(i);
+			if (!pH || pH->Defeated || pH->IsObserver() || pH->IsNeutral()) continue;
+			if (pH == pHouse || pHouse->IsAlliedWith(pH)) continue;
+			double eff = PowerOf(pH->ArrayIndex);
+			if (pH->PowerDrain > pH->PowerOutput) eff *= 0.5;
+			if (eff < bestPow) { bestPow = eff; best = pH; }
+		}
+		return best;
 	}
 
 	// ─── Tech-tree decapitation (§10h) ──────────────────────────────────────
@@ -578,14 +599,29 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	// difference is which observation feeds it: HuntAce chases the enemy's
 	// deadliest unit, Intercept sallies out at the nearest incoming raider.
 	bool const hunt = rule.Mission == "HuntTarget" || rule.Mission == "Intercept";
-	if (!hunt && rule.Mission != "DefendBase")
+	bool const decap = rule.Mission == "Decapitate";
+	bool const aggressive = hunt || decap;
+	if (!aggressive && rule.Mission != "DefendBase")
 	{
 		WarnOnce("rule " + rule.Name + ": mission " + rule.Mission
-			+ " not implemented yet (DefendBase, HuntTarget, Intercept)");
+			+ " not implemented yet (DefendBase, HuntTarget, Intercept, Decapitate)");
 		return false;
 	}
 	if (hunt && rule.Target == "ThatUnit" && !pTarget)
 		return false; // nothing concrete to hunt this tick
+
+	// Decapitate (§10h standalone): the strike target is the weakest enemy's
+	// most rebuild-critical STRUCTURE, computed here rather than from the
+	// observation. A BuildingClass is a TechnoClass, so it drives both the
+	// armor-matchup counter pick and the steering the same way a unit target does.
+	TechnoClass* pStrike = pTarget;
+	if (decap)
+	{
+		auto const pEnemy = WeakestEnemy(pHouse);
+		auto const pBld = pEnemy ? DecapTarget(pEnemy) : nullptr;
+		if (!pBld) return false; // nothing to decapitate
+		pStrike = pBld;
+	}
 
 	const DoctrineArsenalRole* pRole = nullptr;
 	for (auto const& role : cfg.Arsenal)
@@ -603,8 +639,8 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	// fallback if nothing can engage it) use the plain best-first pick.
 	TechnoTypeClass* pType = nullptr;
 	double counterScore = 0.0;
-	if (pTarget)
-		pType = PickCounter(pHouse, *pRole, pTarget, counterScore);
+	if (pStrike)
+		pType = PickCounter(pHouse, *pRole, pStrike, counterScore);
 
 	// "Don't feed the farm" (§10b 6c): for an aggressive hunt into the field,
 	// if the best available counter can't win the trade (score below the
@@ -638,6 +674,9 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	if (rule.WhenValue > 0.0 && rule.WhenOp[0] == '>')
 		need = obsValue / rule.WhenValue;
 	int count = static_cast<int>(std::ceil(need * rule.Scale));
+	// Decapitate isn't threat-scaled — Scale sets the strike size (x4 base).
+	if (decap)
+		count = static_cast<int>(std::ceil(rule.Scale * 4.0));
 	if (count < 1) count = 1;
 	if (count > cfg.MaxTeamSize) count = cfg.MaxTeamSize;
 	int const cost = pType->GetCost();
@@ -662,12 +701,15 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	g_interceptSlots.erase(slotKey);
 	g_defendSlots.erase(slotKey);
 	g_huntSlots.erase(slotKey);
+	g_decapSlots.erase(slotKey);
 	if (rule.Mission == "Intercept")
 		g_interceptSlots.insert(slotKey);
 	else if (rule.Mission == "DefendBase")
 		g_defendSlots.insert(slotKey);
 	else if (rule.Mission == "HuntTarget")
 		g_huntSlots.insert(slotKey);
+	else if (rule.Mission == "Decapitate")
+		g_decapSlots.insert(slotKey);
 
 	// Rewrite the trio for this dispatch. Only touch what we mean to set;
 	// everything else keeps the game's own constructor defaults.
@@ -675,7 +717,7 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	slot.TaskForce->Entries[0] = { count, pType };
 	slot.TaskForce->Group = -1;
 
-	if (hunt)
+	if (aggressive)
 	{
 		// Set Mission -> Hunt: engage the assigned target, then roam (the
 		// wave tool's own "keep engaging afterward" idiom, action 11 arg 7).
@@ -704,9 +746,9 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	pTT->Recruiter = true;    // under-strength teams keep pulling free units
 	pTT->LooseRecruit = true;
 	pTT->AreTeamMembersRecruitable = false; // no poaching by other teams
-	pTT->IsBaseDefense = !hunt; // slots are rewritten, so set BOTH ways
+	pTT->IsBaseDefense = !aggressive; // slots are rewritten, so set BOTH ways
 	pTT->Full = false;
-	pTT->Aggressive = hunt;
+	pTT->Aggressive = aggressive;
 	pTT->Whiner = false;
 	pTT->Annoyance = false;
 	pTT->GuardSlower = false;
@@ -740,8 +782,8 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 			++got;
 	}
 
-	if (hunt && pTarget)
-		pTeam->AssignMissionTarget(pTarget);
+	if (aggressive && pStrike)
+		pTeam->AssignMissionTarget(pStrike);
 
 	// Hybrid fielding (Rex, 2026-09-02): the recruit loop above uses units the
 	// house already owns; if that leaves the team short and the house doesn't
@@ -786,8 +828,8 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 		"recruited %d, queued %d, $%d vs need $%d, slot=%s.\n",
 		rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex, obsValue, count,
 		pType->ID, rule.Mission.c_str(),
-		(hunt && pTarget) ? " target=" : "",
-		(hunt && pTarget) ? pTarget->GetTechnoType()->ID : "",
+		(aggressive && pStrike) ? " target=" : "",
+		(aggressive && pStrike && pStrike->GetTechnoType()) ? pStrike->GetTechnoType()->ID : "",
 		got, queued, money, count * cost, pTT->ID);
 	return true;
 }
@@ -972,6 +1014,50 @@ void Teams::SteerDefenders(HouseClass* pHouse)
 		pt.X = center.X + static_cast<int>(std::cos(a) * radius);
 		pt.Y = center.Y + static_cast<int>(std::sin(a) * radius);
 		MoveDoctrineTeam(hIdx, slots[k], MapClass::Instance.TryGetCellAt(pt));
+	}
+}
+
+bool Teams::HasActiveDecap(HouseClass* pHouse)
+{
+	int const hIdx = pHouse->ArrayIndex;
+	char id[0x18];
+	for (auto const& key : g_decapSlots)
+	{
+		if (key.first != hIdx) continue;
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, key.second);
+		auto const pTeam = TeamTypeClass::Find(id);
+		if (pTeam && pTeam->cntInstances > 0)
+			return true;
+	}
+	return false;
+}
+
+void Teams::SteerDecap(HouseClass* pHouse)
+{
+	int const hIdx = pHouse->ArrayIndex;
+	// Re-acquire the current priority structure each tick: as the ConYard falls
+	// the target advances to the war factory, then economy, etc. — the team
+	// walks down the rebuild chain rather than fixating on a dead building.
+	auto const pEnemy = WeakestEnemy(pHouse);
+	auto const pBld = pEnemy ? DecapTarget(pEnemy) : nullptr;
+	if (!pBld) return;
+
+	for (auto const& key : g_decapSlots)
+	{
+		if (key.first != hIdx) continue;
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DCTR%d_%dTM", hIdx, key.second);
+		auto const pType = TeamTypeClass::Find(id);
+		if (!pType || pType->cntInstances <= 0) continue;
+		auto const pTeam = pType->FindFirstInstance();
+		if (!pTeam) continue;
+		pTeam->AssignMissionTarget(pBld);
+		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
+		{
+			if (pFoot->InLimbo || pFoot->Health <= 0) continue;
+			pFoot->SetTarget(pBld);
+			pFoot->QueueMission(Mission::Attack, false);
+		}
 	}
 }
 
@@ -1347,6 +1433,7 @@ void Teams::Reset()
 	g_interceptSlots.clear();
 	g_defendSlots.clear();
 	g_huntSlots.clear();
+	g_decapSlots.clear();
 	g_floodLastFire.clear();
 	g_reserveLastFire.clear();
 	g_prereqAudited.clear();

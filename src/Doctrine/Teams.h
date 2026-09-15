@@ -46,6 +46,13 @@ namespace Teams
 	// True if the house has at least one live HuntTarget team.
 	bool HasActiveHunt(HouseClass* pHouse);
 
+	// True if the house has at least one live Decapitate team.
+	bool HasActiveDecap(HouseClass* pHouse);
+
+	// Steer Decapitate teams at the weakest enemy's current priority structure,
+	// re-acquiring it each tick so they walk down the rebuild chain (§10h).
+	void SteerDecap(HouseClass* pHouse);
+
 	// Count the house's IDLE ARMED units — combat units on no team (hoarded).
 	int CountIdleArmed(HouseClass* pHouse);
 

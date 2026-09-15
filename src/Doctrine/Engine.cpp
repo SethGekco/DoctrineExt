@@ -4,6 +4,7 @@
 #include "Doctrine/Teams.h"
 #include "Doctrine/LaneTracker.h"
 #include "Doctrine/DeathZones.h"
+#include "Doctrine/AITriggerDifficulty.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -47,6 +48,8 @@ void Engine::TickHouse(HouseClass* pHouse)
 	auto& cfg = DoctrineConfig::Instance;
 	if (!cfg.Parsed)
 		DoctrineConfig::EnsureParsed();
+	// Remap AITriggerType difficulty flags once, now that they're loaded.
+	AITriggerDifficulty::EnsureApplied();
 	if (cfg.Rules.empty())
 		return;
 

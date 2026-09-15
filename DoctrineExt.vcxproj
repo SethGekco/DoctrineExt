@@ -37,6 +37,7 @@
     <ClCompile Include="src\Doctrine\LaneTracker.cpp" />
     <ClCompile Include="src\Doctrine\DeathZones.cpp" />
     <ClCompile Include="src\Doctrine\ArsenalGrader.cpp" />
+    <ClCompile Include="src\Doctrine\AITriggerDifficulty.cpp" />
   </ItemGroup>
 
   <!-- Header files -->
@@ -50,6 +51,7 @@
     <ClInclude Include="src\Doctrine\LaneTracker.h" />
     <ClInclude Include="src\Doctrine\DeathZones.h" />
     <ClInclude Include="src\Doctrine\ArsenalGrader.h" />
+    <ClInclude Include="src\Doctrine\AITriggerDifficulty.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">

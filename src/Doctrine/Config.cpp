@@ -5,6 +5,7 @@
 #include "Doctrine/LaneTracker.h"
 #include "Doctrine/DeathZones.h"
 #include "Doctrine/ArsenalGrader.h"
+#include "Doctrine/AITriggerDifficulty.h"
 
 #include <CCINIClass.h>
 #include <Utilities/Debug.h>
@@ -235,6 +236,7 @@ DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 	LaneTracker::Reset();
 	DeathZones::Reset();
 	ArsenalGrader::Reset();
+	AITriggerDifficulty::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

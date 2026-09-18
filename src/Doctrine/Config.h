@@ -139,6 +139,9 @@ public:
 	bool CrateFiresaleMCV = false;   // when stuck with no way to get an MCV and
 	                                 // ShortGame is off, firesale then grab a
 	                                 // crate for the guaranteed FreeMCV comeback
+	int CrateFiresaleDist = 10;      // only firesale once the grabber is within
+	                                 // this many cells of the crate (so the base
+	                                 // sells just as it arrives, not while it travels)
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

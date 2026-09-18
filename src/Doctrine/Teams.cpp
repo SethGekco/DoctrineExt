@@ -1350,20 +1350,34 @@ void Teams::CrateDoctrine(HouseClass* pHouse)
 	auto const pChaser = PickChaser(pHouse);
 	if (!pChaser) return; // nothing free to grab it
 
+	// Send the grabber for the crate first (so it approaches even before any
+	// firesale), then decide the comeback based on how close it now is.
+	pChaser->SetDestination(pCrate, true);
+	pChaser->QueueMission(Mission::Move, false);
+
 	// Comeback: with no way to get an MCV and a long game, sell everything so the
-	// crate yields the guaranteed FreeMCV (needs zero buildings + money), then
-	// grab it. ShortGame off only — in a Quick Game losing your base loses you.
+	// crate yields the guaranteed FreeMCV (needs zero buildings + money). Wait
+	// until the grabber is within CrateFiresaleDist so the base drops just as it
+	// arrives, not while it's still travelling and defenceless. ShortGame off
+	// only — in a Quick Game losing your base loses you.
 	if (cfg.CrateFiresaleMCV && Unsorted::ShortGame == 0
 		&& !CanRecoverMCV(pHouse) && OwnedBuildingCount(pHouse) > 0
 		&& pHouse->Available_Money() > 0)
 	{
-		Debug::Log("[DoctrineExt] crate firesale-for-MCV: house=%s#%d selling all to grab "
-			"a crate for a free MCV.\n", pHouse->get_ID(), hIdx);
-		pHouse->Fire_Sale();
+		auto const cc = pChaser->GetCoords();
+		auto const cr = pCrate->GetCellCoords();
+		double const dx = cc.X - cr.X, dy = cc.Y - cr.Y;
+		double const dist = std::sqrt(dx * dx + dy * dy);
+		double const trigger = (cfg.CrateFiresaleDist > 0 ? cfg.CrateFiresaleDist : 10) * 256.0;
+		if (dist <= trigger)
+		{
+			Debug::Log("[DoctrineExt] crate firesale-for-MCV: house=%s#%d grabber %.0f "
+				"leptons out (<= %.0f) — selling all for a free-MCV crate.\n",
+				pHouse->get_ID(), hIdx, dist, trigger);
+			pHouse->Fire_Sale();
+		}
 	}
 
-	pChaser->SetDestination(pCrate, true);
-	pChaser->QueueMission(Mission::Move, false);
 	Debug::Log("[DoctrineExt] crate chase: house=%s#%d sends %s to grab a crate.\n",
 		pHouse->get_ID(), hIdx,
 		pChaser->GetTechnoType() ? pChaser->GetTechnoType()->ID : "?");

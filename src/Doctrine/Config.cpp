@@ -144,6 +144,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CrateScanRadius = pINI->ReadInteger("Doctrine.General", "CrateScanRadius", cfg.CrateScanRadius);
 	cfg.CrateInterval = pINI->ReadInteger("Doctrine.General", "CrateInterval", cfg.CrateInterval);
 	cfg.CrateFiresaleMCV = pINI->ReadBool("Doctrine.General", "CrateFiresaleMCV", cfg.CrateFiresaleMCV);
+	cfg.CrateFiresaleDist = pINI->ReadInteger("Doctrine.General", "CrateFiresaleDist", cfg.CrateFiresaleDist);
 	pINI->ReadString("Doctrine.General", "CrateChasers", "", buf, sizeof(buf));
 	cfg.CrateChasers = SplitList(buf);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);

@@ -526,6 +526,38 @@ counter it replies "on it" and dispatches, reusing 6a/6c). No LLM in-engine, jus
 keyword→canned-response→doctrine-action. Very cool for human-AI coop; deepest RE of
 this batch — research the beacon creation/read hooks first.
 
+## 10k. AI co-commander / "second in command" (Rex, 2026-09-15 — LATER, big)
+
+Vision: a CnCNet lobby dropdown gives the player a second country with its own
+MCV. Left alone, an AI runs it as a normal house; but the player can also select,
+command, and fully take over any of its units/buildings. Skirmish toggles:
+command-and-control on/off, shared factories, shared money, etc.
+
+Honest scope — this is the biggest ask yet and spans several systems, so it's a
+LATE item that needs its own feasibility pass before any code:
+- **Lobby/spawn** (CnCNet client + spawn.ini): add the "co-commander" slot, spawn
+  a second house owned by the same player with its own MCV. Client-side work (the
+  xna-cncnet-client fork) plus spawn wiring — outside the DLL, and the hardest
+  plumbing.
+- **Dual control of a house** (the core engine problem): a house is normally
+  either human- or AI-controlled. Here one must accept BOTH — the AI drives it,
+  player commands override, idle-reverts to AI. Needs a hook on the control/
+  selection path so the player can order a non-owned house's objects, plus an
+  arbiter ("AI backs off while the player is actively commanding"; idle timer ->
+  AI resumes — house-wide cousin of the idle-borrow idea §10d B).
+- **Shared resources** (toggles): shared money = redirect the co-house's purse to
+  the player's; shared factories = cross-house production/placement. Each its own
+  hook; all opt-in skirmish settings.
+- **MP command authority**: every takeover order must go through the event queue
+  or it desyncs online (same rule as §10j / the behavior-DLL note).
+
+Where DoctrineExt fits: it already IS the "AI that runs a house well," so the
+co-commander's autonomous behavior is just DoctrineExt on that house. The NEW
+work is the shared-control layer + lobby/spawn. Likely a multi-part project of its
+own (client fork + a control-arbiter hook + resource-share hooks), not a single
+DLL feature. Sequence it after the tractable items. Consult the encyclopedia for
+the selection/command and house-control hooks before committing a hook map.
+
 ## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption

@@ -66,6 +66,11 @@ namespace Teams
 	// Self-throttled (FloodCooldown); opt-in (FloodThreshold=0 disables).
 	void FloodResponse(HouseClass* pHouse);
 
+	// Crate doctrine (§10i): send a fast grabber at nearby crates, and — when
+	// stuck with no route to an MCV in a long game — firesale to grab the
+	// guaranteed FreeMCV crate. Self-throttled; opt-in.
+	void CrateDoctrine(HouseClass* pHouse);
+
 	// Reserve spender (§10f): while the house's cash exceeds ReserveAmount,
 	// build the next affordable item from ReserveBuild — spend surplus instead
 	// of hoarding. Self-throttled (ReserveCooldown); opt-in (Amount=0 off).

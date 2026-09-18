@@ -558,6 +558,24 @@ own (client fork + a control-arbiter hook + resource-share hooks), not a single
 DLL feature. Sequence it after the tractable items. Consult the encyclopedia for
 the selection/command and house-control hooks before committing a hook map.
 
+## 10k. AI co-commander / "second in command" (Rex, 2026-09-15 — LATER, big)
+
+CnCNet lobby dropdown gives the player a second country with its own MCV. Left
+alone an AI runs it normally; the player can also select, command, and fully take
+over its units/buildings. Skirmish toggles: command-and-control on/off, shared
+factories, shared money, etc. Honest scope — biggest ask yet, spans:
+- **Lobby/spawn** (xna-cncnet-client fork + spawn.ini): the co-commander slot +
+  spawning a second same-player house with its own MCV (client-side, hardest).
+- **Dual control of one house** (core engine problem): AI drives it, player
+  orders override, idle-reverts to AI — a control arbiter (idle timer) + a hook
+  letting the player command a non-owned house's objects.
+- **Shared resources** (opt-in): shared money (redirect purse), shared factories
+  (cross-house production/placement) — each its own hook.
+- **MP authority**: takeover orders must go through the event queue or desync.
+DoctrineExt already IS "the AI that runs a house," so the autonomous side is free;
+the NEW work is the shared-control layer + lobby/spawn. Multi-part project of its
+own; sequence after the tractable items.
+
 ## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption

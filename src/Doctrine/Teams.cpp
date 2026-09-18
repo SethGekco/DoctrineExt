@@ -20,6 +20,7 @@
 #include <CellClass.h>
 #include <BuildingClass.h>
 #include <BuildingTypeClass.h>
+#include <OverlayTypeClass.h>
 #include <InfantryTypeClass.h>
 #include <UnitTypeClass.h>
 #include <AircraftTypeClass.h>
@@ -1240,6 +1241,133 @@ void Teams::PrereqAudit(HouseClass* pHouse)
 		auditType(pType, pHouse->CountOwnedAndPresent(pType), true);
 }
 
+namespace
+{
+	std::map<int, int> g_crateLastFire;
+
+	bool IsCrateOverlay(int const idx)
+	{
+		if (idx < 0 || idx >= OverlayTypeClass::Array.Count) return false;
+		auto const pO = OverlayTypeClass::Array.GetItem(idx);
+		return pO && pO->Crate;
+	}
+
+	// Nearest crate cell within radius (cells) of a coord; scans a bounded box
+	// (crates are sparse and this is throttled, so a local scan is cheap).
+	CellClass* NearestCrate(const CoordStruct& from, int const radiusCells)
+	{
+		CellStruct const c0 = CellClass::Coord2Cell(from);
+		CellClass* best = nullptr;
+		int bestD2 = radiusCells * radiusCells + 1;
+		for (int dy = -radiusCells; dy <= radiusCells; ++dy)
+			for (int dx = -radiusCells; dx <= radiusCells; ++dx)
+			{
+				int const d2 = dx * dx + dy * dy;
+				if (d2 >= bestD2) continue;
+				CellStruct cs;
+				cs.X = static_cast<short>(c0.X + dx);
+				cs.Y = static_cast<short>(c0.Y + dy);
+				auto const pCell = MapClass::Instance.TryGetCellAt(cs);
+				if (!pCell || !IsCrateOverlay(pCell->OverlayTypeIndex)) continue;
+				best = pCell;
+				bestD2 = d2;
+			}
+		return best;
+	}
+
+	// The house's best available crate grabber: prefer the modder's CrateChasers
+	// list, else the fastest idle mobile unit. Returns null if none free.
+	FootClass* PickChaser(HouseClass* const pHouse)
+	{
+		auto const& chasers = DoctrineConfig::Instance.CrateChasers;
+		FootClass* bySpeed = nullptr; int bestSpeed = -1;
+		FootClass* byList = nullptr; int bestListRank = 1 << 30;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Unit && what != AbstractType::Infantry) continue;
+			auto const pFoot = static_cast<FootClass*>(pT);
+			if (pFoot->Team) continue; // don't pull tasked units
+			auto const pType = pT->GetTechnoType();
+			if (!pType || pType->ResourceGatherer) continue;
+			if (pType->Speed > bestSpeed) { bestSpeed = pType->Speed; bySpeed = pFoot; }
+			for (int r = 0; r < static_cast<int>(chasers.size()); ++r)
+				if (chasers[r] == pType->ID && r < bestListRank)
+					{ bestListRank = r; byList = pFoot; }
+		}
+		return byList ? byList : bySpeed;
+	}
+
+	// Can this house recover an MCV normally (owns a ConYard, owns an MCV, or can
+	// build one)? If not, its only route back is the FreeMCV crate.
+	bool CanRecoverMCV(HouseClass* const pHouse)
+	{
+		int buildings = 0, conyards = 0;
+		for (auto const pBt : BuildingTypeClass::Array)
+		{
+			int const n = pHouse->CountOwnedNow(pBt);
+			buildings += n;
+			if (n > 0 && pBt->ConstructionYard) conyards += n;
+		}
+		if (conyards > 0) return true;
+		for (auto const pUt : UnitTypeClass::Array)
+		{
+			if (!pUt || !pUt->DeploysInto) continue; // MCV-type
+			if (pHouse->CountOwnedAndPresent(pUt) > 0) return true; // owns an MCV
+			if (CanBuildStrict(pHouse, pUt)) return true;           // can build one
+		}
+		return false;
+	}
+
+	int OwnedBuildingCount(HouseClass* const pHouse)
+	{
+		int n = 0;
+		for (auto const pBt : BuildingTypeClass::Array)
+			n += pHouse->CountOwnedNow(pBt);
+		return n;
+	}
+}
+
+void Teams::CrateDoctrine(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.CrateChase && !cfg.CrateFiresaleMCV) return; // opt-in
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.CrateInterval > 0 ? cfg.CrateInterval : 90;
+	auto const it = g_crateLastFire.find(hIdx);
+	if (it != g_crateLastFire.end() && now - it->second < interval) return;
+
+	auto const baseCoord = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	auto const pCrate = NearestCrate(baseCoord, cfg.CrateScanRadius > 0 ? cfg.CrateScanRadius : 30);
+	if (!pCrate) return; // no crate nearby
+	g_crateLastFire[hIdx] = now;
+
+	auto const pChaser = PickChaser(pHouse);
+	if (!pChaser) return; // nothing free to grab it
+
+	// Comeback: with no way to get an MCV and a long game, sell everything so the
+	// crate yields the guaranteed FreeMCV (needs zero buildings + money), then
+	// grab it. ShortGame off only — in a Quick Game losing your base loses you.
+	if (cfg.CrateFiresaleMCV && Unsorted::ShortGame == 0
+		&& !CanRecoverMCV(pHouse) && OwnedBuildingCount(pHouse) > 0
+		&& pHouse->Available_Money() > 0)
+	{
+		Debug::Log("[DoctrineExt] crate firesale-for-MCV: house=%s#%d selling all to grab "
+			"a crate for a free MCV.\n", pHouse->get_ID(), hIdx);
+		pHouse->Fire_Sale();
+	}
+
+	pChaser->SetDestination(pCrate, true);
+	pChaser->QueueMission(Mission::Move, false);
+	Debug::Log("[DoctrineExt] crate chase: house=%s#%d sends %s to grab a crate.\n",
+		pHouse->get_ID(), hIdx,
+		pChaser->GetTechnoType() ? pChaser->GetTechnoType()->ID : "?");
+}
+
 int Teams::CountIdleArmed(HouseClass* pHouse)
 {
 	int n = 0;
@@ -1442,6 +1570,7 @@ void Teams::Reset()
 	g_decapSlots.clear();
 	g_floodLastFire.clear();
 	g_reserveLastFire.clear();
+	g_crateLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();
 }

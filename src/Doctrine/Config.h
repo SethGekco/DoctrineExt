@@ -131,6 +131,14 @@ public:
 	bool AutoArsenal = true;         // auto-fill roles not explicitly listed in
 	                                 // [Doctrine.Arsenal] by grading the roster
 	int AutoArsenalDepth = 6;        // units kept per auto-graded role
+	// Crate doctrine ([Doctrine.General], §10i)
+	bool CrateChase = false;         // send a fast grabber at nearby crates
+	std::vector<std::string> CrateChasers; // preferred grabber IDs (else fastest)
+	int CrateScanRadius = 30;        // cells around the base scanned for crates
+	int CrateInterval = 90;          // frames between crate scans per house
+	bool CrateFiresaleMCV = false;   // when stuck with no way to get an MCV and
+	                                 // ShortGame is off, firesale then grab a
+	                                 // crate for the guaranteed FreeMCV comeback
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

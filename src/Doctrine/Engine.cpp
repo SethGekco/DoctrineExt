@@ -127,6 +127,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// instead of hoarding. Self-throttled + opt-in (ReserveAmount=0 disables).
 	Teams::ReserveSpend(pHouse);
 
+	// Crate doctrine (§10i): chase nearby crates + firesale-for-MCV comeback.
+	// Self-throttled + opt-in.
+	Teams::CrateDoctrine(pHouse);
+
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.
 	Teams::RushCheck(pHouse);

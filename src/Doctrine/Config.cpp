@@ -140,6 +140,12 @@ void DoctrineConfig::EnsureParsed()
 	cfg.DecapOther = pINI->ReadInteger("Doctrine.Decap", "Other", cfg.DecapOther);
 	cfg.AutoArsenal = pINI->ReadBool("Doctrine.General", "AutoArsenal", cfg.AutoArsenal);
 	cfg.AutoArsenalDepth = pINI->ReadInteger("Doctrine.General", "AutoArsenalDepth", cfg.AutoArsenalDepth);
+	cfg.CrateChase = pINI->ReadBool("Doctrine.General", "CrateChase", cfg.CrateChase);
+	cfg.CrateScanRadius = pINI->ReadInteger("Doctrine.General", "CrateScanRadius", cfg.CrateScanRadius);
+	cfg.CrateInterval = pINI->ReadInteger("Doctrine.General", "CrateInterval", cfg.CrateInterval);
+	cfg.CrateFiresaleMCV = pINI->ReadBool("Doctrine.General", "CrateFiresaleMCV", cfg.CrateFiresaleMCV);
+	pINI->ReadString("Doctrine.General", "CrateChasers", "", buf, sizeof(buf));
+	cfg.CrateChasers = SplitList(buf);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

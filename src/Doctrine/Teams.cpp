@@ -26,6 +26,7 @@
 #include <AircraftTypeClass.h>
 #include <Memory.h>
 #include <Fundamentals.h>
+#include <Unsorted.h>
 #include <GeneralDefinitions.h>
 #include <Utilities/Debug.h>
 

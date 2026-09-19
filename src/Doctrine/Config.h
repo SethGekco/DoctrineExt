@@ -142,6 +142,12 @@ public:
 	int CrateFiresaleDist = 10;      // only firesale once the grabber is within
 	                                 // this many cells of the crate (so the base
 	                                 // sells just as it arrives, not while it travels)
+	// Garrison doctrine ([Doctrine.General], §10e)
+	bool GarrisonInfantry = false;   // keep building Occupier infantry while
+	                                 // vacant occupiable buildings exist, and
+	                                 // send idle occupiers to garrison correctly
+	int GarrisonInterval = 60;       // frames between garrison passes per house
+	int GarrisonMaxProduce = 2;      // occupiers queued per pass
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

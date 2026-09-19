@@ -1394,6 +1394,85 @@ namespace
 	}
 }
 
+namespace { std::map<int, int> g_garrisonLastFire; }
+
+void Teams::GarrisonDoctrine(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.GarrisonInfantry) return; // opt-in
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.GarrisonInterval > 0 ? cfg.GarrisonInterval : 60;
+	auto const it = g_garrisonLastFire.find(hIdx);
+	if (it != g_garrisonLastFire.end() && now - it->second < interval) return;
+	g_garrisonLastFire[hIdx] = now;
+
+	// Vacant occupiable slots: the house's own battle bunkers (ShouldEnterOccupiable
+	// routes to those) vs neutral city buildings (ShouldGarrisonStructure).
+	int ownedVac = 0, neutralVac = 0;
+	for (int i = 0; i < BuildingClass::Array.Count; ++i)
+	{
+		auto const pB = BuildingClass::Array.GetItem(i);
+		if (!pB || pB->InLimbo || pB->Health <= 0) continue;
+		auto const bt = pB->Type;
+		if (!bt || !bt->CanBeOccupied) continue;
+		int const free = bt->MaxNumberOccupants - pB->GetOccupantCount();
+		if (free <= 0) continue;
+		if (pB->Owner == pHouse) ownedVac += free;
+		else if (pB->Owner && pB->Owner->IsNeutral()) neutralVac += free;
+	}
+	int const vacant = ownedVac + neutralVac;
+	if (vacant <= 0) return; // nothing to fill
+
+	// Send every idle occupier to garrison via the engine's OWN enter flags —
+	// this is the correct path, so they enter instead of mistakenly attacking.
+	int idle = 0;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+	{
+		auto const pT = TechnoClass::Array.GetItem(i);
+		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+		if (pT->WhatAmI() != AbstractType::Infantry) continue;
+		auto const it2 = static_cast<InfantryTypeClass*>(pT->GetTechnoType());
+		if (!it2 || !it2->Occupier) continue;
+		auto const pFoot = static_cast<FootClass*>(pT);
+		if (pFoot->Team) continue; // don't pull tasked units
+		++idle;
+		if (ownedVac > 0)   pFoot->ShouldEnterOccupiable = true;
+		if (neutralVac > 0) pFoot->ShouldGarrisonStructure = true;
+	}
+
+	// Keep building occupiers while slots remain unfilled by idle ones.
+	int queued = 0;
+	if (idle < vacant)
+	{
+		TechnoTypeClass* pBest = nullptr;
+		double bestDps = -1.0;
+		for (auto const pIt : InfantryTypeClass::Array)
+		{
+			if (!pIt || !pIt->Occupier) continue;
+			if (!CanBuildStrict(pHouse, pIt)) continue;
+			double const dps = RawDPS(pIt);        // prefer the stronger occupier
+			if (dps > bestDps) { bestDps = dps; pBest = pIt; }
+		}
+		if (pBest)
+		{
+			if (auto const pFactory = FindHouseFactory(pHouse, pBest))
+			{
+				int const cap = cfg.GarrisonMaxProduce > 0 ? cfg.GarrisonMaxProduce : 2;
+				int want = vacant - idle;
+				if (want > cap) want = cap;
+				for (int k = 0; k < want; ++k) { pFactory->DemandProduction(pBest, pHouse, true); ++queued; }
+			}
+		}
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] garrison: house=%s#%d vacant=%d (bunker %d / neutral %d) "
+			"idle occupiers=%d sent, queued %d.\n",
+			pHouse->get_ID(), hIdx, vacant, ownedVac, neutralVac, idle, queued);
+}
+
 void Teams::CrateDoctrine(HouseClass* pHouse)
 {
 	auto const& cfg = DoctrineConfig::Instance;
@@ -1718,6 +1797,7 @@ void Teams::Reset()
 	g_floodLastFire.clear();
 	g_reserveLastFire.clear();
 	g_crateLastFire.clear();
+	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();
 }

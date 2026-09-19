@@ -127,6 +127,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// instead of hoarding. Self-throttled + opt-in (ReserveAmount=0 disables).
 	Teams::ReserveSpend(pHouse);
 
+	// Garrison doctrine (§10e): fill vacant occupiable buildings with Occupier
+	// infantry via the correct enter flags. Self-throttled + opt-in.
+	Teams::GarrisonDoctrine(pHouse);
+
 	// Crate doctrine (§10i): chase nearby crates + firesale-for-MCV comeback.
 	// Self-throttled + opt-in.
 	Teams::CrateDoctrine(pHouse);

@@ -66,6 +66,11 @@ namespace Teams
 	// Self-throttled (FloodCooldown); opt-in (FloodThreshold=0 disables).
 	void FloodResponse(HouseClass* pHouse);
 
+	// Garrison doctrine (§10e): while vacant occupiable buildings exist, keep
+	// building Occupier infantry and send idle occupiers to enter them via the
+	// engine's own garrison flags (so they enter, not mistakenly attack).
+	void GarrisonDoctrine(HouseClass* pHouse);
+
 	// Crate doctrine (§10i): send a fast grabber at nearby crates, and — when
 	// stuck with no route to an MCV in a long game — firesale to grab the
 	// guaranteed FreeMCV crate. Self-throttled; opt-in.

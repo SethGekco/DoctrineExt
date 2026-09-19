@@ -1370,16 +1370,27 @@ void Teams::CrateDoctrine(HouseClass* pHouse)
 	// until the grabber is within CrateFiresaleDist so the base drops just as it
 	// arrives, not while it's still travelling and defenceless. ShortGame off
 	// only — in a Quick Game losing your base loses you.
-	if (cfg.CrateFiresaleMCV && Unsorted::ShortGame == 0
-		&& !CanRecoverMCV(pHouse) && OwnedBuildingCount(pHouse) > 0
-		&& pHouse->Available_Money() > 0)
+	if (cfg.CrateFiresaleMCV)
 	{
+		bool const canRecover = CanRecoverMCV(pHouse);
+		int const buildings = OwnedBuildingCount(pHouse);
+		int const money = static_cast<int>(pHouse->Available_Money());
+		bool const shortGame = Unsorted::ShortGame != 0;
 		auto const cc = pChaser->GetCoords();
 		auto const cr = pCrate->GetCellCoords();
-		double const dx = cc.X - cr.X, dy = cc.Y - cr.Y;
-		double const dist = std::sqrt(dx * dx + dy * dy);
+		double const dist = std::sqrt(double(cc.X - cr.X) * (cc.X - cr.X)
+			+ double(cc.Y - cr.Y) * (cc.Y - cr.Y));
 		double const trigger = (cfg.CrateFiresaleDist > 0 ? cfg.CrateFiresaleDist : 10) * 256.0;
-		if (dist <= trigger)
+
+		// Readiness trace: shows every factor so we can see how close the AI is
+		// to the comeback and confirm each condition reads correctly, even in
+		// games where it never actually fires.
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] crate comeback check: house=%s#%d canRecoverMCV=%d "
+				"buildings=%d money=%d shortGame=%d grabberDist=%.0f (trigger<=%.0f)\n",
+				pHouse->get_ID(), hIdx, canRecover, buildings, money, shortGame, dist, trigger);
+
+		if (!shortGame && !canRecover && buildings > 0 && money > 0 && dist <= trigger)
 		{
 			Debug::Log("[DoctrineExt] crate firesale-for-MCV: house=%s#%d grabber %.0f "
 				"leptons out (<= %.0f) — selling all for a free-MCV crate.\n",

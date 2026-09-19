@@ -1345,14 +1345,20 @@ void Teams::CrateDoctrine(HouseClass* pHouse)
 	int const interval = cfg.CrateInterval > 0 ? cfg.CrateInterval : 90;
 	auto const it = g_crateLastFire.find(hIdx);
 	if (it != g_crateLastFire.end() && now - it->second < interval) return;
+	g_crateLastFire[hIdx] = now; // throttle the SCAN too, crate found or not
 
 	auto const baseCoord = CellClass::Cell2Coord(pHouse->GetBaseCenter());
 	auto const pCrate = NearestCrate(baseCoord, cfg.CrateScanRadius > 0 ? cfg.CrateScanRadius : 30);
 	if (!pCrate) return; // no crate nearby
-	g_crateLastFire[hIdx] = now;
 
 	auto const pChaser = PickChaser(pHouse);
-	if (!pChaser) return; // nothing free to grab it
+	if (!pChaser)
+	{
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] crate near %s#%d but no free armed grabber.\n",
+				pHouse->get_ID(), hIdx);
+		return;
+	}
 
 	// Send the grabber for the crate first (so it approaches even before any
 	// firesale), then decide the comeback based on how close it now is.

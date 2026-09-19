@@ -71,6 +71,13 @@ namespace Teams
 	// guaranteed FreeMCV crate. Self-throttled; opt-in.
 	void CrateDoctrine(HouseClass* pHouse);
 
+	// True if the house has a live crate-grab team.
+	bool HasActiveCrate(HouseClass* pHouse);
+
+	// Drive the crate-grab team onto the nearest crate each tick (a loose Move
+	// gets countermanded by the base AI; a steered team member sticks).
+	void SteerCrate(HouseClass* pHouse);
+
 	// Reserve spender (§10f): while the house's cash exceeds ReserveAmount,
 	// build the next affordable item from ReserveBuild — spend surplus instead
 	// of hoarding. Self-throttled (ReserveCooldown); opt-in (Amount=0 off).

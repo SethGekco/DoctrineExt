@@ -130,6 +130,9 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// Crate doctrine (§10i): chase nearby crates + firesale-for-MCV comeback.
 	// Self-throttled + opt-in.
 	Teams::CrateDoctrine(pHouse);
+	// Steer the crate-grab team onto the crate each tick (sticks vs the AI).
+	if (Teams::HasActiveCrate(pHouse))
+		Teams::SteerCrate(pHouse);
 
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.

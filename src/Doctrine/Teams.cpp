@@ -1333,6 +1333,65 @@ namespace
 			n += pHouse->CountOwnedNow(pBt);
 		return n;
 	}
+
+	// The house's dedicated crate-grab team (ID "DCRG<house>*"), separate from
+	// the combat slot pool. A loose Move order gets countermanded by the base
+	// AI's own unit handling every frame; a TEAM member is driven by the team,
+	// not the loose-unit AI, so it actually reaches the crate (same reason
+	// intercept/hunt/defend steering sticks). Creates the trio + team on first
+	// use and recruits one grabber if empty. Returns the live team, or null.
+	TeamClass* EnsureCrateTeam(HouseClass* const pHouse, FootClass* const pChaser)
+	{
+		int const hIdx = pHouse->ArrayIndex;
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DCRG%dTM", hIdx);
+		auto pTT = TeamTypeClass::Find(id);
+		if (!pTT) pTT = GameCreate<TeamTypeClass>(id);
+		if (!pTT) return nullptr;
+		std::snprintf(id, sizeof(id), "DCRG%dTF", hIdx);
+		auto pTF = TaskForceClass::Find(id);
+		if (!pTF) pTF = GameCreate<TaskForceClass>(id);
+		std::snprintf(id, sizeof(id), "DCRG%dSC", hIdx);
+		auto pSC = ScriptTypeClass::Find(id);
+		if (!pSC) pSC = GameCreate<ScriptTypeClass>(id);
+		if (!pTF || !pSC) return nullptr;
+
+		auto const pType = pChaser ? pChaser->GetTechnoType() : nullptr;
+		pTF->CountEntries = 1;
+		pTF->Entries[0] = { 1, pType };
+		pTF->Group = -1;
+		pSC->ActionsCount = 1;
+		pSC->ScriptActions[0] = { 5, 120 }; // guard; we steer to the crate each tick
+		pTT->TaskForce = pTF;
+		pTT->ScriptType = pSC;
+		pTT->Max = 1;
+		pTT->Owner = nullptr;
+		pTT->idxHouse = -1;
+		pTT->Autocreate = false;
+		pTT->Prebuild = false;
+		pTT->Reinforce = false;
+		pTT->Recruiter = false;   // one hand-picked grabber, no auto-fill
+		pTT->LooseRecruit = false;
+		pTT->AreTeamMembersRecruitable = false;
+		pTT->IsBaseDefense = false;
+		pTT->Full = false;
+		pTT->Aggressive = false;
+		pTT->Loadable = false;
+		pTT->Suicide = false;
+		pTT->Whiner = false;
+		pTT->Annoyance = false;
+		pTT->GuardSlower = false;
+		pTT->Droppod = false;
+		pTT->OnTransOnly = false;
+
+		auto const pTeam = pTT->cntInstances > 0 ? pTT->FindFirstInstance()
+			: pTT->CreateTeam(pHouse);
+		if (!pTeam) return nullptr;
+		// Recruit the grabber only if the team is empty (keep it to one unit).
+		if (!pTeam->FirstUnit && pChaser && !pChaser->Team)
+			pTeam->AddMember(pChaser, true);
+		return pTeam;
+	}
 }
 
 void Teams::CrateDoctrine(HouseClass* pHouse)
@@ -1351,19 +1410,35 @@ void Teams::CrateDoctrine(HouseClass* pHouse)
 	auto const pCrate = NearestCrate(baseCoord, cfg.CrateScanRadius > 0 ? cfg.CrateScanRadius : 30);
 	if (!pCrate) return; // no crate nearby
 
-	auto const pChaser = PickChaser(pHouse);
-	if (!pChaser)
+	// Put a grabber on the dedicated crate team (only picks a new one if the
+	// team is empty); SteerCrate drives it to the crate each tick. Loose Move
+	// orders were being countermanded by the base AI, so the team is essential.
+	char teamId[0x18];
+	std::snprintf(teamId, sizeof(teamId), "DCRG%dTM", hIdx);
+	auto const pExisting = TeamTypeClass::Find(teamId);
+	bool const haveGrabber = pExisting && pExisting->cntInstances > 0
+		&& pExisting->FindFirstInstance() && pExisting->FindFirstInstance()->FirstUnit;
+
+	FootClass* pChaser = nullptr;
+	if (!haveGrabber)
 	{
-		if (cfg.DebugTicks)
-			Debug::Log("[DoctrineExt] crate near %s#%d but no free armed grabber.\n",
-				pHouse->get_ID(), hIdx);
-		return;
+		pChaser = PickChaser(pHouse);
+		if (!pChaser)
+		{
+			if (cfg.DebugTicks)
+				Debug::Log("[DoctrineExt] crate near %s#%d but no free armed grabber.\n",
+					pHouse->get_ID(), hIdx);
+			return;
+		}
+		EnsureCrateTeam(pHouse, pChaser);
 	}
 
-	// Send the grabber for the crate first (so it approaches even before any
-	// firesale), then decide the comeback based on how close it now is.
-	pChaser->SetDestination(pCrate, true);
-	pChaser->QueueMission(Mission::Move, false);
+	// The grabber whose position gates the firesale (existing team member, or
+	// the one just recruited).
+	FootClass* pGrabber = pChaser;
+	if (!pGrabber && pExisting && pExisting->FindFirstInstance())
+		pGrabber = pExisting->FindFirstInstance()->FirstUnit;
+	if (!pGrabber) return;
 
 	// Comeback: with no way to get an MCV and a long game, sell everything so the
 	// crate yields the guaranteed FreeMCV (needs zero buildings + money). Wait
@@ -1376,7 +1451,7 @@ void Teams::CrateDoctrine(HouseClass* pHouse)
 		int const buildings = OwnedBuildingCount(pHouse);
 		int const money = static_cast<int>(pHouse->Available_Money());
 		bool const shortGame = Unsorted::ShortGame != 0;
-		auto const cc = pChaser->GetCoords();
+		auto const cc = pGrabber->GetCoords();
 		auto const cr = pCrate->GetCellCoords();
 		double const dist = std::sqrt(double(cc.X - cr.X) * (cc.X - cr.X)
 			+ double(cc.Y - cr.Y) * (cc.Y - cr.Y));
@@ -1399,9 +1474,45 @@ void Teams::CrateDoctrine(HouseClass* pHouse)
 		}
 	}
 
-	Debug::Log("[DoctrineExt] crate chase: house=%s#%d sends %s to grab a crate.\n",
+	Debug::Log("[DoctrineExt] crate chase: house=%s#%d grabber %s en route to a crate.\n",
 		pHouse->get_ID(), hIdx,
-		pChaser->GetTechnoType() ? pChaser->GetTechnoType()->ID : "?");
+		pGrabber->GetTechnoType() ? pGrabber->GetTechnoType()->ID : "?");
+}
+
+bool Teams::HasActiveCrate(HouseClass* pHouse)
+{
+	char id[0x18];
+	std::snprintf(id, sizeof(id), "DCRG%dTM", pHouse->ArrayIndex);
+	auto const pTT = TeamTypeClass::Find(id);
+	return pTT && pTT->cntInstances > 0;
+}
+
+void Teams::SteerCrate(HouseClass* pHouse)
+{
+	char id[0x18];
+	std::snprintf(id, sizeof(id), "DCRG%dTM", pHouse->ArrayIndex);
+	auto const pTT = TeamTypeClass::Find(id);
+	if (!pTT || pTT->cntInstances <= 0) return;
+	auto const pTeam = pTT->FindFirstInstance();
+	if (!pTeam || !pTeam->FirstUnit) return;
+
+	// Track the nearest crate to the grabber (a bit wider than the base scan so
+	// it keeps homing as it travels); when the crate's gone (collected or taken)
+	// disband so the unit returns to the AI.
+	int const r = (DoctrineConfig::Instance.CrateScanRadius > 0
+		? DoctrineConfig::Instance.CrateScanRadius : 30) * 2;
+	auto const pCrate = NearestCrate(pTeam->FirstUnit->GetCoords(), r);
+	if (!pCrate)
+	{
+		pTT->DestroyAllInstances();
+		return;
+	}
+	for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
+	{
+		if (pFoot->InLimbo || pFoot->Health <= 0) continue;
+		pFoot->SetDestination(pCrate, true);
+		pFoot->QueueMission(Mission::Move, false);
+	}
 }
 
 int Teams::CountIdleArmed(HouseClass* pHouse)

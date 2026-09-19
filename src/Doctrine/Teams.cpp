@@ -1293,7 +1293,11 @@ namespace
 			if (pFoot->Team) continue; // don't pull tasked units
 			auto const pType = pT->GetTechnoType();
 			if (!pType || pType->ResourceGatherer) continue;
-			if (pType->Speed > bestSpeed) { bestSpeed = pType->Speed; bySpeed = pFoot; }
+			// The modder list may name anything; the SPEED fallback only takes a
+			// real combat unit (has a weapon) so it never grabs a dummy/spawner
+			// helper (e.g. DRONEDUMMY2) that can't actually collect the crate.
+			if (HasOffensiveWeapon(pType) && pType->Speed > bestSpeed)
+				{ bestSpeed = pType->Speed; bySpeed = pFoot; }
 			for (int r = 0; r < static_cast<int>(chasers.size()); ++r)
 				if (chasers[r] == pType->ID && r < bestListRank)
 					{ bestListRank = r; byList = pFoot; }

@@ -1277,12 +1277,16 @@ namespace
 	}
 
 	// The house's best available crate grabber: prefer the modder's CrateChasers
-	// list, else the fastest idle mobile unit. Returns null if none free.
+	// list, else the fastest mobile unit. Prefers teamless units, but the AI
+	// teams ~every unit (verified via garrison diag), so a teamed unit is a
+	// fallback — the caller LiberateMembers it before use. Returns null if none.
 	FootClass* PickChaser(HouseClass* const pHouse)
 	{
 		auto const& chasers = DoctrineConfig::Instance.CrateChasers;
-		FootClass* bySpeed = nullptr; int bestSpeed = -1;
-		FootClass* byList = nullptr; int bestListRank = 1 << 30;
+		FootClass* bySpeedFree = nullptr; int bestSpeedFree = -1;
+		FootClass* byListFree = nullptr;  int bestListRankFree = 1 << 30;
+		FootClass* bySpeedTeam = nullptr; int bestSpeedTeam = -1;
+		FootClass* byListTeam = nullptr;  int bestListRankTeam = 1 << 30;
 		for (int i = 0; i < TechnoClass::Array.Count; ++i)
 		{
 			auto const pT = TechnoClass::Array.GetItem(i);
@@ -1290,19 +1294,30 @@ namespace
 			auto const what = pT->WhatAmI();
 			if (what != AbstractType::Unit && what != AbstractType::Infantry) continue;
 			auto const pFoot = static_cast<FootClass*>(pT);
-			if (pFoot->Team) continue; // don't pull tasked units
 			auto const pType = pT->GetTechnoType();
 			if (!pType || pType->ResourceGatherer) continue;
+			bool const teamed = (pFoot->Team != nullptr);
 			// The modder list may name anything; the SPEED fallback only takes a
 			// real combat unit (has a weapon) so it never grabs a dummy/spawner
 			// helper (e.g. DRONEDUMMY2) that can't actually collect the crate.
-			if (HasOffensiveWeapon(pType) && pType->Speed > bestSpeed)
-				{ bestSpeed = pType->Speed; bySpeed = pFoot; }
+			if (HasOffensiveWeapon(pType))
+			{
+				if (!teamed && pType->Speed > bestSpeedFree)
+					{ bestSpeedFree = pType->Speed; bySpeedFree = pFoot; }
+				else if (teamed && pType->Speed > bestSpeedTeam)
+					{ bestSpeedTeam = pType->Speed; bySpeedTeam = pFoot; }
+			}
 			for (int r = 0; r < static_cast<int>(chasers.size()); ++r)
-				if (chasers[r] == pType->ID && r < bestListRank)
-					{ bestListRank = r; byList = pFoot; }
+			{
+				if (chasers[r] != pType->ID) continue;
+				if (!teamed && r < bestListRankFree) { bestListRankFree = r; byListFree = pFoot; }
+				else if (teamed && r < bestListRankTeam) { bestListRankTeam = r; byListTeam = pFoot; }
+			}
 		}
-		return byList ? byList : bySpeed;
+		if (byListFree)  return byListFree;   // teamless, on the list — ideal
+		if (bySpeedFree) return bySpeedFree;  // teamless, fastest
+		if (byListTeam)  return byListTeam;   // divert: teamed, on the list
+		return bySpeedTeam;                   // divert: teamed, fastest (or null)
 	}
 
 	// Can this house recover an MCV normally (owns a ConYard, owns an MCV, or can
@@ -1635,10 +1650,11 @@ void Teams::CrateDoctrine(HouseClass* pHouse)
 		if (!pChaser)
 		{
 			if (cfg.DebugTicks)
-				Debug::Log("[DoctrineExt] crate near %s#%d but no free armed grabber.\n",
+				Debug::Log("[DoctrineExt] crate near %s#%d but no armed grabber at all.\n",
 					pHouse->get_ID(), hIdx);
 			return;
 		}
+		if (pChaser->Team) pChaser->Team->LiberateMember(pChaser); // divert off AI team
 		EnsureCrateTeam(pHouse, pChaser);
 	}
 

@@ -148,6 +148,16 @@ public:
 	                                 // send idle occupiers to garrison correctly
 	int GarrisonInterval = 60;       // frames between garrison passes per house
 	int GarrisonMaxProduce = 2;      // occupiers queued per pass
+	// Garrison priority + creep ([Doctrine.Garrison], §10e-2)
+	int GarrisonRadius = 30;         // max creep radius (cells) — bounds it to the
+	                                 // house's turf so production can't run away
+	int GarrisonRadiusStart = 10;    // initial radius (holds the base first)
+	int GarrisonCreepRate = 300;     // frames per +1 cell the radius grows outward
+	int GarrisonScanNear = 6;        // cells checked for ore/tech near a building
+	double GPerimeterW = 3.0;        // weight: closer to base = higher priority
+	double GCreepW = 1.0;            // weight: farther out = higher (creep bias)
+	double GOreW = 2.0;              // weight: building near ore
+	double GTechW = 2.0;             // weight: building near a neutral tech structure
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

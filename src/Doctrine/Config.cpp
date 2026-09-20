@@ -148,6 +148,14 @@ void DoctrineConfig::EnsureParsed()
 	cfg.GarrisonInfantry = pINI->ReadBool("Doctrine.General", "GarrisonInfantry", cfg.GarrisonInfantry);
 	cfg.GarrisonInterval = pINI->ReadInteger("Doctrine.General", "GarrisonInterval", cfg.GarrisonInterval);
 	cfg.GarrisonMaxProduce = pINI->ReadInteger("Doctrine.General", "GarrisonMaxProduce", cfg.GarrisonMaxProduce);
+	cfg.GarrisonRadius = pINI->ReadInteger("Doctrine.Garrison", "Radius", cfg.GarrisonRadius);
+	cfg.GarrisonRadiusStart = pINI->ReadInteger("Doctrine.Garrison", "RadiusStart", cfg.GarrisonRadiusStart);
+	cfg.GarrisonCreepRate = pINI->ReadInteger("Doctrine.Garrison", "CreepRate", cfg.GarrisonCreepRate);
+	cfg.GarrisonScanNear = pINI->ReadInteger("Doctrine.Garrison", "ScanNear", cfg.GarrisonScanNear);
+	cfg.GPerimeterW = pINI->ReadDouble("Doctrine.Garrison", "PerimeterWeight", cfg.GPerimeterW);
+	cfg.GCreepW = pINI->ReadDouble("Doctrine.Garrison", "CreepWeight", cfg.GCreepW);
+	cfg.GOreW = pINI->ReadDouble("Doctrine.Garrison", "OreWeight", cfg.GOreW);
+	cfg.GTechW = pINI->ReadDouble("Doctrine.Garrison", "TechWeight", cfg.GTechW);
 	pINI->ReadString("Doctrine.General", "CrateChasers", "", buf, sizeof(buf));
 	cfg.CrateChasers = SplitList(buf);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);

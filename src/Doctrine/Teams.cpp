@@ -1394,7 +1394,52 @@ namespace
 	}
 }
 
-namespace { std::map<int, int> g_garrisonLastFire; }
+namespace
+{
+	std::map<int, int> g_garrisonLastFire;
+
+	// True if any cell within `nearCells` of `c` holds ore/gems (§10e-2 ore
+	// criterion — occupy buildings that overlook the enemy's, or our own,
+	// income). Small box scan, throttled by the garrison interval.
+	bool OreNear(CoordStruct const& c, int nearCells)
+	{
+		CellStruct const c0 = CellClass::Coord2Cell(c);
+		for (int dy = -nearCells; dy <= nearCells; ++dy)
+			for (int dx = -nearCells; dx <= nearCells; ++dx)
+			{
+				CellStruct cs;
+				cs.X = static_cast<short>(c0.X + dx);
+				cs.Y = static_cast<short>(c0.Y + dy);
+				auto const pCell = MapClass::Instance.TryGetCellAt(cs);
+				if (pCell && pCell->GetContainedTiberiumValue() > 0) return true;
+			}
+		return false;
+	}
+
+	// True if a capturable neutral tech structure sits within `nearCells` of `c`
+	// (§10e-2 tech criterion — garrisoning nearby denies/guards the capture).
+	bool TechNear(CoordStruct const& c, int nearCells)
+	{
+		double const nearLep = nearCells * 256.0;
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || pB->InLimbo || pB->Health <= 0) continue;
+			auto const bt = pB->Type;
+			if (!bt || !bt->Capturable) continue;
+			if (!pB->Owner || !pB->Owner->IsNeutral()) continue;
+			auto const bc = pB->GetCoords();
+			double const dx = bc.X - c.X, dy = bc.Y - c.Y;
+			if (std::sqrt(dx * dx + dy * dy) <= nearLep) return true;
+		}
+		return false;
+	}
+
+	// One vacant slot to fill, with its building's priority score. We expand a
+	// building into `free` entries so distribution across the top-scored
+	// buildings is slot-aware (occupiers spread, don't all pile on one).
+	struct GarrisonSlot { BuildingClass* pB; double score; bool bunker; };
+}
 
 void Teams::GarrisonDoctrine(HouseClass* pHouse)
 {
@@ -1408,9 +1453,24 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 	if (it != g_garrisonLastFire.end() && now - it->second < interval) return;
 	g_garrisonLastFire[hIdx] = now;
 
-	// Vacant occupiable slots: the house's own battle bunkers (ShouldEnterOccupiable
-	// routes to those) vs neutral city buildings (ShouldGarrisonStructure).
-	int ownedVac = 0, neutralVac = 0;
+	// Creep outward over time: the search radius grows from RadiusStart to the
+	// Radius cap at one cell per CreepRate frames. Early = hold the base; late =
+	// reach deeper. The cap also BOUNDS production to the house's turf (the fix
+	// for the map-wide 830-slot runaway occupier flood).
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	int const maxR = cfg.GarrisonRadius > 0 ? cfg.GarrisonRadius : 30;
+	int const startR = cfg.GarrisonRadiusStart > 0 ? cfg.GarrisonRadiusStart : 10;
+	int const rate = cfg.GarrisonCreepRate;
+	int effR = (rate > 0) ? startR + now / rate : maxR;
+	if (effR > maxR) effR = maxR;
+	if (effR < startR) effR = startR;
+	double const effLep = effR * 256.0;
+	int const nearCells = cfg.GarrisonScanNear > 0 ? cfg.GarrisonScanNear : 6;
+
+	// Score every vacant occupiable building inside the creep band. The weights
+	// ARE the modder's order of operations ([Doctrine.Garrison]): perimeter
+	// (close to base), creep (far out), ore, tech.
+	std::vector<GarrisonSlot> slots;
 	for (int i = 0; i < BuildingClass::Array.Count; ++i)
 	{
 		auto const pB = BuildingClass::Array.GetItem(i);
@@ -1419,32 +1479,74 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 		if (!bt || !bt->CanBeOccupied) continue;
 		int const free = bt->MaxNumberOccupants - pB->GetOccupantCount();
 		if (free <= 0) continue;
-		if (pB->Owner == pHouse) ownedVac += free;
-		else if (pB->Owner && pB->Owner->IsNeutral()) neutralVac += free;
-	}
-	int const vacant = ownedVac + neutralVac;
-	if (vacant <= 0) return; // nothing to fill
+		bool const bunker = (pB->Owner == pHouse);
+		bool const neutral = (pB->Owner && pB->Owner->IsNeutral());
+		if (!bunker && !neutral) continue; // ours (bunker) or a neutral city block
 
-	// Send every idle occupier to garrison via the engine's OWN enter flags —
-	// this is the correct path, so they enter instead of mistakenly attacking.
-	int idle = 0;
+		auto const bc = pB->GetCoords();
+		double const dx = bc.X - base.X, dy = bc.Y - base.Y;
+		double const d = std::sqrt(dx * dx + dy * dy);
+		if (d > effLep) continue; // outside the current creep band
+
+		double const prox = 1.0 - d / effLep;             // 1 at base -> 0 at edge
+		double const creep = d / effLep;                  // 0 at base -> 1 at edge
+		double const ore = OreNear(bc, nearCells) ? 1.0 : 0.0;
+		double const tech = TechNear(bc, nearCells) ? 1.0 : 0.0;
+		double const score = cfg.GPerimeterW * prox + cfg.GCreepW * creep
+			+ cfg.GOreW * ore + cfg.GTechW * tech;
+
+		for (int s = 0; s < free; ++s) slots.push_back({ pB, score, bunker });
+	}
+	if (slots.empty()) return; // nothing in reach to fill
+
+	std::sort(slots.begin(), slots.end(),
+		[](GarrisonSlot const& a, GarrisonSlot const& b) { return a.score > b.score; });
+
+	// Gather this house's idle (teamless) occupier infantry.
+	std::vector<FootClass*> occ;
 	for (int i = 0; i < TechnoClass::Array.Count; ++i)
 	{
 		auto const pT = TechnoClass::Array.GetItem(i);
 		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
 		if (pT->WhatAmI() != AbstractType::Infantry) continue;
-		auto const it2 = static_cast<InfantryTypeClass*>(pT->GetTechnoType());
-		if (!it2 || !it2->Occupier) continue;
+		auto const itc = static_cast<InfantryTypeClass*>(pT->GetTechnoType());
+		if (!itc || !itc->Occupier) continue;
 		auto const pFoot = static_cast<FootClass*>(pT);
 		if (pFoot->Team) continue; // don't pull tasked units
-		++idle;
-		if (ownedVac > 0)   pFoot->ShouldEnterOccupiable = true;
-		if (neutralVac > 0) pFoot->ShouldGarrisonStructure = true;
+		occ.push_back(pFoot);
 	}
 
-	// Keep building occupiers while slots remain unfilled by idle ones.
+	// Assign occupier[i] -> slot[i] (highest score first), then MOVE-then-FLAG:
+	// steer the unit at its assigned building; once adjacent, set the engine's
+	// enter flag so "closest occupiable" resolves to THAT building (the trick
+	// for targeting a specific structure — the engine has no direct call).
+	int sent = 0;
+	int const n = static_cast<int>(occ.size() < slots.size() ? occ.size() : slots.size());
+	for (int i = 0; i < n; ++i)
+	{
+		auto const pFoot = occ[i];
+		auto const pB = slots[i].pB;
+		auto const bc = pB->GetCoords();
+		auto const fc = pFoot->GetCoords();
+		double const dx = bc.X - fc.X, dy = bc.Y - fc.Y;
+		double const d = std::sqrt(dx * dx + dy * dy);
+		if (d <= 3.5 * 256.0) // adjacent: enter it now
+		{
+			if (slots[i].bunker) pFoot->ShouldEnterOccupiable = true;
+			else                 pFoot->ShouldGarrisonStructure = true;
+		}
+		else // still travelling: path toward the assigned building
+		{
+			pFoot->SetDestination(pB, true);
+			pFoot->QueueMission(Mission::Move, false);
+		}
+		++sent;
+	}
+
+	// Produce occupiers only while in-band slots outnumber the occupiers we have
+	// — bounded by the creep radius, so production can't run away map-wide.
 	int queued = 0;
-	if (idle < vacant)
+	if (static_cast<int>(occ.size()) < static_cast<int>(slots.size()))
 	{
 		TechnoTypeClass* pBest = nullptr;
 		double bestDps = -1.0;
@@ -1460,7 +1562,7 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 			if (auto const pFactory = FindHouseFactory(pHouse, pBest))
 			{
 				int const cap = cfg.GarrisonMaxProduce > 0 ? cfg.GarrisonMaxProduce : 2;
-				int want = vacant - idle;
+				int want = static_cast<int>(slots.size()) - static_cast<int>(occ.size());
 				if (want > cap) want = cap;
 				for (int k = 0; k < want; ++k) { pFactory->DemandProduction(pBest, pHouse, true); ++queued; }
 			}
@@ -1468,9 +1570,10 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 	}
 
 	if (cfg.DebugTicks)
-		Debug::Log("[DoctrineExt] garrison: house=%s#%d vacant=%d (bunker %d / neutral %d) "
-			"idle occupiers=%d sent, queued %d.\n",
-			pHouse->get_ID(), hIdx, vacant, ownedVac, neutralVac, idle, queued);
+		Debug::Log("[DoctrineExt] garrison: house=%s#%d effR=%d inband-slots=%d "
+			"occupiers=%d sent=%d queued=%d.\n",
+			pHouse->get_ID(), hIdx, effR, static_cast<int>(slots.size()),
+			static_cast<int>(occ.size()), sent, queued);
 }
 
 void Teams::CrateDoctrine(HouseClass* pHouse)

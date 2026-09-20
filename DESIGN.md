@@ -576,6 +576,55 @@ DoctrineExt already IS "the AI that runs a house," so the autonomous side is fre
 the NEW work is the shared-control layer + lobby/spawn. Multi-part project of its
 own; sequence after the tractable items.
 
+## 10e-2. Garrison priority & creep (Rex, 2026-09-19)
+
+Phase 11 fills the nearest vacant occupiable building (engine "closest" flag) and
+endlessly produces occupiers vs map-wide vacancy. Evolve it into a **weighted
+priority system** — every vacant occupiable building gets a score; occupiers fill
+highest-score-first; the modder sets the ORDER via `[Doctrine.Garrison]` weights.
+"Both with an order of operations" = yes: near-base AND strategic AND creep, ranked.
+
+**Specific-building targeting (no deep RE needed):** the engine only exposes
+"garrison closest" (ShouldGarrisonStructure/ShouldEnterOccupiable). To fill a
+CHOSEN building, move the occupier adjacent to it, then set the flag — that
+building is now the closest, so it enters the intended one. Reuses the steering
+pattern (assign target → move → flag when in range), same as hunt/decap.
+
+**Scoring criteria (tiered by feasibility):**
+- *Near-base perimeter* (weight PerimeterW) — dist to base center; also the fix
+  for Phase 11's infinite production (bound production to a GarrisonRadius band). EASY.
+- *Ore proximity* (OreW) — building near high `GetContainedTiberiumValue()` cells. EASY.
+- *Tech proximity* (TechW) — building near a neutral `Capturable` structure. EASY.
+- *Creep bands* (CreepW) — a radius that widens over time / as inner bands fill,
+  so it occupies outward deeper and deeper. EASY (distance-band that grows).
+- *Lane overlook* (LaneW) — building over a hot travel-lane bucket (§6.3, already
+  built!). MEDIUM (cross-ref the lane grid). Ties garrison to real enemy routes.
+- *Enemy exits / blockade* (BlockadeW) — buildings near an enemy base's open side
+  (approx: near an enemy base center, on the map-outward bearing). APPROX/MEDIUM.
+- *Chokepoint* (ChokeW) — narrow passage on the path to an enemy base via
+  pathfinding-width analysis. HARD — genuine research, later.
+
+Score = Σ(weight × normalized criterion). Fill order = score desc. Weights in
+`[Doctrine.Garrison]` = the modder's order of operations.
+
+**More creep ideas (Rex asked):**
+- *Escorted creep* — send a distant-building occupier as a small squad (occupier +
+  escort) so it survives to garrison, not a lone runner picked off en route.
+- *Deny-enemy* — pre-occupy buildings the ENEMY wants (near their base / on their
+  attack lane) to blockade + deny them the garrison.
+- *Evict & re-take* — clear an enemy-garrisoned building then occupy it.
+- *Evacuate low-value under threat* — un-garrison a building about to fall to save
+  the (valuable) infantry, rather than lose them with it.
+- *Vision garrisons* — occupy edge/approach buildings for the reveal (recon),
+  feeding the sensors; pairs with death-zone/lane awareness.
+- *Fortify held chokepoints* — once a chokepoint building is manned, prioritize
+  defenses around it (construction-doctrine tie-in §10a).
+- *Spread cap* — density limit so garrisons cover ground instead of over-stacking.
+
+Phasing: P1 = scoring + near-base/ore/tech/creep + GarrisonRadius (fixes infinite
+production) + specific-building move-then-flag + `[Doctrine.Garrison]` weights.
+P2 = lane-overlook + deny-enemy. P3 = chokepoint pathfinding + escorted creep.
+
 ## 11. Standing traps that apply here
 
 Carried over from the other Ext projects: Syringe overlapping-hook corruption

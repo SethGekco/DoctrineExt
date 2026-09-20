@@ -1502,15 +1502,20 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 	std::sort(slots.begin(), slots.end(),
 		[](GarrisonSlot const& a, GarrisonSlot const& b) { return a.score > b.score; });
 
-	// Gather this house's idle (teamless) occupier infantry.
+	// Gather this house's idle (teamless) occupier infantry. Diag counters split
+	// the failure modes: allInf = infantry owned, occAll = of those that are
+	// Occupier=yes, occ = of those that are teamless (usable by us).
+	int allInf = 0, occAll = 0;
 	std::vector<FootClass*> occ;
 	for (int i = 0; i < TechnoClass::Array.Count; ++i)
 	{
 		auto const pT = TechnoClass::Array.GetItem(i);
 		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
 		if (pT->WhatAmI() != AbstractType::Infantry) continue;
+		++allInf;
 		auto const itc = static_cast<InfantryTypeClass*>(pT->GetTechnoType());
 		if (!itc || !itc->Occupier) continue;
+		++occAll;
 		auto const pFoot = static_cast<FootClass*>(pT);
 		if (pFoot->Team) continue; // don't pull tasked units
 		occ.push_back(pFoot);
@@ -1546,6 +1551,8 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 	// Produce occupiers only while in-band slots outnumber the occupiers we have
 	// — bounded by the creep radius, so production can't run away map-wide.
 	int queued = 0;
+	const char* prodBest = "none";  // diag: what we picked to build
+	bool facFound = false;          // diag: did FindHouseFactory return one
 	if (static_cast<int>(occ.size()) < static_cast<int>(slots.size()))
 	{
 		TechnoTypeClass* pBest = nullptr;
@@ -1559,8 +1566,10 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 		}
 		if (pBest)
 		{
+			prodBest = pBest->get_ID();
 			if (auto const pFactory = FindHouseFactory(pHouse, pBest))
 			{
+				facFound = true;
 				int const cap = cfg.GarrisonMaxProduce > 0 ? cfg.GarrisonMaxProduce : 2;
 				int want = static_cast<int>(slots.size()) - static_cast<int>(occ.size());
 				if (want > cap) want = cap;
@@ -1571,9 +1580,9 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] garrison: house=%s#%d effR=%d inband-slots=%d "
-			"occupiers=%d sent=%d queued=%d.\n",
+			"allInf=%d occAll=%d teamless=%d sent=%d prod=%s fac=%d queued=%d.\n",
 			pHouse->get_ID(), hIdx, effR, static_cast<int>(slots.size()),
-			static_cast<int>(occ.size()), sent, queued);
+			allInf, occAll, static_cast<int>(occ.size()), sent, prodBest, facFound, queued);
 }
 
 void Teams::CrateDoctrine(HouseClass* pHouse)

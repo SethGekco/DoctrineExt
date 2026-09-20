@@ -154,6 +154,9 @@ public:
 	int GarrisonRadiusStart = 10;    // initial radius (holds the base first)
 	int GarrisonCreepRate = 300;     // frames per +1 cell the radius grows outward
 	int GarrisonScanNear = 6;        // cells checked for ore/tech near a building
+	int GarrisonMaxDivert = 4;       // occupiers pulled off AI combat teams per
+	                                 // pass for garrison duty (AI teams own ~all
+	                                 // infantry, so we must divert, but gently)
 	double GPerimeterW = 3.0;        // weight: closer to base = higher priority
 	double GCreepW = 1.0;            // weight: farther out = higher (creep bias)
 	double GOreW = 2.0;              // weight: building near ore

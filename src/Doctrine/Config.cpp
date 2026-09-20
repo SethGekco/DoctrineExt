@@ -152,6 +152,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.GarrisonRadiusStart = pINI->ReadInteger("Doctrine.Garrison", "RadiusStart", cfg.GarrisonRadiusStart);
 	cfg.GarrisonCreepRate = pINI->ReadInteger("Doctrine.Garrison", "CreepRate", cfg.GarrisonCreepRate);
 	cfg.GarrisonScanNear = pINI->ReadInteger("Doctrine.Garrison", "ScanNear", cfg.GarrisonScanNear);
+	cfg.GarrisonMaxDivert = pINI->ReadInteger("Doctrine.Garrison", "MaxDivert", cfg.GarrisonMaxDivert);
 	cfg.GPerimeterW = pINI->ReadDouble("Doctrine.Garrison", "PerimeterWeight", cfg.GPerimeterW);
 	cfg.GCreepW = pINI->ReadDouble("Doctrine.Garrison", "CreepWeight", cfg.GCreepW);
 	cfg.GOreW = pINI->ReadDouble("Doctrine.Garrison", "OreWeight", cfg.GOreW);

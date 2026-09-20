@@ -1502,11 +1502,14 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 	std::sort(slots.begin(), slots.end(),
 		[](GarrisonSlot const& a, GarrisonSlot const& b) { return a.score > b.score; });
 
-	// Gather this house's idle (teamless) occupier infantry. Diag counters split
-	// the failure modes: allInf = infantry owned, occAll = of those that are
-	// Occupier=yes, occ = of those that are teamless (usable by us).
-	int allInf = 0, occAll = 0;
-	std::vector<FootClass*> occ;
+	// Gather this house's occupier infantry, teamless first then teamed. The AI
+	// puts ~every infantry on a combat team (verified: teamless=0, occAll=73),
+	// so to garrison at all we must DIVERT some off their teams — gently, capped
+	// by MaxDivert. Diag: allInf = infantry owned, occAll = Occupier=yes of
+	// those, teamlessN = of those not on a team.
+	int allInf = 0, occAll = 0, teamlessN = 0;
+	std::vector<FootClass*> occFree;  // teamless: use freely
+	std::vector<FootClass*> occTeam;  // teamed: liberate if we still need more
 	for (int i = 0; i < TechnoClass::Array.Count; ++i)
 	{
 		auto const pT = TechnoClass::Array.GetItem(i);
@@ -1517,8 +1520,21 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 		if (!itc || !itc->Occupier) continue;
 		++occAll;
 		auto const pFoot = static_cast<FootClass*>(pT);
-		if (pFoot->Team) continue; // don't pull tasked units
+		if (pFoot->Team) occTeam.push_back(pFoot);
+		else { ++teamlessN; occFree.push_back(pFoot); }
+	}
+
+	// Build the working list: all teamless, then teamed up to MaxDivert (we'll
+	// LiberateMember those before use). Bounded so we never gut the AI's army.
+	int const maxDivert = cfg.GarrisonMaxDivert > 0 ? cfg.GarrisonMaxDivert : 4;
+	std::vector<FootClass*> occ = occFree;
+	int divert = 0;
+	for (auto const pFoot : occTeam)
+	{
+		if (static_cast<int>(occ.size()) >= static_cast<int>(slots.size())) break;
+		if (divert >= maxDivert) break;
 		occ.push_back(pFoot);
+		++divert;
 	}
 
 	// Assign occupier[i] -> slot[i] (highest score first), then MOVE-then-FLAG:
@@ -1530,6 +1546,7 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 	for (int i = 0; i < n; ++i)
 	{
 		auto const pFoot = occ[i];
+		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot); // free it for garrison
 		auto const pB = slots[i].pB;
 		auto const bc = pB->GetCoords();
 		auto const fc = pFoot->GetCoords();
@@ -1548,12 +1565,13 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 		++sent;
 	}
 
-	// Produce occupiers only while in-band slots outnumber the occupiers we have
-	// — bounded by the creep radius, so production can't run away map-wide.
+	// Produce occupiers only while in-band slots outnumber the occupiers we OWN
+	// (occAll, not teamless — the AI already has plenty, we just divert them).
+	// Bounded by the creep radius, so production can't run away map-wide.
 	int queued = 0;
 	const char* prodBest = "none";  // diag: what we picked to build
 	bool facFound = false;          // diag: did FindHouseFactory return one
-	if (static_cast<int>(occ.size()) < static_cast<int>(slots.size()))
+	if (occAll < static_cast<int>(slots.size()))
 	{
 		TechnoTypeClass* pBest = nullptr;
 		double bestDps = -1.0;
@@ -1571,7 +1589,7 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 			{
 				facFound = true;
 				int const cap = cfg.GarrisonMaxProduce > 0 ? cfg.GarrisonMaxProduce : 2;
-				int want = static_cast<int>(slots.size()) - static_cast<int>(occ.size());
+				int want = static_cast<int>(slots.size()) - occAll;
 				if (want > cap) want = cap;
 				for (int k = 0; k < want; ++k) { pFactory->DemandProduction(pBest, pHouse, true); ++queued; }
 			}
@@ -1580,9 +1598,9 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] garrison: house=%s#%d effR=%d inband-slots=%d "
-			"allInf=%d occAll=%d teamless=%d sent=%d prod=%s fac=%d queued=%d.\n",
+			"allInf=%d occAll=%d teamless=%d divert=%d sent=%d prod=%s fac=%d queued=%d.\n",
 			pHouse->get_ID(), hIdx, effR, static_cast<int>(slots.size()),
-			allInf, occAll, static_cast<int>(occ.size()), sent, prodBest, facFound, queued);
+			allInf, occAll, teamlessN, divert, sent, prodBest, facFound, queued);
 }
 
 void Teams::CrateDoctrine(HouseClass* pHouse)

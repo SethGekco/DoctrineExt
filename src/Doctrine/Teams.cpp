@@ -1455,6 +1455,18 @@ namespace
 	// building into `free` entries so distribution across the top-scored
 	// buildings is slot-aware (occupiers spread, don't all pile on one).
 	struct GarrisonSlot { BuildingClass* pB; double score; bool bunker; };
+
+	// True if a unit is on one of OUR doctrine teams (IDs DCTR/DCRG/DCRS/DGAR…),
+	// so other doctrine modules don't steal each other's units — e.g. garrison
+	// must not LiberateMember the crate squad's grabber out from under it.
+	bool IsDoctrineTeam(TeamClass* const pTeam)
+	{
+		if (!pTeam || !pTeam->Type) return false;
+		auto const id = pTeam->Type->ID;
+		return id[0] == 'D' &&
+			((id[1] == 'C' && (id[2] == 'T' || id[2] == 'R'))  // DCTR/DCRG/DCRS
+			|| (id[1] == 'G' && id[2] == 'A'));                 // DGAR
+	}
 }
 
 void Teams::GarrisonDoctrine(HouseClass* pHouse)
@@ -1536,7 +1548,11 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 		if (!itc || !itc->Occupier) continue;
 		++occAll;
 		auto const pFoot = static_cast<FootClass*>(pT);
-		if (pFoot->Team) occTeam.push_back(pFoot);
+		if (pFoot->Team)
+		{
+			if (!IsDoctrineTeam(pFoot->Team)) occTeam.push_back(pFoot); // don't
+			// steal crate-squad / combat-team members off our own teams
+		}
 		else { ++teamlessN; occFree.push_back(pFoot); }
 	}
 
@@ -1553,31 +1569,23 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 		++divert;
 	}
 
-	// Assign occupier[i] -> slot[i] (highest score first), then MOVE-then-FLAG:
-	// steer the unit at its assigned building; once adjacent, set the engine's
-	// enter flag so "closest occupiable" resolves to THAT building (the trick
-	// for targeting a specific structure — the engine has no direct call).
+	// ENTRY: set the engine's own garrison flags and let IT path + distribute +
+	// fill each building to capacity. An earlier build steered each occupier at a
+	// specific scored building with Move orders; that FOUGHT the flag (which goes
+	// to "closest") and, re-assigned by index every pass, made the conscripts
+	// walk back and forth and never enter. Flags-only is the vanilla mechanism
+	// and doesn't thrash. The creep radius still governs priority: occupiers only
+	// exist to garrison within effR, so near-base fills first and the band widens
+	// over time (perimeter + creep). ShouldEnterOccupiable routes to our battle
+	// bunkers, ShouldGarrisonStructure to neutral city buildings.
+	int ownedVac = 0, neutralVac = 0;
+	for (auto const& s : slots) { if (s.bunker) ++ownedVac; else ++neutralVac; }
 	int sent = 0;
-	int const n = static_cast<int>(occ.size() < slots.size() ? occ.size() : slots.size());
-	for (int i = 0; i < n; ++i)
+	for (auto const pFoot : occ)
 	{
-		auto const pFoot = occ[i];
-		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot); // free it for garrison
-		auto const pB = slots[i].pB;
-		auto const bc = pB->GetCoords();
-		auto const fc = pFoot->GetCoords();
-		double const dx = bc.X - fc.X, dy = bc.Y - fc.Y;
-		double const d = std::sqrt(dx * dx + dy * dy);
-		if (d <= 3.5 * 256.0) // adjacent: enter it now
-		{
-			if (slots[i].bunker) pFoot->ShouldEnterOccupiable = true;
-			else                 pFoot->ShouldGarrisonStructure = true;
-		}
-		else // still travelling: path toward the assigned building
-		{
-			pFoot->SetDestination(pB, true);
-			pFoot->QueueMission(Mission::Move, false);
-		}
+		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot); // free it to garrison
+		if (ownedVac > 0)   pFoot->ShouldEnterOccupiable = true;
+		if (neutralVac > 0) pFoot->ShouldGarrisonStructure = true;
 		++sent;
 	}
 
@@ -1894,25 +1902,12 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		if (!pR) break;
 		if (pR->Team) pR->Team->LiberateMember(pR);
 		if (!pTeam->AddMember(pR, true)) break;
+		// Clear any garrison flags the base AI (or our garrison doctrine) set on
+		// this unit — otherwise the crate member wanders into a building and
+		// leaves the squad, which is why members kept dropping to 0.
+		pR->ShouldGarrisonStructure = false;
+		pR->ShouldEnterOccupiable = false;
 		++members; ++recruited;
-	}
-
-	// Crate cells within scan range of the base.
-	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
-	int const scan = cfg.CrateScanRadius > 0 ? cfg.CrateScanRadius : 30;
-	std::vector<CellClass*> crates;
-	{
-		CellStruct const c0 = CellClass::Coord2Cell(base);
-		for (int dy = -scan; dy <= scan; ++dy)
-			for (int dx = -scan; dx <= scan; ++dx)
-			{
-				if (dx * dx + dy * dy > scan * scan) continue;
-				CellStruct cs;
-				cs.X = static_cast<short>(c0.X + dx);
-				cs.Y = static_cast<short>(c0.Y + dy);
-				auto const pC = MapClass::Instance.TryGetCellAt(cs);
-				if (pC && IsCrateOverlay(pC->OverlayTypeIndex)) crates.push_back(pC);
-			}
 	}
 
 	// Live members, indexed for dispersal + assignment.
@@ -1920,6 +1915,34 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
 		if (!pF->InLimbo && pF->Health > 0) mem.push_back(pF);
 	int const N = static_cast<int>(mem.size());
+
+	// Crate cells the squad can see: a WIDE box around base (CrateSquadScan — the
+	// squad races across the map, not just home) UNION a CrateScanRadius box
+	// around each member (a member dispersed to the far side spots crates there).
+	// A local lambda scans one box, de-duping into `crates`.
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	int const scan = cfg.CrateScanRadius > 0 ? cfg.CrateScanRadius : 30;
+	int const wideScan = cfg.CrateSquadScan > scan ? cfg.CrateSquadScan : scan;
+	std::vector<CellClass*> crates;
+	auto scanBox = [&crates](CoordStruct const& center, int const r)
+	{
+		CellStruct const c0 = CellClass::Coord2Cell(center);
+		for (int dy = -r; dy <= r; ++dy)
+			for (int dx = -r; dx <= r; ++dx)
+			{
+				if (dx * dx + dy * dy > r * r) continue;
+				CellStruct cs;
+				cs.X = static_cast<short>(c0.X + dx);
+				cs.Y = static_cast<short>(c0.Y + dy);
+				auto const pC = MapClass::Instance.TryGetCellAt(cs);
+				if (!pC || !IsCrateOverlay(pC->OverlayTypeIndex)) continue;
+				bool seen = false;
+				for (auto const pE : crates) if (pE == pC) { seen = true; break; }
+				if (!seen) crates.push_back(pC);
+			}
+	};
+	scanBox(base, wideScan);
+	for (auto const pF : mem) scanBox(pF->GetCoords(), scan);
 
 	// Assign: each crate is raced by its nearest free member (greedy, distinct);
 	// members without a crate spread out discreetly on a standby ring, skipping

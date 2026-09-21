@@ -150,6 +150,10 @@ public:
 	                                 // single-grabber CrateChase path)
 	int CrateSquadSize = 0;          // 0 = auto from [CrateRules]; >0 = fixed
 	int CrateSquadMax = 6;           // hard cap on the auto-derived squad size
+	int CrateSquadScan = 60;         // cells around base the squad watches for
+	                                 // crates (wider than CrateScanRadius — the
+	                                 // squad races across the map, not just home);
+	                                 // also scans CrateScanRadius around each member
 	// Garrison doctrine ([Doctrine.General], §10e)
 	bool GarrisonInfantry = false;   // keep building Occupier infantry while
 	                                 // vacant occupiable buildings exist, and

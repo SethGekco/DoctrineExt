@@ -148,6 +148,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CrateSquad = pINI->ReadBool("Doctrine.General", "CrateSquad", cfg.CrateSquad);
 	cfg.CrateSquadSize = pINI->ReadInteger("Doctrine.General", "CrateSquadSize", cfg.CrateSquadSize);
 	cfg.CrateSquadMax = pINI->ReadInteger("Doctrine.General", "CrateSquadMax", cfg.CrateSquadMax);
+	cfg.CrateSquadScan = pINI->ReadInteger("Doctrine.General", "CrateSquadScan", cfg.CrateSquadScan);
 	cfg.GarrisonInfantry = pINI->ReadBool("Doctrine.General", "GarrisonInfantry", cfg.GarrisonInfantry);
 	cfg.GarrisonInterval = pINI->ReadInteger("Doctrine.General", "GarrisonInterval", cfg.GarrisonInterval);
 	cfg.GarrisonMaxProduce = pINI->ReadInteger("Doctrine.General", "GarrisonMaxProduce", cfg.GarrisonMaxProduce);

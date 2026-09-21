@@ -89,6 +89,11 @@ namespace Teams
 	// teams) and never repurposes them. Self-throttled; opt-in (CrateSquad).
 	void CrateSquadDoctrine(HouseClass* pHouse);
 
+	// Re-issue each squad chaser's Move to its cached crate EVERY base tick (the
+	// detection pass is throttled to 90f; a once-per-90f order gets countermanded
+	// by the base AI before the unit arrives). Cheap: no scan, just cached cells.
+	void SteerCrateSquad(HouseClass* pHouse);
+
 	// Reserve spender (§10f): while the house's cash exceeds ReserveAmount,
 	// build the next affordable item from ReserveBuild — spend surplus instead
 	// of hoarding. Self-throttled (ReserveCooldown); opt-in (Amount=0 off).

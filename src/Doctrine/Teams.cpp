@@ -1246,6 +1246,11 @@ void Teams::PrereqAudit(HouseClass* pHouse)
 namespace
 {
 	std::map<int, int> g_crateLastFire;
+	// Per-house cached crate targets {member, crate cell} from the throttled
+	// detection pass. SteerCrateSquad re-issues the Move every base tick so the
+	// base AI can't countermand it between the 90-frame detection passes (the
+	// reason raced=1 fired for ages yet no crate was ever collected).
+	std::map<int, std::vector<std::pair<FootClass*, CellClass*>>> g_squadTargets;
 
 	bool IsCrateOverlay(int const idx)
 	{
@@ -1981,6 +1986,8 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	// members without a crate spread out discreetly on a standby ring, skipping
 	// death-zone cells, so they're pre-positioned for the next spawn.
 	std::vector<bool> crateTaken(crates.size(), false);
+	auto& targets = g_squadTargets[hIdx];
+	targets.clear(); // rebuilt this pass; SteerCrateSquad re-issues Move each tick
 	int raced = 0;
 	double const ringLep = scan * 256.0;
 	for (int i = 0; i < N; ++i)
@@ -2004,6 +2011,7 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 			crateTaken[best] = true;
 			pF->SetDestination(crates[best], true);
 			pF->QueueMission(Mission::Move, false);
+			targets.push_back({ pF, crates[best] }); // keep steering it each tick
 			++raced;
 		}
 		else
@@ -2079,6 +2087,38 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
 			"crates=%d raced=%d.\n",
 			pHouse->get_ID(), hIdx, desired, N, recruited, static_cast<int>(crates.size()), raced);
+}
+
+void Teams::SteerCrateSquad(HouseClass* pHouse)
+{
+	// Runs EVERY base tick (unlike the throttled detection pass): re-issue the
+	// Move to each chaser's cached crate so the base AI can't countermand it in
+	// the 90-frame gap. This is why the old single-grabber SteerCrate ran per
+	// tick — a once-per-90-frames order gets pulled back before the unit arrives.
+	auto const it = g_squadTargets.find(pHouse->ArrayIndex);
+	if (it == g_squadTargets.end() || it->second.empty()) return;
+
+	char id[0x18];
+	std::snprintf(id, sizeof(id), "DCRS%dTM", pHouse->ArrayIndex);
+	auto const pTT = TeamTypeClass::Find(id);
+	if (!pTT || pTT->cntInstances <= 0) return;
+	auto const pTeam = pTT->FindFirstInstance();
+	if (!pTeam) return;
+
+	// Live member set — only steer pointers still on the team (safe vs dangling).
+	std::set<FootClass*> live;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+		if (!pF->InLimbo && pF->Health > 0) live.insert(pF);
+
+	for (auto const& tgt : it->second)
+	{
+		auto const pF = tgt.first;
+		auto const pCell = tgt.second;
+		if (live.find(pF) == live.end()) continue;              // died / left squad
+		if (!pCell || !IsCrateOverlay(pCell->OverlayTypeIndex)) continue; // crate gone
+		pF->SetDestination(pCell, true);
+		pF->QueueMission(Mission::Move, false);
+	}
 }
 
 int Teams::CountIdleArmed(HouseClass* pHouse)
@@ -2284,6 +2324,7 @@ void Teams::Reset()
 	g_floodLastFire.clear();
 	g_reserveLastFire.clear();
 	g_crateLastFire.clear();
+	g_squadTargets.clear();
 	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();

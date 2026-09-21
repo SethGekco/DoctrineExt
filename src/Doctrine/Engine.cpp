@@ -137,7 +137,8 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// grabber when enabled so they don't fight over the same units.
 	if (DoctrineConfig::Instance.CrateSquad)
 	{
-		Teams::CrateSquadDoctrine(pHouse);
+		Teams::CrateSquadDoctrine(pHouse);   // detect + recruit (throttled)
+		Teams::SteerCrateSquad(pHouse);      // keep chasers moving (every tick)
 	}
 	else
 	{

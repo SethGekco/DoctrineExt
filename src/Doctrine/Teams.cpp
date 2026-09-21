@@ -20,6 +20,7 @@
 #include <CellClass.h>
 #include <BuildingClass.h>
 #include <BuildingTypeClass.h>
+#include <RulesClass.h>
 #include <OverlayTypeClass.h>
 #include <InfantryTypeClass.h>
 #include <UnitTypeClass.h>
@@ -1738,6 +1739,287 @@ void Teams::SteerCrate(HouseClass* pHouse)
 		pFoot->SetDestination(pCrate, true);
 		pFoot->QueueMission(Mission::Move, false);
 	}
+}
+
+namespace
+{
+	// Squad size from [CrateRules]: one racer per expected concurrent crate,
+	// +1 for fast regen, capped so CrateMaximum=1 => a single racer and a busy
+	// map (high CrateMinimum) => a bigger squad. CrateSquadSize>0 overrides.
+	int DesiredSquadSize()
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		auto const r = RulesClass::Instance;
+		if (!r || !r->Crates) return 0;                 // crates disabled globally
+		int const capCfg = cfg.CrateSquadMax > 0 ? cfg.CrateSquadMax : 6;
+		if (cfg.CrateSquadSize > 0)                      // modder-fixed size
+			return cfg.CrateSquadSize > capCfg ? capCfg : cfg.CrateSquadSize;
+		int const maxC = r->CrateMaximum > 0 ? r->CrateMaximum : 255;
+		int const minC = r->CrateMinimum > 0 ? r->CrateMinimum : 1;
+		int concurrent = minC;                          // crates likely at once
+		if (concurrent < 1) concurrent = 1;
+		if (concurrent > maxC) concurrent = maxC;
+		int size = concurrent;
+		if (r->CrateRegen > 0.0 && r->CrateRegen <= 2.0) size += 1; // fast churn
+		if (size > maxC) size = maxC;                   // never past what max allows
+		if (size > capCfg) size = capCfg;
+		if (size < 1) size = 1;
+		return size;
+	}
+
+	// The house's PERSISTENT crate squad team (ID "DCRS<house>*"). Created once
+	// and kept alive across ticks (membership managed by CrateSquadDoctrine, not
+	// auto-recruited); never destroyed on idle, unlike the single-grabber team.
+	TeamClass* EnsureSquadTeam(HouseClass* const pHouse, int const desired,
+		TechnoTypeClass* const pRep)
+	{
+		int const hIdx = pHouse->ArrayIndex;
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DCRS%dTM", hIdx);
+		auto pTT = TeamTypeClass::Find(id);
+		if (!pTT) pTT = GameCreate<TeamTypeClass>(id);
+		if (!pTT) return nullptr;
+		std::snprintf(id, sizeof(id), "DCRS%dTF", hIdx);
+		auto pTF = TaskForceClass::Find(id);
+		if (!pTF) pTF = GameCreate<TaskForceClass>(id);
+		std::snprintf(id, sizeof(id), "DCRS%dSC", hIdx);
+		auto pSC = ScriptTypeClass::Find(id);
+		if (!pSC) pSC = GameCreate<ScriptTypeClass>(id);
+		if (!pTF || !pSC) return nullptr;
+
+		pTF->CountEntries = 1;
+		pTF->Entries[0] = { desired > 0 ? desired : 1, pRep };
+		pTF->Group = -1;
+		pSC->ActionsCount = 1;
+		pSC->ScriptActions[0] = { 5, 120 }; // guard; we steer members each tick
+		pTT->TaskForce = pTF;
+		pTT->ScriptType = pSC;
+		pTT->Max = desired > 0 ? desired : 1;
+		pTT->Owner = nullptr;
+		pTT->idxHouse = -1;
+		pTT->Autocreate = false;
+		pTT->Prebuild = false;
+		pTT->Reinforce = false;
+		pTT->Recruiter = false;         // we manage membership by hand
+		pTT->LooseRecruit = false;
+		pTT->AreTeamMembersRecruitable = false;
+		pTT->IsBaseDefense = false;
+		pTT->Full = false;
+		pTT->Aggressive = false;
+		pTT->Loadable = false;
+		pTT->Suicide = false;
+		pTT->Whiner = false;
+		pTT->Annoyance = false;
+		pTT->GuardSlower = false;
+		pTT->Droppod = false;
+		pTT->OnTransOnly = false;
+
+		return pTT->cntInstances > 0 ? pTT->FindFirstInstance() : pTT->CreateTeam(pHouse);
+	}
+
+	// Best fast armed non-gatherer unit NOT already on pExclude, for squad
+	// recruiting: prefers teamless (CrateChasers list, then fastest), falls back
+	// to a teamed unit (caller liberates it) since the AI teams ~everything.
+	FootClass* PickSquadRecruit(HouseClass* const pHouse, TeamClass* const pExclude)
+	{
+		auto const& chasers = DoctrineConfig::Instance.CrateChasers;
+		FootClass* bySpeedFree = nullptr; int bestSpeedFree = -1;
+		FootClass* byListFree = nullptr;  int bestListFree = 1 << 30;
+		FootClass* bySpeedTeam = nullptr; int bestSpeedTeam = -1;
+		FootClass* byListTeam = nullptr;  int bestListTeam = 1 << 30;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Unit && what != AbstractType::Infantry) continue;
+			auto const pFoot = static_cast<FootClass*>(pT);
+			if (pFoot->Team == pExclude && pExclude) continue; // already ours
+			auto const pType = pT->GetTechnoType();
+			if (!pType || pType->ResourceGatherer) continue;
+			bool const teamed = (pFoot->Team != nullptr);
+			if (HasOffensiveWeapon(pType))
+			{
+				if (!teamed && pType->Speed > bestSpeedFree)
+					{ bestSpeedFree = pType->Speed; bySpeedFree = pFoot; }
+				else if (teamed && pType->Speed > bestSpeedTeam)
+					{ bestSpeedTeam = pType->Speed; bySpeedTeam = pFoot; }
+			}
+			for (int r = 0; r < static_cast<int>(chasers.size()); ++r)
+			{
+				if (chasers[r] != pType->ID) continue;
+				if (!teamed && r < bestListFree) { bestListFree = r; byListFree = pFoot; }
+				else if (teamed && r < bestListTeam) { bestListTeam = r; byListTeam = pFoot; }
+			}
+		}
+		if (byListFree)  return byListFree;
+		if (bySpeedFree) return bySpeedFree;
+		if (byListTeam)  return byListTeam;
+		return bySpeedTeam;
+	}
+}
+
+void Teams::CrateSquadDoctrine(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.CrateSquad) return; // opt-in
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.CrateInterval > 0 ? cfg.CrateInterval : 90;
+	auto const it = g_crateLastFire.find(hIdx);
+	if (it != g_crateLastFire.end() && now - it->second < interval) return;
+	g_crateLastFire[hIdx] = now;
+
+	int const desired = DesiredSquadSize();
+	if (desired <= 0) return; // crates off globally
+
+	// Representative type for the taskforce (a chaser if the modder listed one).
+	TechnoTypeClass* pRep = nullptr;
+	for (auto const& cid : cfg.CrateChasers)
+		if (auto const pTy = TechnoTypeClass::Find(cid.c_str())) { pRep = pTy; break; }
+
+	auto const pTeam = EnsureSquadTeam(pHouse, desired, pRep);
+	if (!pTeam) return;
+
+	// Maintain membership: divert fast armed units onto the squad until at
+	// `desired`, liberating teamed ones (the AI owns ~all units via teams).
+	int members = 0;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+		if (!pF->InLimbo && pF->Health > 0) ++members;
+	int recruited = 0;
+	while (members < desired)
+	{
+		auto const pR = PickSquadRecruit(pHouse, pTeam);
+		if (!pR) break;
+		if (pR->Team) pR->Team->LiberateMember(pR);
+		if (!pTeam->AddMember(pR, true)) break;
+		++members; ++recruited;
+	}
+
+	// Crate cells within scan range of the base.
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	int const scan = cfg.CrateScanRadius > 0 ? cfg.CrateScanRadius : 30;
+	std::vector<CellClass*> crates;
+	{
+		CellStruct const c0 = CellClass::Coord2Cell(base);
+		for (int dy = -scan; dy <= scan; ++dy)
+			for (int dx = -scan; dx <= scan; ++dx)
+			{
+				if (dx * dx + dy * dy > scan * scan) continue;
+				CellStruct cs;
+				cs.X = static_cast<short>(c0.X + dx);
+				cs.Y = static_cast<short>(c0.Y + dy);
+				auto const pC = MapClass::Instance.TryGetCellAt(cs);
+				if (pC && IsCrateOverlay(pC->OverlayTypeIndex)) crates.push_back(pC);
+			}
+	}
+
+	// Live members, indexed for dispersal + assignment.
+	std::vector<FootClass*> mem;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+		if (!pF->InLimbo && pF->Health > 0) mem.push_back(pF);
+	int const N = static_cast<int>(mem.size());
+
+	// Assign: each crate is raced by its nearest free member (greedy, distinct);
+	// members without a crate spread out discreetly on a standby ring, skipping
+	// death-zone cells, so they're pre-positioned for the next spawn.
+	std::vector<bool> crateTaken(crates.size(), false);
+	int raced = 0;
+	double const ringLep = scan * 256.0;
+	for (int i = 0; i < N; ++i)
+	{
+		auto const pF = mem[i];
+		auto const fc = pF->GetCoords();
+		int best = -1; double bestD = 1e18;
+		for (int c = 0; c < static_cast<int>(crates.size()); ++c)
+		{
+			if (crateTaken[c]) continue;
+			auto const cc = crates[c]->GetCellCoords();
+			double const d = std::sqrt(double(cc.X - fc.X) * (cc.X - fc.X)
+				+ double(cc.Y - fc.Y) * (cc.Y - fc.Y));
+			if (d < bestD) { bestD = d; best = c; }
+		}
+		if (best >= 0)
+		{
+			crateTaken[best] = true;
+			pF->SetDestination(crates[best], true);
+			pF->QueueMission(Mission::Move, false);
+			++raced;
+		}
+		else
+		{
+			// standby: spread on the ring at this member's angle, avoid killboxes
+			double const ang = (N > 0) ? (6.2831853 * i / N) : 0.0;
+			static const double kNudge[] = { 0.0, 0.4, -0.4, 0.8, -0.8 };
+			CellClass* pDest = nullptr;
+			for (double const nud : kNudge)
+			{
+				double const a = ang + nud;
+				CoordStruct pt = base;
+				pt.X = base.X + static_cast<int>(std::cos(a) * ringLep);
+				pt.Y = base.Y + static_cast<int>(std::sin(a) * ringLep);
+				auto const pC = MapClass::Instance.TryGetCellAt(pt);
+				if (!pC) continue;
+				CellStruct cs;
+				cs.X = static_cast<short>(pt.X / 256);
+				cs.Y = static_cast<short>(pt.Y / 256);
+				if (DeathZones::ScoreAtCell(pHouse, cs.X, cs.Y) < cfg.DeathZoneMinStrength)
+					{ pDest = pC; break; }
+				if (!pDest) pDest = pC; // fallback: first valid
+			}
+			if (pDest)
+			{
+				auto const dc = pDest->GetCellCoords();
+				double const d = std::sqrt(double(dc.X - fc.X) * (dc.X - fc.X)
+					+ double(dc.Y - fc.Y) * (dc.Y - fc.Y));
+				if (d > 4.0 * 256.0) // only re-issue if not already loitering there
+				{
+					pF->SetDestination(pDest, true);
+					pF->QueueMission(Mission::Move, false);
+				}
+			}
+		}
+	}
+
+	// Firesale-for-MCV — ONLY when FreeMCV=yes makes selling pay off (Rex: that
+	// is the exploitable state). Timed off the member nearest a crate.
+	if (cfg.CrateFiresaleMCV && RulesClass::Instance && RulesClass::Instance->FreeMCV
+		&& !crates.empty() && N > 0)
+	{
+		bool const canRecover = CanRecoverMCV(pHouse);
+		int const buildings = OwnedBuildingCount(pHouse);
+		int const money = static_cast<int>(pHouse->Available_Money());
+		bool const shortGame = Unsorted::ShortGame != 0;
+		double nearest = 1e18;
+		for (auto const pF : mem)
+		{
+			auto const fc = pF->GetCoords();
+			for (auto const pC : crates)
+			{
+				auto const cc = pC->GetCellCoords();
+				double const d = std::sqrt(double(cc.X - fc.X) * (cc.X - fc.X)
+					+ double(cc.Y - fc.Y) * (cc.Y - fc.Y));
+				if (d < nearest) nearest = d;
+			}
+		}
+		double const trigger = (cfg.CrateFiresaleDist > 0 ? cfg.CrateFiresaleDist : 10) * 256.0;
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] crate squad comeback: house=%s#%d canRecoverMCV=%d "
+				"buildings=%d money=%d shortGame=%d nearest=%.0f (trigger<=%.0f)\n",
+				pHouse->get_ID(), hIdx, canRecover, buildings, money, shortGame, nearest, trigger);
+		if (!shortGame && !canRecover && buildings > 0 && money > 0 && nearest <= trigger)
+		{
+			Debug::Log("[DoctrineExt] crate squad firesale-for-MCV: house=%s#%d selling all.\n",
+				pHouse->get_ID(), hIdx);
+			pHouse->Fire_Sale();
+		}
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
+			"crates=%d raced=%d.\n",
+			pHouse->get_ID(), hIdx, desired, N, recruited, static_cast<int>(crates.size()), raced);
 }
 
 int Teams::CountIdleArmed(HouseClass* pHouse)

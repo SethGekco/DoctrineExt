@@ -142,6 +142,14 @@ public:
 	int CrateFiresaleDist = 10;      // only firesale once the grabber is within
 	                                 // this many cells of the crate (so the base
 	                                 // sells just as it arrives, not while it travels)
+	// Persistent crate squad ([Doctrine.General], §10i redesign) — a dedicated
+	// squad that stands by (spread out) and races for crates. Size auto-derived
+	// from [CrateRules] (CrateMinimum/Maximum/Regen), so a busy crate map keeps a
+	// bigger squad and CrateMaximum=1 keeps exactly one racer.
+	bool CrateSquad = false;         // enable the persistent squad (else old
+	                                 // single-grabber CrateChase path)
+	int CrateSquadSize = 0;          // 0 = auto from [CrateRules]; >0 = fixed
+	int CrateSquadMax = 6;           // hard cap on the auto-derived squad size
 	// Garrison doctrine ([Doctrine.General], §10e)
 	bool GarrisonInfantry = false;   // keep building Occupier infantry while
 	                                 // vacant occupiable buildings exist, and

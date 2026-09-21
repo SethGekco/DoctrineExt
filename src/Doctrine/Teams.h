@@ -83,6 +83,12 @@ namespace Teams
 	// gets countermanded by the base AI; a steered team member sticks).
 	void SteerCrate(HouseClass* pHouse);
 
+	// Persistent crate squad (§10i redesign): a dedicated squad, sized from
+	// [CrateRules], that stands by spread out and races each nearby crate with
+	// its closest member. Maintains its own membership (diverting units off AI
+	// teams) and never repurposes them. Self-throttled; opt-in (CrateSquad).
+	void CrateSquadDoctrine(HouseClass* pHouse);
+
 	// Reserve spender (§10f): while the house's cash exceeds ReserveAmount,
 	// build the next affordable item from ReserveBuild — spend surplus instead
 	// of hoarding. Self-throttled (ReserveCooldown); opt-in (Amount=0 off).

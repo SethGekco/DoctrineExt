@@ -131,12 +131,21 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// infantry via the correct enter flags. Self-throttled + opt-in.
 	Teams::GarrisonDoctrine(pHouse);
 
-	// Crate doctrine (§10i): chase nearby crates + firesale-for-MCV comeback.
-	// Self-throttled + opt-in.
-	Teams::CrateDoctrine(pHouse);
-	// Steer the crate-grab team onto the crate each tick (sticks vs the AI).
-	if (Teams::HasActiveCrate(pHouse))
-		Teams::SteerCrate(pHouse);
+	// Crate doctrine (§10i): a persistent, dedicated squad that stands by (spread
+	// out) and races for crates, sized from [CrateRules]; or the older single-
+	// grabber path. Both self-throttled + opt-in; the squad supersedes the single
+	// grabber when enabled so they don't fight over the same units.
+	if (DoctrineConfig::Instance.CrateSquad)
+	{
+		Teams::CrateSquadDoctrine(pHouse);
+	}
+	else
+	{
+		Teams::CrateDoctrine(pHouse);
+		// Steer the crate-grab team onto the crate each tick (sticks vs the AI).
+		if (Teams::HasActiveCrate(pHouse))
+			Teams::SteerCrate(pHouse);
+	}
 
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.

@@ -162,7 +162,15 @@ void DoctrineConfig::EnsureParsed()
 	cfg.GOreW = pINI->ReadDouble("Doctrine.Garrison", "OreWeight", cfg.GOreW);
 	cfg.GTechW = pINI->ReadDouble("Doctrine.Garrison", "TechWeight", cfg.GTechW);
 	pINI->ReadString("Doctrine.General", "CrateChasers", "", buf, sizeof(buf));
-	cfg.CrateChasers = SplitList(buf);
+	cfg.CrateChasers.clear();
+	for (auto const& tok : SplitList(buf))
+	{
+		DoctrineConfig::CrateChaserEntry e;
+		auto const pos = tok.find(':');
+		if (pos == std::string::npos) { e.ID = tok; e.Radius = -1; }
+		else { e.ID = tok.substr(0, pos); e.Radius = std::atoi(tok.substr(pos + 1).c_str()); }
+		if (!e.ID.empty()) cfg.CrateChasers.push_back(e);
+	}
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

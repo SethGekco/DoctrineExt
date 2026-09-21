@@ -133,7 +133,12 @@ public:
 	int AutoArsenalDepth = 6;        // units kept per auto-graded role
 	// Crate doctrine ([Doctrine.General], §10i)
 	bool CrateChase = false;         // send a fast grabber at nearby crates
-	std::vector<std::string> CrateChasers; // preferred grabber IDs (else fastest)
+	// Preferred grabber IDs (best first), each with an optional per-unit chase
+	// radius: "CLEG:0,DRON:100,HTK,FV" — Radius in cells, 0 = map-wide (a chrono
+	// grabber can take any crate), omitted = use the squad default. A unit only
+	// races a crate within its own radius.
+	struct CrateChaserEntry { std::string ID; int Radius = -1; }; // -1 = default
+	std::vector<CrateChaserEntry> CrateChasers;
 	int CrateScanRadius = 30;        // cells around the base scanned for crates
 	int CrateInterval = 90;          // frames between crate scans per house
 	bool CrateFiresaleMCV = false;   // when stuck with no way to get an MCV and

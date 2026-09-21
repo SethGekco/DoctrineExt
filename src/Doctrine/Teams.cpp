@@ -1310,7 +1310,7 @@ namespace
 			}
 			for (int r = 0; r < static_cast<int>(chasers.size()); ++r)
 			{
-				if (chasers[r] != pType->ID) continue;
+				if (chasers[r].ID != pType->ID) continue;
 				if (!teamed && r < bestListRankFree) { bestListRankFree = r; byListFree = pFoot; }
 				else if (teamed && r < bestListRankTeam) { bestListRankTeam = r; byListTeam = pFoot; }
 			}
@@ -1775,6 +1775,20 @@ namespace
 		return size;
 	}
 
+	// A grabber type's chase radius in CELLS: its [Doctrine.General] CrateChasers
+	// entry (0 = map-wide), or the CrateSquadScan default if unlisted/omitted.
+	// 0 is returned verbatim to mean "unlimited" — callers treat 0 specially.
+	int GrabRadius(TechnoTypeClass* const pType)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		int const def = cfg.CrateSquadScan > 0 ? cfg.CrateSquadScan : 60;
+		if (!pType) return def;
+		for (auto const& e : cfg.CrateChasers)
+			if (e.ID == pType->ID)
+				return e.Radius >= 0 ? e.Radius : def;  // 0 = map-wide
+		return def;
+	}
+
 	// The house's PERSISTENT crate squad team (ID "DCRS<house>*"). Created once
 	// and kept alive across ticks (membership managed by CrateSquadDoctrine, not
 	// auto-recruited); never destroyed on idle, unlike the single-grabber team.
@@ -1855,7 +1869,7 @@ namespace
 			}
 			for (int r = 0; r < static_cast<int>(chasers.size()); ++r)
 			{
-				if (chasers[r] != pType->ID) continue;
+				if (chasers[r].ID != pType->ID) continue;
 				if (!teamed && r < bestListFree) { bestListFree = r; byListFree = pFoot; }
 				else if (teamed && r < bestListTeam) { bestListTeam = r; byListTeam = pFoot; }
 			}
@@ -1885,7 +1899,7 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	// Representative type for the taskforce (a chaser if the modder listed one).
 	TechnoTypeClass* pRep = nullptr;
 	for (auto const& cid : cfg.CrateChasers)
-		if (auto const pTy = TechnoTypeClass::Find(cid.c_str())) { pRep = pTy; break; }
+		if (auto const pTy = TechnoTypeClass::Find(cid.ID.c_str())) { pRep = pTy; break; }
 
 	auto const pTeam = EnsureSquadTeam(pHouse, desired, pRep);
 	if (!pTeam) return;
@@ -1916,15 +1930,22 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		if (!pF->InLimbo && pF->Health > 0) mem.push_back(pF);
 	int const N = static_cast<int>(mem.size());
 
-	// Crate cells the squad can see: a WIDE box around base (CrateSquadScan — the
-	// squad races across the map, not just home) UNION a CrateScanRadius box
-	// around each member (a member dispersed to the far side spots crates there).
-	// A local lambda scans one box, de-duping into `crates`.
+	// Crate detection scoped to what the squad can actually REACH: each member
+	// scans a box of ITS OWN grab radius (CrateChasers per-unit; 0 = map-wide),
+	// so a chrono grabber (CLEG:0) sees the whole map while a Terror Drone
+	// (DRON:100) only sees crates it could reach. If any member is map-wide we
+	// sweep the whole map once; otherwise per-member boxes (deduped), plus a base
+	// baseline so home crates are never missed.
 	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
 	int const scan = cfg.CrateScanRadius > 0 ? cfg.CrateScanRadius : 30;
-	int const wideScan = cfg.CrateSquadScan > scan ? cfg.CrateSquadScan : scan;
 	std::vector<CellClass*> crates;
-	auto scanBox = [&crates](CoordStruct const& center, int const r)
+	auto addCell = [&crates](CellClass* const pC)
+	{
+		if (!pC || !IsCrateOverlay(pC->OverlayTypeIndex)) return;
+		for (auto const pE : crates) if (pE == pC) return;
+		crates.push_back(pC);
+	};
+	auto scanBox = [&addCell](CoordStruct const& center, int const r)
 	{
 		CellStruct const c0 = CellClass::Coord2Cell(center);
 		for (int dy = -r; dy <= r; ++dy)
@@ -1934,15 +1955,27 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 				CellStruct cs;
 				cs.X = static_cast<short>(c0.X + dx);
 				cs.Y = static_cast<short>(c0.Y + dy);
-				auto const pC = MapClass::Instance.TryGetCellAt(cs);
-				if (!pC || !IsCrateOverlay(pC->OverlayTypeIndex)) continue;
-				bool seen = false;
-				for (auto const pE : crates) if (pE == pC) { seen = true; break; }
-				if (!seen) crates.push_back(pC);
+				addCell(MapClass::Instance.TryGetCellAt(cs));
 			}
 	};
-	scanBox(base, wideScan);
-	for (auto const pF : mem) scanBox(pF->GetCoords(), scan);
+	bool anyMapwide = false;
+	for (auto const pF : mem) if (GrabRadius(pF->GetTechnoType()) == 0) { anyMapwide = true; break; }
+	if (anyMapwide)
+	{
+		auto const& b = MapClass::Instance.MapCoordBounds; // whole map (cell LTRB)
+		for (int y = b.Top; y <= b.Bottom; ++y)
+			for (int x = b.Left; x <= b.Right; ++x)
+			{
+				CellStruct cs; cs.X = static_cast<short>(x); cs.Y = static_cast<short>(y);
+				addCell(MapClass::Instance.TryGetCellAt(cs));
+			}
+	}
+	else
+	{
+		scanBox(base, cfg.CrateSquadScan > scan ? cfg.CrateSquadScan : scan);
+		for (auto const pF : mem)
+			scanBox(pF->GetCoords(), GrabRadius(pF->GetTechnoType()));
+	}
 
 	// Assign: each crate is raced by its nearest free member (greedy, distinct);
 	// members without a crate spread out discreetly on a standby ring, skipping
@@ -1954,6 +1987,8 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	{
 		auto const pF = mem[i];
 		auto const fc = pF->GetCoords();
+		int const gr = GrabRadius(pF->GetTechnoType());          // 0 = map-wide
+		double const grLep = gr > 0 ? gr * 256.0 : 1e18;         // this unit's reach
 		int best = -1; double bestD = 1e18;
 		for (int c = 0; c < static_cast<int>(crates.size()); ++c)
 		{
@@ -1961,6 +1996,7 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 			auto const cc = crates[c]->GetCellCoords();
 			double const d = std::sqrt(double(cc.X - fc.X) * (cc.X - fc.X)
 				+ double(cc.Y - fc.Y) * (cc.Y - fc.Y));
+			if (d > grLep) continue;                              // beyond its reach
 			if (d < bestD) { bestD = d; best = c; }
 		}
 		if (best >= 0)

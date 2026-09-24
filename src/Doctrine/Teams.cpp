@@ -1822,8 +1822,11 @@ namespace
 		if (!pSC) pSC = GameCreate<ScriptTypeClass>(id);
 		if (!pTF || !pSC) return nullptr;
 
-		pTF->CountEntries = 1;
-		pTF->Entries[0] = { desired > 0 ? desired : 1, pRep };
+		// No production requirement: pRep is null (the squad only diverts existing
+		// units), and amount 0 means the team never force-builds anything — the
+		// force-build path ignores prereqs/faction, so we keep it shut off.
+		pTF->CountEntries = pRep ? 1 : 0;
+		pTF->Entries[0] = { pRep ? (desired > 0 ? desired : 1) : 0, pRep };
 		pTF->Group = -1;
 		pSC->ActionsCount = 1;
 		pSC->ScriptActions[0] = { 5, 120 }; // guard; we steer members each tick
@@ -1909,19 +1912,12 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	int const desired = DesiredSquadSize();
 	if (desired <= 0) return; // crates off globally
 
-	// Representative type for the taskforce = the first listed chaser THIS house
-	// can legitimately build (CanBuildStrict enforces TechLevel + Owner/faction +
-	// prerequisites). Without this the team taskforce produced cross-faction
-	// units — a Soviet AI built an Allied Chrono Legionnaire off "CLEG" in the
-	// list. null => recruit-only, no production (still fine; we divert existing).
-	TechnoTypeClass* pRep = nullptr;
-	for (auto const& cid : cfg.CrateChasers)
-	{
-		auto const pTy = TechnoTypeClass::Find(cid.ID.c_str());
-		if (pTy && CanBuildStrict(pHouse, pTy)) { pRep = pTy; break; }
-	}
-
-	auto const pTeam = EnsureSquadTeam(pHouse, desired, pRep);
+	// The squad NEVER produces — it only diverts existing units. A team taskforce
+	// force-builds its entry type ignoring prerequisites AND faction (that is how
+	// a Soviet AI built an Allied CLEG, and an Allied AI built CLEG before owning
+	// its GATECH prereq). So the taskforce type is left null: no production vector
+	// at all, no illegal builds. Membership is filled purely by PickSquadRecruit.
+	auto const pTeam = EnsureSquadTeam(pHouse, desired, nullptr);
 	if (!pTeam) return;
 
 	// Maintain membership: divert fast armed units onto the squad until at
@@ -2004,6 +2000,7 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	auto& targets = g_squadTargets[hIdx];
 	targets.clear(); // rebuilt this pass; SteerCrateSquad re-issues Move each tick
 	int raced = 0;
+	double nearestChase = 1e18; // diag: closest raced chaser's dist to its crate
 	double const ringLep = scan * 256.0;
 	for (int i = 0; i < N; ++i)
 	{
@@ -2027,6 +2024,7 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 			pF->SetDestination(crates[best], true);
 			pF->QueueMission(Mission::Move, false);
 			targets.push_back({ pF, crates[best] }); // keep steering it each tick
+			if (bestD < nearestChase) nearestChase = bestD;
 			++raced;
 		}
 		else
@@ -2100,8 +2098,9 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
-			"crates=%d raced=%d.\n",
-			pHouse->get_ID(), hIdx, desired, N, recruited, static_cast<int>(crates.size()), raced);
+			"crates=%d raced=%d nearestChaseCells=%.1f.\n",
+			pHouse->get_ID(), hIdx, desired, N, recruited, static_cast<int>(crates.size()), raced,
+			nearestChase < 1e17 ? nearestChase / 256.0 : -1.0);
 }
 
 void Teams::SteerCrateSquad(HouseClass* pHouse)

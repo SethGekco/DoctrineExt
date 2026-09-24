@@ -2146,11 +2146,16 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 		double const dx = cc.X - fc.X, dy = cc.Y - fc.Y;
 		double const d = std::sqrt(dx * dx + dy * dy);
 		CellClass* pDest = pCell;
-		if (d > 1.0 && d < 4.0 * 256.0)
+		// Drive THROUGH only while approaching (roughly 0.75..4 cells out): aim ~1
+		// cell past the crate so the path crosses its exact centre on the first
+		// pass. Once the unit is basically on the cell (<0.75) stop pushing it off
+		// — target the cell directly so it settles and the pickup fires (pushing
+		// past here was what made it wobble for ~9 passes before collecting).
+		if (d > 192.0 && d < 4.0 * 256.0)
 		{
 			CoordStruct beyond = cc;
-			beyond.X += static_cast<int>(dx / d * 512.0); // 2 cells past the crate
-			beyond.Y += static_cast<int>(dy / d * 512.0);
+			beyond.X += static_cast<int>(dx / d * 256.0); // 1 cell past the crate
+			beyond.Y += static_cast<int>(dy / d * 256.0);
 			if (auto const pB = MapClass::Instance.TryGetCellAt(beyond)) pDest = pB;
 		}
 		pF->SetDestination(pDest, true);

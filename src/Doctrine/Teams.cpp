@@ -2146,16 +2146,19 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 		double const dx = cc.X - fc.X, dy = cc.Y - fc.Y;
 		double const d = std::sqrt(dx * dx + dy * dy);
 		CellClass* pDest = pCell;
-		// Drive THROUGH only while approaching (roughly 0.75..4 cells out): aim ~1
-		// cell past the crate so the path crosses its exact centre on the first
-		// pass. Once the unit is basically on the cell (<0.75) stop pushing it off
-		// — target the cell directly so it settles and the pickup fires (pushing
-		// past here was what made it wobble for ~9 passes before collecting).
-		if (d > 192.0 && d < 4.0 * 256.0)
+		// Crate pickup fires on cell-ENTRY DURING MOVEMENT — the unit must drive
+		// THROUGH the crate cell, not stop on it (a plain Move halts ~1 cell short
+		// and parks, never entering; a 1-cell overshoot was too weak — a FLAKT
+		// stalled at 1.2 cells for 27 passes). So aim well PAST the crate (3 cells)
+		// whenever we're within ~5 cells: the unit drives clean across the crate's
+		// cell and collects mid-motion. Works for vehicles too, which stop short
+		// worse than infantry. If it overshoots without collecting it just loops
+		// back through next tick.
+		if (d > 1.0 && d < 5.0 * 256.0)
 		{
 			CoordStruct beyond = cc;
-			beyond.X += static_cast<int>(dx / d * 256.0); // 1 cell past the crate
-			beyond.Y += static_cast<int>(dy / d * 256.0);
+			beyond.X += static_cast<int>(dx / d * 768.0); // 3 cells past the crate
+			beyond.Y += static_cast<int>(dy / d * 768.0);
 			if (auto const pB = MapClass::Instance.TryGetCellAt(beyond)) pDest = pB;
 		}
 		pF->SetDestination(pDest, true);

@@ -2001,6 +2001,7 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	targets.clear(); // rebuilt this pass; SteerCrateSquad re-issues Move each tick
 	int raced = 0;
 	double nearestChase = 1e18; // diag: closest raced chaser's dist to its crate
+	const char* nearestChaseType = "-"; // diag: that chaser's unit ID
 	double const ringLep = scan * 256.0;
 	for (int i = 0; i < N; ++i)
 	{
@@ -2024,7 +2025,11 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 			pF->SetDestination(crates[best], true);
 			pF->QueueMission(Mission::Move, false);
 			targets.push_back({ pF, crates[best] }); // keep steering it each tick
-			if (bestD < nearestChase) nearestChase = bestD;
+			if (bestD < nearestChase)
+			{
+				nearestChase = bestD;
+				if (auto const pTy = pF->GetTechnoType()) nearestChaseType = pTy->get_ID();
+			}
 			++raced;
 		}
 		else
@@ -2098,9 +2103,9 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
-			"crates=%d raced=%d nearestChaseCells=%.1f.\n",
+			"crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
 			pHouse->get_ID(), hIdx, desired, N, recruited, static_cast<int>(crates.size()), raced,
-			nearestChase < 1e17 ? nearestChase / 256.0 : -1.0);
+			nearestChase < 1e17 ? nearestChase / 256.0 : -1.0, nearestChaseType);
 }
 
 void Teams::SteerCrateSquad(HouseClass* pHouse)
@@ -2130,7 +2135,25 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 		auto const pCell = tgt.second;
 		if (live.find(pF) == live.end()) continue;              // died / left squad
 		if (!pCell || !IsCrateOverlay(pCell->OverlayTypeIndex)) continue; // crate gone
-		pF->SetDestination(pCell, true);
+
+		// Crate pickup fires only when the unit stands ON the crate cell, but a
+		// plain Move-to-cell halts one cell SHORT (the unit thinks it arrived) —
+		// so it parked adjacent and never collected. Drive THROUGH: for the final
+		// approach aim a couple cells PAST the crate along the unit->crate line, so
+		// the path crosses the crate's own cell. Far out, target the cell directly.
+		auto const fc = pF->GetCoords();
+		auto const cc = pCell->GetCellCoords();
+		double const dx = cc.X - fc.X, dy = cc.Y - fc.Y;
+		double const d = std::sqrt(dx * dx + dy * dy);
+		CellClass* pDest = pCell;
+		if (d > 1.0 && d < 4.0 * 256.0)
+		{
+			CoordStruct beyond = cc;
+			beyond.X += static_cast<int>(dx / d * 512.0); // 2 cells past the crate
+			beyond.Y += static_cast<int>(dy / d * 512.0);
+			if (auto const pB = MapClass::Instance.TryGetCellAt(beyond)) pDest = pB;
+		}
+		pF->SetDestination(pDest, true);
 		pF->QueueMission(Mission::Move, false);
 	}
 }

@@ -32,6 +32,7 @@
 #include <Utilities/Debug.h>
 
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 #include <cstdio>
 #include <deque>
@@ -1259,6 +1260,17 @@ namespace
 	// base AI can't countermand it between the 90-frame detection passes (the
 	// reason raced=1 fired for ages yet no crate was ever collected).
 	std::map<int, std::vector<std::pair<FootClass*, CellClass*>>> g_squadTargets;
+	// Give-up guard: per-house per-crate-cell {lastDistLep, stuckPasses} progress,
+	// and a blacklist {cellKey -> expiryFrame} of crates deemed unreachable (a
+	// chaser made no progress toward them, e.g. across a cliff). Keyed by cell.
+	std::map<int, std::map<int, std::pair<int, int>>> g_crateProgress;
+	std::map<int, std::map<int, int>> g_crateBlacklist;
+
+	int CrateKey(CellClass* const pCell)
+	{
+		auto const c = pCell->GetCellCoords();
+		return ((c.X / 256) << 16) | ((c.Y / 256) & 0xFFFF);
+	}
 
 	bool IsCrateOverlay(int const idx)
 	{
@@ -1958,6 +1970,8 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	auto addCell = [&crates](CellClass* const pC)
 	{
 		if (!pC || !IsCrateOverlay(pC->OverlayTypeIndex)) return;
+		if (pC->LandType == LandType::Water) return; // ground chasers can't reach
+		                                             // water crates — skip them
 		for (auto const pE : crates) if (pE == pC) return;
 		crates.push_back(pC);
 	};
@@ -1993,6 +2007,18 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 			scanBox(pF->GetCoords(), GrabRadius(pF->GetTechnoType()));
 	}
 
+	// Drop crates on the unreachable blacklist (a chaser gave up on them); prune
+	// expired entries first so the squad retries once the cooldown passes.
+	{
+		auto& bl = g_crateBlacklist[hIdx];
+		for (auto bit = bl.begin(); bit != bl.end(); )
+			bit = (now >= bit->second) ? bl.erase(bit) : std::next(bit);
+		if (!bl.empty())
+			crates.erase(std::remove_if(crates.begin(), crates.end(),
+				[&bl](CellClass* const pC) { return bl.count(CrateKey(pC)) > 0; }),
+				crates.end());
+	}
+
 	// Assign: each crate is raced by its nearest free member (greedy, distinct);
 	// members without a crate spread out discreetly on a standby ring, skipping
 	// death-zone cells, so they're pre-positioned for the next spawn.
@@ -2021,6 +2047,29 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		}
 		if (best >= 0)
 		{
+			// Give-up guard: track progress toward this crate. If the chaser hasn't
+			// gotten meaningfully closer over several passes it's unreachable (e.g.
+			// across a cliff) — blacklist it and free the unit instead of freezing
+			// it there all game (a Boris sat stuck 16 passes on an unreachable one).
+			int const key = CrateKey(crates[best]);
+			auto& prog = g_crateProgress[hIdx];
+			auto const pit = prog.find(key);
+			int const stuck = (pit != prog.end() && bestD >= pit->second.first - 256.0)
+				? pit->second.second + 1 : 0;
+			int const giveUp = cfg.CrateGiveUpPasses > 0 ? cfg.CrateGiveUpPasses : 4;
+			if (stuck >= giveUp)
+			{
+				g_crateBlacklist[hIdx][key] = now
+					+ (cfg.CrateBlacklistTime > 0 ? cfg.CrateBlacklistTime : 1800);
+				prog.erase(key);
+				crateTaken[best] = true; // no other member should re-take it either
+				if (cfg.DebugTicks)
+					Debug::Log("[DoctrineExt] crate unreachable: house=%s#%d gave up at "
+						"%.1f cells, blacklisted.\n", pHouse->get_ID(), hIdx, bestD / 256.0);
+				continue; // free this member (it will disperse next pass)
+			}
+			prog[key] = { static_cast<int>(bestD), stuck };
+
 			crateTaken[best] = true;
 			pF->SetDestination(crates[best], true);
 			pF->QueueMission(Mission::Move, false);
@@ -2368,6 +2417,8 @@ void Teams::Reset()
 	g_reserveLastFire.clear();
 	g_crateLastFire.clear();
 	g_squadTargets.clear();
+	g_crateProgress.clear();
+	g_crateBlacklist.clear();
 	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();

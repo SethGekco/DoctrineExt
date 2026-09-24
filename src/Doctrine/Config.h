@@ -159,6 +159,11 @@ public:
 	                                 // crates (wider than CrateScanRadius — the
 	                                 // squad races across the map, not just home);
 	                                 // also scans CrateScanRadius around each member
+	int CrateGiveUpPasses = 4;       // detection passes a chaser can make no
+	                                 // progress toward a crate before it's deemed
+	                                 // unreachable and abandoned (frees the unit)
+	int CrateBlacklistTime = 1800;   // frames an unreachable crate is ignored
+	                                 // before the squad will try it again
 	// Garrison doctrine ([Doctrine.General], §10e)
 	bool GarrisonInfantry = false;   // keep building Occupier infantry while
 	                                 // vacant occupiable buildings exist, and

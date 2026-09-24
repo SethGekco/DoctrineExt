@@ -144,6 +144,15 @@ int DeathZones::ScoreAtCell(HouseClass* pHouse, int cellX, int cellY)
 	return idx >= 0 ? pG->Cells[idx] : 0;
 }
 
+int DeathZones::ScoreNearCell(HouseClass* pHouse, int cellX, int cellY, int radiusCells)
+{
+	auto const pG = FindGrid(pHouse->ArrayIndex);
+	if (!pG) return 0;
+	CellStruct c; c.X = static_cast<short>(cellX); c.Y = static_cast<short>(cellY);
+	int cx, cy;
+	return Hottest(*pG, c, radiusCells > 0 ? radiusCells : pG->Bucket, cx, cy);
+}
+
 int DeathZones::MaxNear(HouseClass* pHouse)
 {
 	auto const pG = FindGrid(pHouse->ArrayIndex);

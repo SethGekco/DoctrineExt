@@ -419,7 +419,10 @@ namespace
 	// score = role weight / providers-of-that-role, so a role that's a cheaper
 	// COMPLETE cut (fewer buildings to destroy to deny the category) wins — a
 	// lone war factory beats three service depots that jointly gate the MCV.
-	BuildingClass* DecapTarget(HouseClass* const pEnemy)
+	// Targets sitting in a proven killbox (where pHouse's units keep dying) are
+	// SKIPPED — don't feed the farm; if every target is lethal, return null so
+	// decap stands down instead of throwing units away repeatedly.
+	BuildingClass* DecapTarget(HouseClass* const pHouse, HouseClass* const pEnemy)
 	{
 		int count[static_cast<int>(DecapRole::COUNT)] = {};
 		for (int i = 0; i < BuildingClass::Array.Count; ++i)
@@ -429,6 +432,8 @@ namespace
 			count[static_cast<int>(RoleOf(pB->Type))]++;
 		}
 
+		int const killThreshold = DoctrineConfig::Instance.DeathZoneMinStrength > 0
+			? DoctrineConfig::Instance.DeathZoneMinStrength : 48;
 		BuildingClass* best = nullptr;
 		double bestScore = -1.0;
 		for (int i = 0; i < BuildingClass::Array.Count; ++i)
@@ -438,6 +443,9 @@ namespace
 			auto const role = RoleOf(pB->Type);
 			int const w = RoleWeight(role);
 			if (w <= 0) continue;
+			CellStruct bc; pB->GetMapCoords(&bc);
+			if (DeathZones::ScoreNearCell(pHouse, bc.X, bc.Y, 10) >= killThreshold)
+				continue; // killbox around this target — don't feed it
 			int const n = count[static_cast<int>(role)];
 			double const score = static_cast<double>(w) / (n > 0 ? n : 1);
 			if (score > bestScore) { bestScore = score; best = pB; }
@@ -622,8 +630,8 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	if (decap)
 	{
 		auto const pEnemy = WeakestEnemy(pHouse);
-		auto const pBld = pEnemy ? DecapTarget(pEnemy) : nullptr;
-		if (!pBld) return false; // nothing to decapitate
+		auto const pBld = pEnemy ? DecapTarget(pHouse, pEnemy) : nullptr;
+		if (!pBld) return false; // nothing to decapitate (or all targets are killboxes)
 		pStrike = pBld;
 	}
 
@@ -1048,8 +1056,8 @@ void Teams::SteerDecap(HouseClass* pHouse)
 	// the target advances to the war factory, then economy, etc. — the team
 	// walks down the rebuild chain rather than fixating on a dead building.
 	auto const pEnemy = WeakestEnemy(pHouse);
-	auto const pBld = pEnemy ? DecapTarget(pEnemy) : nullptr;
-	if (!pBld) return;
+	auto const pBld = pEnemy ? DecapTarget(pHouse, pEnemy) : nullptr;
+	if (!pBld) return; // no target, or all in killboxes — hold, don't feed the farm
 
 	for (auto const& key : g_decapSlots)
 	{
@@ -1901,10 +1909,17 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	int const desired = DesiredSquadSize();
 	if (desired <= 0) return; // crates off globally
 
-	// Representative type for the taskforce (a chaser if the modder listed one).
+	// Representative type for the taskforce = the first listed chaser THIS house
+	// can legitimately build (CanBuildStrict enforces TechLevel + Owner/faction +
+	// prerequisites). Without this the team taskforce produced cross-faction
+	// units — a Soviet AI built an Allied Chrono Legionnaire off "CLEG" in the
+	// list. null => recruit-only, no production (still fine; we divert existing).
 	TechnoTypeClass* pRep = nullptr;
 	for (auto const& cid : cfg.CrateChasers)
-		if (auto const pTy = TechnoTypeClass::Find(cid.ID.c_str())) { pRep = pTy; break; }
+	{
+		auto const pTy = TechnoTypeClass::Find(cid.ID.c_str());
+		if (pTy && CanBuildStrict(pHouse, pTy)) { pRep = pTy; break; }
+	}
 
 	auto const pTeam = EnsureSquadTeam(pHouse, desired, pRep);
 	if (!pTeam) return;
@@ -2279,7 +2294,7 @@ void Teams::RushCheck(HouseClass* pHouse)
 	// Aim the rush at the decapitation target — the enemy building whose loss
 	// most cripples its rebuild chain (§10h) — so an all-in strikes the ConYard
 	// / production rather than just roaming. Fall back to Hunt if none found.
-	BuildingClass* const pDecap = cfg.DecapEnable ? DecapTarget(pTarget) : nullptr;
+	BuildingClass* const pDecap = cfg.DecapEnable ? DecapTarget(pHouse, pTarget) : nullptr;
 
 	int sent = 0;
 	for (int i = 0; i < TechnoClass::Array.Count; ++i)

@@ -33,6 +33,12 @@ namespace DeathZones
 	// used by 6c to judge how dangerous a route/approach point is.
 	int ScoreAtCell(HouseClass* pHouse, int cellX, int cellY);
 
+	// Hottest death-zone value within radiusCells of an arbitrary cell (0 if
+	// none). Used to judge whether an ATTACK target sits in a proven killbox
+	// (deaths cluster in the approach around it, not exactly on it) so doctrine
+	// stops feeding units into it ("don't feed the farm").
+	int ScoreNearCell(HouseClass* pHouse, int cellX, int cellY, int radiusCells);
+
 	// Max death-zone value within DeathZoneRadius of the base (the
 	// DeathZoneScore observation).
 	int MaxNear(HouseClass* pHouse);

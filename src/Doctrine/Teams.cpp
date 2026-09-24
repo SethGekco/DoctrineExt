@@ -2136,32 +2136,30 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 		if (live.find(pF) == live.end()) continue;              // died / left squad
 		if (!pCell || !IsCrateOverlay(pCell->OverlayTypeIndex)) continue; // crate gone
 
-		// Crate pickup fires only when the unit stands ON the crate cell, but a
-		// plain Move-to-cell halts one cell SHORT (the unit thinks it arrived) —
-		// so it parked adjacent and never collected. Drive THROUGH: for the final
-		// approach aim a couple cells PAST the crate along the unit->crate line, so
-		// the path crosses the crate's own cell. Far out, target the cell directly.
 		auto const fc = pF->GetCoords();
 		auto const cc = pCell->GetCellCoords();
 		double const dx = cc.X - fc.X, dy = cc.Y - fc.Y;
 		double const d = std::sqrt(dx * dx + dy * dy);
-		CellClass* pDest = pCell;
-		// Crate pickup fires on cell-ENTRY DURING MOVEMENT — the unit must drive
-		// THROUGH the crate cell, not stop on it (a plain Move halts ~1 cell short
-		// and parks, never entering; a 1-cell overshoot was too weak — a FLAKT
-		// stalled at 1.2 cells for 27 passes). So aim well PAST the crate (3 cells)
-		// whenever we're within ~5 cells: the unit drives clean across the crate's
-		// cell and collects mid-motion. Works for vehicles too, which stop short
-		// worse than infantry. If it overshoots without collecting it just loops
-		// back through next tick.
-		if (d > 1.0 && d < 5.0 * 256.0)
+
+		// The engine's automatic pickup wasn't firing even with the unit sitting
+		// ON the crate (log: 0.3 cells, crate still there), and a plain Move halts
+		// ~1 cell short. So once the chaser is close enough — where a human would
+		// grab it — call the engine's OWN collector directly (0x481A00). This is
+		// the same routine a unit runs when it drives over a crate; we just trigger
+		// it at a human-like tolerance instead of needing a pixel-perfect stop.
+		if (d <= 1.5 * 256.0)
 		{
-			CoordStruct beyond = cc;
-			beyond.X += static_cast<int>(dx / d * 768.0); // 3 cells past the crate
-			beyond.Y += static_cast<int>(dy / d * 768.0);
-			if (auto const pB = MapClass::Instance.TryGetCellAt(beyond)) pDest = pB;
+			bool const got = pCell->CollectCrate(pF);
+			if (got && DoctrineConfig::Instance.DebugTicks)
+				Debug::Log("[DoctrineExt] crate GRABBED: house=%s#%d by %s.\n",
+					pHouse->get_ID(), pHouse->ArrayIndex,
+					pF->GetTechnoType() ? pF->GetTechnoType()->get_ID() : "?");
+			continue;
 		}
-		pF->SetDestination(pDest, true);
+
+		// Otherwise keep driving at the crate cell (re-issued every tick so the
+		// base AI can't countermand it between the throttled detection passes).
+		pF->SetDestination(pCell, true);
 		pF->QueueMission(Mission::Move, false);
 	}
 }

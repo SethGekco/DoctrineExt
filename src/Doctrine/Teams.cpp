@@ -31,6 +31,11 @@
 #include <GeneralDefinitions.h>
 #include <Utilities/Debug.h>
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+
 #include <algorithm>
 #include <iterator>
 #include <cmath>
@@ -2550,12 +2555,40 @@ namespace
 	// Per-house cached AA screen assignments {unit, screen cell} from the throttled
 	// placement pass; SteerAirDefense repositions stragglers each tick.
 	std::map<int, std::vector<std::pair<FootClass*, CellClass*>>> g_aaTargets;
+
+	// OPTIONAL dependency on WarZoneExt (AA P2): persistent, cross-game, per-map
+	// memory of where aircraft get their kills ("AirDeath" zone). Bound lazily via
+	// GetModuleHandle/GetProcAddress so DoctrineExt runs unchanged when WarZoneExt
+	// isn't installed and lights up when it is. WZ_Version() is the gate.
+	using WZ_Version_t = int(__cdecl*)();
+	using WZ_ZoneWeight_t = int(__cdecl*)(const char*, int, int);
+	WZ_ZoneWeight_t g_wzZoneWeight = nullptr;
+	bool g_wzChecked = false;
+
+	void EnsureWarZoneLink()
+	{
+		if (g_wzChecked) return;
+		g_wzChecked = true;
+		HMODULE const h = GetModuleHandleA("WarZoneExt.dll");
+		if (!h) return;
+		auto const ver = reinterpret_cast<WZ_Version_t>(GetProcAddress(h, "WZ_Version"));
+		if (!ver || ver() < 1) return; // absent or too old — don't bind the rest
+		g_wzZoneWeight = reinterpret_cast<WZ_ZoneWeight_t>(GetProcAddress(h, "WZ_ZoneWeight"));
+		Debug::Log("[DoctrineExt] WarZoneExt linked (v%d): persistent AirDeath zone available.\n", ver());
+	}
+
+	int WarZoneAirDeath(int const cellX, int const cellY)
+	{
+		return g_wzZoneWeight ? g_wzZoneWeight("AirDeath", cellX, cellY) : 0;
+	}
 }
 
 void Teams::AirDefense(HouseClass* pHouse)
 {
 	auto const& cfg = DoctrineConfig::Instance;
 	if (!cfg.AirDefenseEnable) return; // opt-in
+
+	EnsureWarZoneLink(); // optional persistent air-death memory (AA P2)
 
 	int const now = Unsorted::CurrentFrame;
 	int const hIdx = pHouse->ArrayIndex;
@@ -2582,7 +2615,29 @@ void Teams::AirDefense(HouseClass* pHouse)
 	// us). Act even with no LIVE air if history says this base gets raided.
 	int const maxAir = DeathZones::MaxAirNear(pHouse);
 	bool const airHotspot = maxAir >= (cfg.DeathZoneMinStrength > 0 ? cfg.DeathZoneMinStrength : 48);
-	if (airDPS <= 0.0 && !airHotspot) return;
+
+	// AA P2: persistent per-map air-death memory from WarZoneExt (optional). On a
+	// KNOWN map this is hot from game 1, before any local death has happened — so
+	// AA can pre-deploy toward the map's air corridor immediately. WarZone counts
+	// events (1 per air kill, accumulated across games), a much smaller scale than
+	// the local grid, so it uses its own low threshold.
+	auto const airBase = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	int const airScanR = cfg.AirScreenRadius > 0 ? cfg.AirScreenRadius : 30;
+	double wzBearing = 0.0; int wzBest = 0;
+	if (g_wzZoneWeight)
+	{
+		CellStruct const bc = CellClass::Coord2Cell(airBase);
+		for (int dy = -airScanR; dy <= airScanR; dy += 2)
+			for (int dx = -airScanR; dx <= airScanR; dx += 2)
+			{
+				if (dx * dx + dy * dy > airScanR * airScanR) continue;
+				int const w = WarZoneAirDeath(bc.X + dx, bc.Y + dy);
+				if (w > wzBest) { wzBest = w; wzBearing = std::atan2(double(dy), double(dx)); }
+			}
+	}
+	bool const wzHotspot = wzBest >= 3; // >=3 air kills in a bucket across games = a real corridor
+
+	if (airDPS <= 0.0 && !airHotspot && !wzHotspot) return;
 
 	// Own anti-air firepower (units + defensive buildings with an AA weapon).
 	double ownAA = 0.0;
@@ -2596,8 +2651,8 @@ void Teams::AirDefense(HouseClass* pHouse)
 	// Ratio the AI trusts for survival: keep own AA >= threat x AirThreatRatio.
 	// Re-evaluated each period, so building more air makes it build more AA.
 	double desired = airDPS * (cfg.AirThreatRatio > 0.0 ? cfg.AirThreatRatio : 1.5);
-	if (airHotspot && desired < cfg.AirDeathFloor)
-		desired = cfg.AirDeathFloor; // keep a baseline where air has repeatedly hit
+	if ((airHotspot || wzHotspot) && desired < cfg.AirDeathFloor)
+		desired = cfg.AirDeathFloor; // baseline where air has repeatedly hit (this game or in map history)
 	int queued = 0;
 	const char* built = "none";
 	if (ownAA < desired)
@@ -2678,6 +2733,12 @@ void Teams::AirDefense(HouseClass* pHouse)
 		double ang; int str;
 		if (DeathZones::HottestAirBearing(pHouse, ang, str)) { b1 = ang; have = true; }
 	}
+	else if (wzHotspot)
+	{
+		// No live air, no local history yet — pre-deploy toward the map's persistent
+		// air corridor (WarZoneExt), which is hot from game 1 on a known map.
+		b1 = wzBearing; have = true;
+	}
 
 	if (!have)
 	{
@@ -2732,8 +2793,8 @@ void Teams::AirDefense(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] air-defense: house=%s#%d enemyAirDPS=%.0f ownAA=%.0f "
-			"desired=%.0f maxAirDeath=%d build=%s queued=%d screens=%d aa=%d.\n",
-			pHouse->get_ID(), hIdx, airDPS, ownAA, desired, maxAir, built, queued,
+			"desired=%.0f maxAirDeath=%d wzAir=%d build=%s queued=%d screens=%d aa=%d.\n",
+			pHouse->get_ID(), hIdx, airDPS, ownAA, desired, maxAir, wzBest, built, queued,
 			screens, static_cast<int>(aaTargets.size()));
 }
 

@@ -633,3 +633,15 @@ no-address virtuals, the Phobos co-loaded-ext `AbstractClass+0x18` trap,
 engine drops the last INI line, deploy every green DLL to the RA2 folder with
 backup + byte-verify, and when a crash appears diff co-loaded DLL mtimes
 before blaming the newest change.
+
+## Optional dependency: WarZoneExt (AA P2)
+
+DoctrineExt optionally consumes **WarZoneExt** — the shared per-map spatial-memory
+DLL (repo: SethGekco/WarZoneExt) — for persistent, cross-game air-threat memory.
+The air-defense doctrine (`AirDefense`) binds it **lazily and optionally** via
+`GetModuleHandleA("WarZoneExt.dll")` + `GetProcAddress` (`WZ_Version`,
+`WZ_ZoneWeight`), gated on `WZ_Version() >= 1`. If WarZoneExt isn't installed,
+DoctrineExt runs exactly as before (local air death-zones only); if it is, AA also
+pre-deploys toward the map's persistent `AirDeath` corridor — useful from game 1 on
+a known map. We never hard-link it. When adding more zone use, extend WarZoneExt
+additively (new zone name) and update its CHANGELOG in the same commit.

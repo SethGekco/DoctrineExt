@@ -94,6 +94,11 @@ namespace Teams
 	// by the base AI before the unit arrives). Cheap: no scan, just cached cells.
 	void SteerCrateSquad(HouseClass* pHouse);
 
+	// Water crate squad: mirror of the ground squad for crates on water cells,
+	// using naval/amphibious/hover units, on a separate DCRW team.
+	void CrateWaterSquad(HouseClass* pHouse);
+	void SteerCrateWaterSquad(HouseClass* pHouse);
+
 	// Commander takeover (§10 commander): if the AI has stayed non-aggressive (army
 	// home, not committed at the enemy) for CommanderIdleTime frames, commandeer the
 	// idle army (diverting units off their sitting aimd teams) into an assault team.

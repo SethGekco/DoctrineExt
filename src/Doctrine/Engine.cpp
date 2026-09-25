@@ -139,6 +139,8 @@ void Engine::TickHouse(HouseClass* pHouse)
 	{
 		Teams::CrateSquadDoctrine(pHouse);   // detect + recruit (throttled)
 		Teams::SteerCrateSquad(pHouse);      // keep chasers moving (every tick)
+		Teams::CrateWaterSquad(pHouse);      // water crates via naval/amphibious units
+		Teams::SteerCrateWaterSquad(pHouse);
 	}
 	else
 	{

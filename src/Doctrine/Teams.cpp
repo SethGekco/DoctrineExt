@@ -1871,7 +1871,17 @@ namespace
 	// Best fast armed non-gatherer unit NOT already on pExclude, for squad
 	// recruiting: prefers teamless (CrateChasers list, then fastest), falls back
 	// to a teamed unit (caller liberates it) since the AI teams ~everything.
-	FootClass* PickSquadRecruit(HouseClass* const pHouse, TeamClass* const pExclude)
+	bool IsWaterCapable(TechnoTypeClass* const pT2)
+	{
+		if (!pT2) return false;
+		if (pT2->Naval) return true;
+		auto const s = pT2->SpeedType;
+		return s == SpeedType::Hover || s == SpeedType::Float
+			|| s == SpeedType::Amphibious || s == SpeedType::FloatBeach;
+	}
+
+	FootClass* PickSquadRecruit(HouseClass* const pHouse, TeamClass* const pExclude,
+		bool const water = false)
 	{
 		auto const& chasers = DoctrineConfig::Instance.CrateChasers;
 		FootClass* bySpeedFree = nullptr; int bestSpeedFree = -1;
@@ -1888,6 +1898,10 @@ namespace
 			if (pFoot->Team == pExclude && pExclude) continue; // already ours
 			auto const pType = pT->GetTechnoType();
 			if (!pType || pType->ResourceGatherer) continue;
+			// Terrain capability: water squad takes only water-capable units; the
+			// ground squad takes anything except pure-naval hulls.
+			if (water) { if (!IsWaterCapable(pType)) continue; }
+			else       { if (pType->Naval) continue; }
 			bool const teamed = (pFoot->Team != nullptr);
 			if (HasOffensiveWeapon(pType))
 			{
@@ -2210,6 +2224,175 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 		// Otherwise keep driving at the crate cell (re-issued every tick so the
 		// base AI can't countermand it between the throttled detection passes).
 		pF->SetDestination(pCell, true);
+		pF->QueueMission(Mission::Move, false);
+	}
+}
+
+namespace
+{
+	// Water crate squad state (separate team + throttle + caches from the ground
+	// squad so the two don't fight over each other's slots).
+	std::map<int, int> g_waterLastFire;
+	std::map<int, std::vector<std::pair<FootClass*, CellClass*>>> g_waterTargets;
+	std::map<int, std::map<int, std::pair<int, int>>> g_waterProgress;
+	std::map<int, std::map<int, int>> g_waterBlacklist;
+}
+
+void Teams::CrateWaterSquad(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.CrateSquad) return; // shares the squad toggle
+	auto const r = RulesClass::Instance;
+	if (!r || !r->Crates) return;
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.CrateInterval > 0 ? cfg.CrateInterval : 90;
+	auto const it = g_waterLastFire.find(hIdx);
+	if (it != g_waterLastFire.end() && now - it->second < interval) return;
+	g_waterLastFire[hIdx] = now;
+
+	int const desired = DesiredSquadSize();
+	if (desired <= 0) return;
+
+	auto const pTeam = EnsureSquadTeam(pHouse, desired, nullptr, "DCRW");
+	if (!pTeam) return;
+
+	// Maintain: recruit ONLY water-capable units (naval/hover/amphibious). If the
+	// house owns none, the squad stays empty — graceful, water crates go ungrabbed.
+	int members = 0;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+		if (!pF->InLimbo && pF->Health > 0) ++members;
+	int recruited = 0;
+	while (members < desired)
+	{
+		auto const pR = PickSquadRecruit(pHouse, pTeam, true);
+		if (!pR) break;
+		if (pR->Team) pR->Team->LiberateMember(pR);
+		if (!pTeam->AddMember(pR, true)) break;
+		pR->ShouldGarrisonStructure = false;
+		pR->ShouldEnterOccupiable = false;
+		++members; ++recruited;
+	}
+
+	std::vector<FootClass*> mem;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+		if (!pF->InLimbo && pF->Health > 0) mem.push_back(pF);
+	int const N = static_cast<int>(mem.size());
+
+	// Detect WATER crates within scan of base (LandType::Water only — the mirror of
+	// the ground squad, which skips them).
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	int const scan = cfg.CrateSquadScan > 0 ? cfg.CrateSquadScan : 60;
+	std::vector<CellClass*> crates;
+	auto addCell = [&crates](CellClass* const pC)
+	{
+		if (!pC || !IsCrateOverlay(pC->OverlayTypeIndex)) return;
+		if (pC->LandType != LandType::Water) return; // water squad: water crates only
+		for (auto const pE : crates) if (pE == pC) return;
+		crates.push_back(pC);
+	};
+	CellStruct const c0 = CellClass::Coord2Cell(base);
+	for (int dy = -scan; dy <= scan; ++dy)
+		for (int dx = -scan; dx <= scan; ++dx)
+		{
+			if (dx * dx + dy * dy > scan * scan) continue;
+			CellStruct cs; cs.X = static_cast<short>(c0.X + dx); cs.Y = static_cast<short>(c0.Y + dy);
+			addCell(MapClass::Instance.TryGetCellAt(cs));
+		}
+	{
+		auto& bl = g_waterBlacklist[hIdx];
+		for (auto bit = bl.begin(); bit != bl.end(); )
+			bit = (now >= bit->second) ? bl.erase(bit) : std::next(bit);
+		if (!bl.empty())
+			crates.erase(std::remove_if(crates.begin(), crates.end(),
+				[&bl](CellClass* const pC) { return bl.count(CrateKey(pC)) > 0; }), crates.end());
+	}
+
+	std::vector<bool> taken(crates.size(), false);
+	auto& targets = g_waterTargets[hIdx];
+	targets.clear();
+	int raced = 0;
+	for (int i = 0; i < N; ++i)
+	{
+		auto const pF = mem[i];
+		auto const fc = pF->GetCoords();
+		int best = -1; double bestD = 1e18;
+		for (int c = 0; c < static_cast<int>(crates.size()); ++c)
+		{
+			if (taken[c]) continue;
+			auto const cc = crates[c]->GetCellCoords();
+			double const d = std::sqrt(double(cc.X - fc.X) * (cc.X - fc.X)
+				+ double(cc.Y - fc.Y) * (cc.Y - fc.Y));
+			if (d < bestD) { bestD = d; best = c; }
+		}
+		if (best < 0) continue;
+		int const key = CrateKey(crates[best]);
+		auto& prog = g_waterProgress[hIdx];
+		auto const pit = prog.find(key);
+		int const stuck = (pit != prog.end() && bestD >= pit->second.first - 256.0)
+			? pit->second.second + 1 : 0;
+		int const giveUp = cfg.CrateGiveUpPasses > 0 ? cfg.CrateGiveUpPasses : 4;
+		if (stuck >= giveUp)
+		{
+			g_waterBlacklist[hIdx][key] = now
+				+ (cfg.CrateBlacklistTime > 0 ? cfg.CrateBlacklistTime : 1800);
+			prog.erase(key); taken[best] = true; continue;
+		}
+		prog[key] = { static_cast<int>(bestD), stuck };
+		taken[best] = true;
+		pF->SetDestination(crates[best], true);
+		pF->QueueMission(Mission::Move, false);
+		targets.push_back({ pF, crates[best] });
+		++raced;
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] crate water squad: house=%s#%d members=%d recruited=%d "
+			"watercrates=%d raced=%d.\n", pHouse->get_ID(), hIdx, N, recruited,
+			static_cast<int>(crates.size()), raced);
+}
+
+void Teams::SteerCrateWaterSquad(HouseClass* pHouse)
+{
+	auto const it = g_waterTargets.find(pHouse->ArrayIndex);
+	if (it == g_waterTargets.end() || it->second.empty()) return;
+	char id[0x18];
+	std::snprintf(id, sizeof(id), "DCRW%dTM", pHouse->ArrayIndex);
+	auto const pTT = TeamTypeClass::Find(id);
+	if (!pTT || pTT->cntInstances <= 0) return;
+	auto const pTeam = pTT->FindFirstInstance();
+	if (!pTeam) return;
+	std::set<FootClass*> live;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+		if (!pF->InLimbo && pF->Health > 0) live.insert(pF);
+	for (auto const& tgt : it->second)
+	{
+		auto const pF = tgt.first;
+		auto const pCell = tgt.second;
+		if (live.find(pF) == live.end()) continue;
+		if (!pCell || !IsCrateOverlay(pCell->OverlayTypeIndex)) continue;
+		auto const fc = pF->GetCoords();
+		auto const cc = pCell->GetCellCoords();
+		double const dx = cc.X - fc.X, dy = cc.Y - fc.Y;
+		double const d = std::sqrt(dx * dx + dy * dy);
+		if (d <= 1.5 * 256.0)
+		{
+			if (pCell->CollectCrate(pF) && DoctrineConfig::Instance.DebugTicks)
+				Debug::Log("[DoctrineExt] water crate GRABBED: house=%s#%d by %s.\n",
+					pHouse->get_ID(), pHouse->ArrayIndex,
+					pF->GetTechnoType() ? pF->GetTechnoType()->get_ID() : "?");
+			continue;
+		}
+		CellClass* pDest = pCell;
+		if (d > 1.0 && d < 5.0 * 256.0)
+		{
+			CoordStruct beyond = cc;
+			beyond.X += static_cast<int>(dx / d * 768.0);
+			beyond.Y += static_cast<int>(dy / d * 768.0);
+			if (auto const pB = MapClass::Instance.TryGetCellAt(beyond)) pDest = pB;
+		}
+		pF->SetDestination(pDest, true);
 		pF->QueueMission(Mission::Move, false);
 	}
 }
@@ -2549,6 +2732,10 @@ void Teams::Reset()
 	g_squadTargets.clear();
 	g_crateProgress.clear();
 	g_crateBlacklist.clear();
+	g_waterLastFire.clear();
+	g_waterTargets.clear();
+	g_waterProgress.clear();
+	g_waterBlacklist.clear();
 	g_cmdrIdleSince.clear();
 	g_cmdrLastEval.clear();
 	g_garrisonLastFire.clear();

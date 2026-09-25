@@ -136,6 +136,10 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CommanderCommitFrac = pINI->ReadDouble("Doctrine.Commander", "CommitFraction", cfg.CommanderCommitFrac);
 	cfg.CommanderBatch = pINI->ReadInteger("Doctrine.Commander", "Batch", cfg.CommanderBatch);
 	cfg.CommanderPeriod = pINI->ReadInteger("Doctrine.Commander", "Period", cfg.CommanderPeriod);
+	cfg.AirDefenseEnable = pINI->ReadBool("Doctrine.AirDefense", "Enable", cfg.AirDefenseEnable);
+	cfg.AirThreatRatio = pINI->ReadDouble("Doctrine.AirDefense", "ThreatRatio", cfg.AirThreatRatio);
+	cfg.AirDefensePeriod = pINI->ReadInteger("Doctrine.AirDefense", "Period", cfg.AirDefensePeriod);
+	cfg.AAMaxProduce = pINI->ReadInteger("Doctrine.AirDefense", "MaxProduce", cfg.AAMaxProduce);
 	cfg.DecapEnable = pINI->ReadBool("Doctrine.Decap", "Enable", cfg.DecapEnable);
 	cfg.DecapConYard = pINI->ReadInteger("Doctrine.Decap", "ConYard", cfg.DecapConYard);
 	cfg.DecapRefinery = pINI->ReadInteger("Doctrine.Decap", "Refinery", cfg.DecapRefinery);

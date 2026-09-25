@@ -157,6 +157,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	Teams::CommanderTakeover(pHouse);
 	Teams::SteerCommander(pHouse);
 
+	// Air-defense (AA P1): keep AA firepower scaled to the enemy's air strength,
+	// building more AntiAir as the enemy adds aircraft. Self-throttled + opt-in.
+	Teams::AirDefense(pHouse);
+
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.
 	Teams::RushCheck(pHouse);

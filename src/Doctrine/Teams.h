@@ -99,6 +99,10 @@ namespace Teams
 	void CrateWaterSquad(HouseClass* pHouse);
 	void SteerCrateWaterSquad(HouseClass* pHouse);
 
+	// Air-defense (AA P1): keep own anti-air firepower >= enemy air DPS x ratio,
+	// building AntiAir arsenal units when short (scales as the enemy adds air).
+	void AirDefense(HouseClass* pHouse);
+
 	// Commander takeover (§10 commander): if the AI has stayed non-aggressive (army
 	// home, not committed at the enemy) for CommanderIdleTime frames, commandeer the
 	// idle army (diverting units off their sitting aimd teams) into an assault team.

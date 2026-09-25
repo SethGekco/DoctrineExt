@@ -131,6 +131,12 @@ public:
 	int CommanderBatch = 16;         // max units DoctrineExt commandeers into the
 	                                 // assault (0 = uncapped — the whole home army)
 	int CommanderPeriod = 150;       // frames between takeover evaluations
+	// Air-defense doctrine ([Doctrine.AirDefense], AA P1) — keep AA scaled to the
+	// enemy's air. Opt-in (Enable=no).
+	bool AirDefenseEnable = false;
+	double AirThreatRatio = 1.5;     // own AA firepower target = enemy air DPS x this
+	int AirDefensePeriod = 150;      // frames between air-defense evaluations
+	int AAMaxProduce = 2;            // AntiAir units queued per pass when short
 	// Tech-tree decapitation ([Doctrine.Decap], §10h) — priority target roles.
 	// A rush aims at the highest-scored enemy building; score = weight / how many
 	// of that role the enemy has (fewer providers = a cheaper COMPLETE cut, so a

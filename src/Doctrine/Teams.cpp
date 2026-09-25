@@ -336,6 +336,23 @@ namespace
 		return total;
 	}
 
+	// Anti-air DPS of a type: only weapons whose projectile can hit air (§AA P1).
+	double AADps(TechnoTypeClass* const pType)
+	{
+		double total = 0.0;
+		for (int wi = 0; wi < 2; ++wi)
+		{
+			auto const pWS = pType->GetWeapon(wi);
+			if (!pWS || !pWS->WeaponType) continue;
+			auto const w = pWS->WeaponType;
+			if (w->ROF <= 0 || w->Damage <= 1) continue;
+			if (!w->Projectile || !w->Projectile->AA) continue; // must reach aircraft
+			int const burst = w->Burst > 0 ? w->Burst : 1;
+			total += double(w->Damage) * burst / (w->ROF / 10.0);
+		}
+		return total;
+	}
+
 	// Per-house military power (Σ living armed technos' DPS: units + defensive
 	// buildings, minus miners), cached per frame — one pass serves every house.
 	std::map<int, double> g_powerTable;
@@ -2526,6 +2543,77 @@ void Teams::SteerCommander(HouseClass* pHouse)
 	}
 }
 
+namespace { std::map<int, int> g_airLastFire; }
+
+void Teams::AirDefense(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.AirDefenseEnable) return; // opt-in
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const period = cfg.AirDefensePeriod > 0 ? cfg.AirDefensePeriod : 150;
+	auto const it = g_airLastFire.find(hIdx);
+	if (it != g_airLastFire.end() && now - it->second < period) return;
+	g_airLastFire[hIdx] = now;
+
+	// Enemy air threat = Σ living enemy aircraft DPS (carriers' craft are aircraft
+	// too, so they count). No threat -> nothing to do.
+	double airDPS = 0.0;
+	for (int i = 0; i < HouseClass::Array.Count; ++i)
+	{
+		auto const pO = HouseClass::Array.GetItem(i);
+		if (!pO || pO == pHouse || pO->Defeated || pO->IsObserver() || pO->IsNeutral()) continue;
+		if (pHouse->IsAlliedWith(pO)) continue;
+		for (auto const pAt : AircraftTypeClass::Array)
+		{
+			int const n = pO->CountOwnedAndPresent(pAt);
+			if (n > 0) airDPS += RawDPS(pAt) * n;
+		}
+	}
+	if (airDPS <= 0.0) return;
+
+	// Own anti-air firepower (units + defensive buildings with an AA weapon).
+	double ownAA = 0.0;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+	{
+		auto const pT = TechnoClass::Array.GetItem(i);
+		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+		if (auto const pTy = pT->GetTechnoType()) ownAA += AADps(pTy);
+	}
+
+	// Ratio the AI trusts for survival: keep own AA >= threat x AirThreatRatio.
+	// Re-evaluated each period, so building more air makes it build more AA.
+	double const desired = airDPS * (cfg.AirThreatRatio > 0.0 ? cfg.AirThreatRatio : 1.5);
+	int queued = 0;
+	const char* built = "none";
+	if (ownAA < desired)
+	{
+		const DoctrineArsenalRole* pRole = nullptr;
+		for (auto const& role : cfg.Arsenal)
+			if (role.Role == "AntiAir") { pRole = &role; break; }
+		TechnoTypeClass* const pBest = pRole ? PickType(pHouse, *pRole) : nullptr;
+		if (pBest && CanBuildStrict(pHouse, pBest))
+		{
+			if (auto const pFactory = FindHouseFactory(pHouse, pBest))
+			{
+				built = pBest->get_ID();
+				int const cap = cfg.AAMaxProduce > 0 ? cfg.AAMaxProduce : 2;
+				for (int k = 0; k < cap; ++k)
+				{
+					pFactory->DemandProduction(pBest, pHouse, true);
+					++queued;
+				}
+			}
+		}
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] air-defense: house=%s#%d enemyAirDPS=%.0f ownAA=%.0f "
+			"desired=%.0f build=%s queued=%d.\n",
+			pHouse->get_ID(), hIdx, airDPS, ownAA, desired, built, queued);
+}
+
 int Teams::CountIdleArmed(HouseClass* pHouse)
 {
 	int n = 0;
@@ -2738,6 +2826,7 @@ void Teams::Reset()
 	g_waterBlacklist.clear();
 	g_cmdrIdleSince.clear();
 	g_cmdrLastEval.clear();
+	g_airLastFire.clear();
 	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();

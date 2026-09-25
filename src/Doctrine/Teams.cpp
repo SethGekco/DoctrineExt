@@ -2280,6 +2280,15 @@ void Teams::CommanderTakeover(HouseClass* pHouse)
 	bool const aggressive = committed >= need;
 	auto& idleSince = g_cmdrIdleSince[hIdx];
 	if (idleSince == 0) idleSince = now;
+
+	// Per-eval diagnostic (throttled): shows WHY the commander does or doesn't
+	// take over — feature on?, army size, committed vs need, how long idle.
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] commander eval: house=%s#%d idleTime=%d army=%d (min %d) "
+			"committed=%d need=%d aggressive=%d idleFor=%d/%d\n",
+			pHouse->get_ID(), hIdx, cfg.CommanderIdleTime, armyAvail, cfg.CommanderMinArmy,
+			committed, need, aggressive ? 1 : 0, now - idleSince, cfg.CommanderIdleTime);
+
 	if (aggressive) { idleSince = now; return; }  // AI is attacking on its own — stay out
 	if (armyAvail < cfg.CommanderMinArmy) return; // not enough army to bother
 	if (now - idleSince < cfg.CommanderIdleTime) return; // still within patience window

@@ -143,18 +143,6 @@ public:
 	int DecapInfantry = 30;          // barracks
 	int DecapDefense = 10;           // base defenses
 	int DecapOther = 5;              // everything else
-	// Commander takeover ([Doctrine.Commander]) — when the base AI sits idle (its
-	// aimd/AITrigger teams never attack), DoctrineExt takes over as commander and
-	// commandeers the idle army into an assault. Opt-in (IdleTime=0 disables).
-	int CommanderIdleTime = 0;       // frames the AI must be non-aggressive before
-	                                 // DoctrineExt seizes command (0 = feature off)
-	int CommanderPeriod = 150;       // frames between takeover evaluations per house
-	int CommanderFront = 25;         // cells from base beyond which a unit counts as
-	                                 // "committed" (out attacking) vs sitting home
-	double CommanderCommitFrac = 0.34; // if this fraction of the army is committed,
-	                                 // the AI is deemed aggressive — don't take over
-	int CommanderMinArmy = 6;        // need at least this many armed units to bother
-	int CommanderBatch = 24;         // max units the commander pulls into one assault
 	// Arsenal auto-grader (§10d A)
 	bool AutoArsenal = true;         // auto-fill roles not explicitly listed in
 	                                 // [Doctrine.Arsenal] by grading the roster

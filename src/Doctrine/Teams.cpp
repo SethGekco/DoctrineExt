@@ -1507,7 +1507,8 @@ namespace
 		auto const id = pTeam->Type->ID;
 		return id[0] == 'D' &&
 			((id[1] == 'C' && (id[2] == 'T' || id[2] == 'R' || id[2] == 'M')) // DCTR/DCRG/DCRS/DCMD
-			|| (id[1] == 'G' && id[2] == 'A'));                 // DGAR
+			|| (id[1] == 'G' && id[2] == 'A')                   // DGAR
+			|| (id[1] == 'A' && id[2] == 'A'));                 // DAA (air-defense screen)
 	}
 }
 
@@ -2543,7 +2544,13 @@ void Teams::SteerCommander(HouseClass* pHouse)
 	}
 }
 
-namespace { std::map<int, int> g_airLastFire; }
+namespace
+{
+	std::map<int, int> g_airLastFire;
+	// Per-house cached AA screen assignments {unit, screen cell} from the throttled
+	// placement pass; SteerAirDefense repositions stragglers each tick.
+	std::map<int, std::vector<std::pair<FootClass*, CellClass*>>> g_aaTargets;
+}
 
 void Teams::AirDefense(HouseClass* pHouse)
 {
@@ -2608,10 +2615,138 @@ void Teams::AirDefense(HouseClass* pHouse)
 		}
 	}
 
+	// --- Placement (P1b): screen AA forward of base, split across the bearings the
+	// air is actually coming from (so a two-sided carrier attack gets covered both
+	// ways instead of the AA parking to one side). ---
+	auto& aaTargets = g_aaTargets[hIdx];
+	aaTargets.clear();
+	int screens = 0;
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	int const screenR = cfg.AirScreenRadius > 0 ? cfg.AirScreenRadius : 30;
+	double const screenLep = screenR * 256.0;
+
+	// Bin incoming enemy aircraft into 8 bearing sectors, weighted by DPS.
+	double secDps[8] = {}, secSin[8] = {}, secCos[8] = {};
+	bool anyAir = false;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+	{
+		auto const pT = TechnoClass::Array.GetItem(i);
+		if (!pT || pT->InLimbo || pT->Health <= 0) continue;
+		if (pT->WhatAmI() != AbstractType::Aircraft) continue;
+		auto const pO = pT->Owner;
+		if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;
+		auto const c = pT->GetCoords();
+		double const dx = c.X - base.X, dy = c.Y - base.Y;
+		double const dist = std::sqrt(dx * dx + dy * dy);
+		if (dist > screenLep || dist < 1.0) continue;
+		double const bearing = std::atan2(dy, dx);
+		int const s = static_cast<int>(std::floor((bearing + 3.14159265) / (3.14159265 / 4.0))) & 7;
+		double const w = RawDPS(pT->GetTechnoType());
+		secDps[s] += w; secSin[s] += std::sin(bearing) * w; secCos[s] += std::cos(bearing) * w;
+		anyAir = true;
+	}
+
+	if (!anyAir)
+	{
+		// No near incoming air — release the screen team back to the AI.
+		char rid[0x18]; std::snprintf(rid, sizeof(rid), "DAA%dTM", hIdx);
+		if (auto const pTT = TeamTypeClass::Find(rid)) pTT->DestroyAllInstances();
+	}
+	else
+	{
+		// Up to two clusters: strongest sector, then strongest NON-adjacent sector
+		// with >= 1/3 its weight (a genuine second axis, e.g. a split fleet).
+		int s1 = 0; for (int s = 1; s < 8; ++s) if (secDps[s] > secDps[s1]) s1 = s;
+		int s2 = -1; double best2 = 0.0;
+		for (int s = 0; s < 8; ++s)
+		{
+			if (s == s1 || s == ((s1 + 1) & 7) || s == ((s1 + 7) & 7)) continue;
+			if (secDps[s] > best2) { best2 = secDps[s]; s2 = s; }
+		}
+		if (s2 >= 0 && secDps[s2] < secDps[s1] / 3.0) s2 = -1;
+
+		double const b1 = std::atan2(secSin[s1], secCos[s1]);
+		double const b2 = (s2 >= 0) ? std::atan2(secSin[s2], secCos[s2]) : 0.0;
+		double const w1 = secDps[s1], w2 = (s2 >= 0) ? secDps[s2] : 0.0;
+
+		// Gather own AA-capable mobile units (teamless / on aimd / on our own DAA —
+		// but never poach another doctrine team's units).
+		auto const pTeam = EnsureSquadTeam(pHouse, 24, nullptr, "DAA");
+		std::vector<FootClass*> aa;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Unit && what != AbstractType::Infantry) continue;
+			auto const pFoot = static_cast<FootClass*>(pT);
+			if (pFoot->Team && pFoot->Team != pTeam && IsDoctrineTeam(pFoot->Team)) continue;
+			auto const pTy = pT->GetTechnoType();
+			if (!pTy || AADps(pTy) <= 0.0) continue;
+			aa.push_back(pFoot);
+		}
+
+		if (pTeam && !aa.empty())
+		{
+			double const standoff = (cfg.AirDefenseStandoff > 0 ? cfg.AirDefenseStandoff : 12) * 256.0;
+			int const n1 = (s2 >= 0)
+				? static_cast<int>(aa.size() * w1 / (w1 + w2) + 0.5)
+				: static_cast<int>(aa.size());
+			for (int k = 0; k < static_cast<int>(aa.size()); ++k)
+			{
+				double const bearing = (s2 >= 0 && k >= n1) ? b2 : b1;
+				CoordStruct pt = base;
+				pt.X = base.X + static_cast<int>(std::cos(bearing) * standoff);
+				pt.Y = base.Y + static_cast<int>(std::sin(bearing) * standoff);
+				auto const pCell = MapClass::Instance.TryGetCellAt(pt);
+				if (!pCell) continue;
+				auto const pFoot = aa[k];
+				if (pFoot->Team != pTeam)
+				{
+					if (pFoot->Team) pFoot->Team->LiberateMember(pFoot);
+					pTeam->AddMember(pFoot, true);
+				}
+				aaTargets.push_back({ pFoot, pCell });
+			}
+			screens = (s2 >= 0) ? 2 : 1;
+		}
+	}
+
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] air-defense: house=%s#%d enemyAirDPS=%.0f ownAA=%.0f "
-			"desired=%.0f build=%s queued=%d.\n",
-			pHouse->get_ID(), hIdx, airDPS, ownAA, desired, built, queued);
+			"desired=%.0f build=%s queued=%d screens=%d aa=%d.\n",
+			pHouse->get_ID(), hIdx, airDPS, ownAA, desired, built, queued,
+			screens, static_cast<int>(aaTargets.size()));
+}
+
+void Teams::SteerAirDefense(HouseClass* pHouse)
+{
+	auto const it = g_aaTargets.find(pHouse->ArrayIndex);
+	if (it == g_aaTargets.end() || it->second.empty()) return;
+	char id[0x18]; std::snprintf(id, sizeof(id), "DAA%dTM", pHouse->ArrayIndex);
+	auto const pTT = TeamTypeClass::Find(id);
+	if (!pTT || pTT->cntInstances <= 0) return;
+	auto const pTeam = pTT->FindFirstInstance();
+	if (!pTeam) return;
+	std::set<FootClass*> live;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+		if (!pF->InLimbo && pF->Health > 0) live.insert(pF);
+	for (auto const& tgt : it->second)
+	{
+		auto const pF = tgt.first;
+		auto const pCell = tgt.second;
+		if (live.find(pF) == live.end() || !pCell) continue;
+		// Reposition only if it has drifted off its screen point; once there, leave
+		// it be so it actually FIRES at aircraft in range instead of re-pathing.
+		auto const fc = pF->GetCoords();
+		auto const cc = pCell->GetCellCoords();
+		double const dx = cc.X - fc.X, dy = cc.Y - fc.Y;
+		if (std::sqrt(dx * dx + dy * dy) > 3.0 * 256.0)
+		{
+			pF->SetDestination(pCell, true);
+			pF->QueueMission(Mission::Move, false);
+		}
+	}
 }
 
 int Teams::CountIdleArmed(HouseClass* pHouse)
@@ -2827,6 +2962,7 @@ void Teams::Reset()
 	g_cmdrIdleSince.clear();
 	g_cmdrLastEval.clear();
 	g_airLastFire.clear();
+	g_aaTargets.clear();
 	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();

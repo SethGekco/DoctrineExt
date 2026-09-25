@@ -100,8 +100,13 @@ namespace Teams
 	void SteerCrateWaterSquad(HouseClass* pHouse);
 
 	// Air-defense (AA P1): keep own anti-air firepower >= enemy air DPS x ratio,
-	// building AntiAir arsenal units when short (scales as the enemy adds air).
+	// building AntiAir arsenal units when short (scales as the enemy adds air), and
+	// screen AA forward of base split across incoming-air bearings.
 	void AirDefense(HouseClass* pHouse);
+
+	// Reposition drifted AA screen units each tick (placement assigned by
+	// AirDefense); leaves in-position units alone so they fire.
+	void SteerAirDefense(HouseClass* pHouse);
 
 	// Commander takeover (§10 commander): if the AI has stayed non-aggressive (army
 	// home, not committed at the enemy) for CommanderIdleTime frames, commandeer the

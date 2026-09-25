@@ -158,8 +158,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	Teams::SteerCommander(pHouse);
 
 	// Air-defense (AA P1): keep AA firepower scaled to the enemy's air strength,
-	// building more AntiAir as the enemy adds aircraft. Self-throttled + opt-in.
+	// building more AntiAir as the enemy adds aircraft, and screen AA forward split
+	// across incoming-air bearings. Self-throttled + opt-in. Steering every tick.
 	Teams::AirDefense(pHouse);
+	Teams::SteerAirDefense(pHouse);
 
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.

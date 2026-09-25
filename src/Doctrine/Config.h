@@ -137,6 +137,8 @@ public:
 	double AirThreatRatio = 1.5;     // own AA firepower target = enemy air DPS x this
 	int AirDefensePeriod = 150;      // frames between air-defense evaluations
 	int AAMaxProduce = 2;            // AntiAir units queued per pass when short
+	int AirDefenseStandoff = 12;     // cells forward of base the AA screen forms
+	int AirScreenRadius = 30;        // cells around base scanned for incoming air
 	// Tech-tree decapitation ([Doctrine.Decap], §10h) — priority target roles.
 	// A rush aims at the highest-scored enemy building; score = weight / how many
 	// of that role the enemy has (fewer providers = a cheaper COMPLETE cut, so a

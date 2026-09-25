@@ -130,6 +130,12 @@ void DoctrineConfig::EnsureParsed()
 	cfg.RushCooldown = pINI->ReadInteger("Doctrine.General", "RushCooldown", cfg.RushCooldown);
 	cfg.RushMinUnits = pINI->ReadInteger("Doctrine.General", "RushMinUnits", cfg.RushMinUnits);
 	cfg.RushMinPower = pINI->ReadDouble("Doctrine.General", "RushMinPower", cfg.RushMinPower);
+	cfg.CommanderIdleTime = pINI->ReadInteger("Doctrine.Commander", "IdleTime", cfg.CommanderIdleTime);
+	cfg.CommanderMinArmy = pINI->ReadInteger("Doctrine.Commander", "MinArmy", cfg.CommanderMinArmy);
+	cfg.CommanderFront = pINI->ReadInteger("Doctrine.Commander", "Front", cfg.CommanderFront);
+	cfg.CommanderCommitFrac = pINI->ReadDouble("Doctrine.Commander", "CommitFraction", cfg.CommanderCommitFrac);
+	cfg.CommanderBatch = pINI->ReadInteger("Doctrine.Commander", "Batch", cfg.CommanderBatch);
+	cfg.CommanderPeriod = pINI->ReadInteger("Doctrine.Commander", "Period", cfg.CommanderPeriod);
 	cfg.DecapEnable = pINI->ReadBool("Doctrine.Decap", "Enable", cfg.DecapEnable);
 	cfg.DecapConYard = pINI->ReadInteger("Doctrine.Decap", "ConYard", cfg.DecapConYard);
 	cfg.DecapRefinery = pINI->ReadInteger("Doctrine.Decap", "Refinery", cfg.DecapRefinery);

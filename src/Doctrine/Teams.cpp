@@ -1489,7 +1489,7 @@ namespace
 		if (!pTeam || !pTeam->Type) return false;
 		auto const id = pTeam->Type->ID;
 		return id[0] == 'D' &&
-			((id[1] == 'C' && (id[2] == 'T' || id[2] == 'R'))  // DCTR/DCRG/DCRS
+			((id[1] == 'C' && (id[2] == 'T' || id[2] == 'R' || id[2] == 'M')) // DCTR/DCRG/DCRS/DCMD
 			|| (id[1] == 'G' && id[2] == 'A'));                 // DGAR
 	}
 }
@@ -1814,22 +1814,23 @@ namespace
 		return def;
 	}
 
-	// The house's PERSISTENT crate squad team (ID "DCRS<house>*"). Created once
-	// and kept alive across ticks (membership managed by CrateSquadDoctrine, not
-	// auto-recruited); never destroyed on idle, unlike the single-grabber team.
+	// The house's PERSISTENT crate squad team (ID "<prefix><house>*", DCRS for the
+	// ground squad / DCRW for the water squad). Created once and kept alive across
+	// ticks (membership managed by hand, not auto-recruited); never destroyed on
+	// idle, unlike the single-grabber team.
 	TeamClass* EnsureSquadTeam(HouseClass* const pHouse, int const desired,
-		TechnoTypeClass* const pRep)
+		TechnoTypeClass* const pRep, const char* const prefix = "DCRS")
 	{
 		int const hIdx = pHouse->ArrayIndex;
 		char id[0x18];
-		std::snprintf(id, sizeof(id), "DCRS%dTM", hIdx);
+		std::snprintf(id, sizeof(id), "%s%dTM", prefix, hIdx);
 		auto pTT = TeamTypeClass::Find(id);
 		if (!pTT) pTT = GameCreate<TeamTypeClass>(id);
 		if (!pTT) return nullptr;
-		std::snprintf(id, sizeof(id), "DCRS%dTF", hIdx);
+		std::snprintf(id, sizeof(id), "%s%dTF", prefix, hIdx);
 		auto pTF = TaskForceClass::Find(id);
 		if (!pTF) pTF = GameCreate<TaskForceClass>(id);
-		std::snprintf(id, sizeof(id), "DCRS%dSC", hIdx);
+		std::snprintf(id, sizeof(id), "%s%dSC", prefix, hIdx);
 		auto pSC = ScriptTypeClass::Find(id);
 		if (!pSC) pSC = GameCreate<ScriptTypeClass>(id);
 		if (!pTF || !pSC) return nullptr;
@@ -2213,6 +2214,126 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 	}
 }
 
+namespace
+{
+	// Commander takeover state, per house: g_cmdrIdleSince = last frame the AI was
+	// seen ATTACKING on its own (idle duration = now - it); g_cmdrLastEval throttle.
+	std::map<int, int> g_cmdrIdleSince;
+	std::map<int, int> g_cmdrLastEval;
+
+	// Fallback assault target when DecapTarget declines (all key buildings in
+	// killboxes): the enemy's ConYard, else any building. A takeover hits SOMETHING.
+	BuildingClass* AnyEnemyBuilding(HouseClass* const pEnemy)
+	{
+		if (!pEnemy) return nullptr;
+		BuildingClass* con = nullptr; BuildingClass* any = nullptr;
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || pB->Owner != pEnemy || pB->InLimbo || pB->Health <= 0) continue;
+			if (!any) any = pB;
+			if (pB->Type && pB->Type->ConstructionYard) { con = pB; break; }
+		}
+		return con ? con : any;
+	}
+}
+
+void Teams::CommanderTakeover(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (cfg.CommanderIdleTime <= 0) return; // opt-in
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const period = cfg.CommanderPeriod > 0 ? cfg.CommanderPeriod : 150;
+	auto const le = g_cmdrLastEval.find(hIdx);
+	if (le != g_cmdrLastEval.end() && now - le->second < period) return;
+	g_cmdrLastEval[hIdx] = now;
+
+	// Measure the house's own aggression: of its armed mobile units NOT already on
+	// one of our doctrine teams, how many are committed (out beyond the front) vs
+	// sitting home. Home units are the pool we can commandeer.
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	double const front = (cfg.CommanderFront > 0 ? cfg.CommanderFront : 25) * 256.0;
+	int armyAvail = 0, committed = 0;
+	std::vector<FootClass*> home;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+	{
+		auto const pT = TechnoClass::Array.GetItem(i);
+		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+		auto const what = pT->WhatAmI();
+		if (what != AbstractType::Unit && what != AbstractType::Infantry) continue;
+		auto const pFoot = static_cast<FootClass*>(pT);
+		if (pFoot->Team && IsDoctrineTeam(pFoot->Team)) continue; // already ours
+		auto const pType = pT->GetTechnoType();
+		if (!pType || pType->ResourceGatherer) continue;         // no harvesters
+		if (!HasOffensiveWeapon(pType)) continue;                // no MCVs/support
+		++armyAvail;
+		auto const c = pT->GetCoords();
+		double const d = std::sqrt(double(c.X - base.X) * (c.X - base.X)
+			+ double(c.Y - base.Y) * (c.Y - base.Y));
+		if (d > front) ++committed;
+		else home.push_back(pFoot);
+	}
+
+	int const need = std::max(1, static_cast<int>(armyAvail * cfg.CommanderCommitFrac));
+	bool const aggressive = committed >= need;
+	auto& idleSince = g_cmdrIdleSince[hIdx];
+	if (idleSince == 0) idleSince = now;
+	if (aggressive) { idleSince = now; return; }  // AI is attacking on its own — stay out
+	if (armyAvail < cfg.CommanderMinArmy) return; // not enough army to bother
+	if (now - idleSince < cfg.CommanderIdleTime) return; // still within patience window
+
+	// TAKE COMMAND: commandeer home units (diverting off their idle aimd teams)
+	// onto the assault team, up to Batch. SteerCommander drives them each tick.
+	int const batch = cfg.CommanderBatch > 0 ? cfg.CommanderBatch : 1 << 30;
+	auto const pTeam = EnsureSquadTeam(pHouse,
+		cfg.CommanderBatch > 0 ? cfg.CommanderBatch : 16, nullptr, "DCMD");
+	if (!pTeam) return;
+	int members = 0;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+		if (!pF->InLimbo && pF->Health > 0) ++members;
+	int commandeered = 0;
+	for (auto const pFoot : home)
+	{
+		if (members >= batch) break;
+		if (pFoot->Team == pTeam) continue;
+		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot); // pull off its idle aimd team
+		if (pTeam->AddMember(pFoot, true)) { ++members; ++commandeered; }
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] COMMANDER takeover: house=%s#%d idle=%d frames army=%d "
+			"committed=%d commandeered=%d members=%d.\n",
+			pHouse->get_ID(), hIdx, now - idleSince, armyAvail, committed, commandeered, members);
+}
+
+void Teams::SteerCommander(HouseClass* pHouse)
+{
+	char id[0x18];
+	std::snprintf(id, sizeof(id), "DCMD%dTM", pHouse->ArrayIndex);
+	auto const pTT = TeamTypeClass::Find(id);
+	if (!pTT || pTT->cntInstances <= 0) return;
+	auto const pTeam = pTT->FindFirstInstance();
+	if (!pTeam || !pTeam->FirstUnit) return;
+
+	// Re-acquire the enemy's priority building each tick (as buildings fall the
+	// target advances down the rebuild chain), then drive every member at it — a
+	// loose order gets countermanded, a re-issued team order sticks (like decap).
+	auto const pEnemy = WeakestEnemy(pHouse);
+	auto pBld = pEnemy ? DecapTarget(pHouse, pEnemy) : nullptr;
+	if (!pBld) pBld = AnyEnemyBuilding(pEnemy); // all key targets in killboxes: still hit something
+	if (!pBld) return;
+
+	pTeam->AssignMissionTarget(pBld);
+	for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
+	{
+		if (pFoot->InLimbo || pFoot->Health <= 0) continue;
+		pFoot->SetTarget(pBld);
+		pFoot->QueueMission(Mission::Attack, false);
+	}
+}
+
 int Teams::CountIdleArmed(HouseClass* pHouse)
 {
 	int n = 0;
@@ -2419,6 +2540,8 @@ void Teams::Reset()
 	g_squadTargets.clear();
 	g_crateProgress.clear();
 	g_crateBlacklist.clear();
+	g_cmdrIdleSince.clear();
+	g_cmdrLastEval.clear();
 	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();

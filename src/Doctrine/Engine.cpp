@@ -148,6 +148,13 @@ void Engine::TickHouse(HouseClass* pHouse)
 			Teams::SteerCrate(pHouse);
 	}
 
+	// Commander takeover: if the base AI sits idle (its own aimd/AITrigger teams
+	// never attack) for CommanderIdleTime, DoctrineExt seizes command and drives
+	// the idle army into an assault. Evaluation throttled; steering every tick so
+	// the assault sticks against the base AI. Opt-in (IdleTime=0 disables).
+	Teams::CommanderTakeover(pHouse);
+	Teams::SteerCommander(pHouse);
+
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.
 	Teams::RushCheck(pHouse);

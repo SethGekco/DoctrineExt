@@ -94,6 +94,16 @@ namespace Teams
 	// by the base AI before the unit arrives). Cheap: no scan, just cached cells.
 	void SteerCrateSquad(HouseClass* pHouse);
 
+	// Commander takeover (§10 commander): if the AI has stayed non-aggressive (army
+	// home, not committed at the enemy) for CommanderIdleTime frames, commandeer the
+	// idle army (diverting units off their sitting aimd teams) into an assault team.
+	// Self-throttled; opt-in (CommanderIdleTime=0 off).
+	void CommanderTakeover(HouseClass* pHouse);
+
+	// Drive the commandeered assault team at the enemy's priority building every
+	// base tick (so the base AI can't countermand it), like SteerDecap.
+	void SteerCommander(HouseClass* pHouse);
+
 	// Reserve spender (§10f): while the house's cash exceeds ReserveAmount,
 	// build the next affordable item from ReserveBuild — spend surplus instead
 	// of hoarding. Self-throttled (ReserveCooldown); opt-in (Amount=0 off).

@@ -115,6 +115,22 @@ public:
 	                                 // to commit (a rush, not a lone scout)
 	double RushMinPower = 400.0;     // need at least this much allied power — so
 	                                 // an enemy at 0 power doesn't trivially arm it
+	// Commander takeover ([Doctrine.Commander]) — if the AI sits idle (army home,
+	// not attacking) for CommanderIdleTime frames, DoctrineExt takes command:
+	// commandeers the idle army (diverting units off their sitting aimd teams) and
+	// drives it at the enemy. Fixes a base AI that hoards but never attacks.
+	int CommanderIdleTime = 0;       // frames of AI idleness before takeover
+	                                 // (0 = feature OFF). e.g. 3600 = ~4 min
+	int CommanderMinArmy = 8;        // need at least this many armed units owned
+	                                 // before it's worth taking command
+	int CommanderFront = 25;         // cells from base beyond which a unit counts
+	                                 // as "committed/attacking" (else "home")
+	double CommanderCommitFrac = 0.34; // if >= this fraction of the army is
+	                                 // committed, the AI is attacking on its own —
+	                                 // don't take over (resets the idle timer)
+	int CommanderBatch = 16;         // max units DoctrineExt commandeers into the
+	                                 // assault (0 = uncapped — the whole home army)
+	int CommanderPeriod = 150;       // frames between takeover evaluations
 	// Tech-tree decapitation ([Doctrine.Decap], §10h) — priority target roles.
 	// A rush aims at the highest-scored enemy building; score = weight / how many
 	// of that role the enemy has (fewer providers = a cheaper COMPLETE cut, so a
@@ -127,6 +143,18 @@ public:
 	int DecapInfantry = 30;          // barracks
 	int DecapDefense = 10;           // base defenses
 	int DecapOther = 5;              // everything else
+	// Commander takeover ([Doctrine.Commander]) — when the base AI sits idle (its
+	// aimd/AITrigger teams never attack), DoctrineExt takes over as commander and
+	// commandeers the idle army into an assault. Opt-in (IdleTime=0 disables).
+	int CommanderIdleTime = 0;       // frames the AI must be non-aggressive before
+	                                 // DoctrineExt seizes command (0 = feature off)
+	int CommanderPeriod = 150;       // frames between takeover evaluations per house
+	int CommanderFront = 25;         // cells from base beyond which a unit counts as
+	                                 // "committed" (out attacking) vs sitting home
+	double CommanderCommitFrac = 0.34; // if this fraction of the army is committed,
+	                                 // the AI is deemed aggressive — don't take over
+	int CommanderMinArmy = 6;        // need at least this many armed units to bother
+	int CommanderBatch = 24;         // max units the commander pulls into one assault
 	// Arsenal auto-grader (§10d A)
 	bool AutoArsenal = true;         // auto-fill roles not explicitly listed in
 	                                 // [Doctrine.Arsenal] by grading the roster

@@ -142,6 +142,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.AAMaxProduce = pINI->ReadInteger("Doctrine.AirDefense", "MaxProduce", cfg.AAMaxProduce);
 	cfg.AirDefenseStandoff = pINI->ReadInteger("Doctrine.AirDefense", "Standoff", cfg.AirDefenseStandoff);
 	cfg.AirScreenRadius = pINI->ReadInteger("Doctrine.AirDefense", "ScreenRadius", cfg.AirScreenRadius);
+	cfg.AirDeathFloor = pINI->ReadDouble("Doctrine.AirDefense", "AirDeathFloor", cfg.AirDeathFloor);
 	cfg.DecapEnable = pINI->ReadBool("Doctrine.Decap", "Enable", cfg.DecapEnable);
 	cfg.DecapConYard = pINI->ReadInteger("Doctrine.Decap", "ConYard", cfg.DecapConYard);
 	cfg.DecapRefinery = pINI->ReadInteger("Doctrine.Decap", "Refinery", cfg.DecapRefinery);

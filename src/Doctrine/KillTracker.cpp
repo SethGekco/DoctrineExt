@@ -130,8 +130,9 @@ DEFINE_HOOK(0x702D40, DoctrineExt_TechnoClass_RegisterDestruction_KillTracker, 0
 	g_kills.erase(pVictim);
 
 	// Feed the death-zone heatmap (§6.2): where does this house keep losing
-	// units? Same event, second consumer — no extra hook.
-	DeathZones::Record(pVictim);
+	// units? Same event, second consumer — no extra hook. Pass the killer so the
+	// air-death channel (AA P1c) can note losses to aircraft.
+	DeathZones::Record(pVictim, pKiller);
 
 	if (pKiller && pKiller != pVictim && pKiller->Owner && pVictim->Owner
 		&& !pVictim->Owner->IsNeutral()

@@ -2578,7 +2578,11 @@ void Teams::AirDefense(HouseClass* pHouse)
 			if (n > 0) airDPS += RawDPS(pAt) * n;
 		}
 	}
-	if (airDPS <= 0.0) return;
+	// AA P1c: historical air-death hotspot near base (where aircraft keep hurting
+	// us). Act even with no LIVE air if history says this base gets raided.
+	int const maxAir = DeathZones::MaxAirNear(pHouse);
+	bool const airHotspot = maxAir >= (cfg.DeathZoneMinStrength > 0 ? cfg.DeathZoneMinStrength : 48);
+	if (airDPS <= 0.0 && !airHotspot) return;
 
 	// Own anti-air firepower (units + defensive buildings with an AA weapon).
 	double ownAA = 0.0;
@@ -2591,7 +2595,9 @@ void Teams::AirDefense(HouseClass* pHouse)
 
 	// Ratio the AI trusts for survival: keep own AA >= threat x AirThreatRatio.
 	// Re-evaluated each period, so building more air makes it build more AA.
-	double const desired = airDPS * (cfg.AirThreatRatio > 0.0 ? cfg.AirThreatRatio : 1.5);
+	double desired = airDPS * (cfg.AirThreatRatio > 0.0 ? cfg.AirThreatRatio : 1.5);
+	if (airHotspot && desired < cfg.AirDeathFloor)
+		desired = cfg.AirDeathFloor; // keep a baseline where air has repeatedly hit
 	int queued = 0;
 	const char* built = "none";
 	if (ownAA < desired)
@@ -2646,16 +2652,15 @@ void Teams::AirDefense(HouseClass* pHouse)
 		anyAir = true;
 	}
 
-	if (!anyAir)
+	// Screen bearings come from LIVE incoming air if present (P1b); otherwise from
+	// the historical air-death hotspot (P1c) so AA pre-deploys where air keeps
+	// hitting even between raids. Up to two axes (a split fleet).
+	double b1 = 0.0, b2 = 0.0, w1 = 1.0, w2 = 0.0;
+	bool have = false, has2 = false;
+	if (anyAir)
 	{
-		// No near incoming air — release the screen team back to the AI.
-		char rid[0x18]; std::snprintf(rid, sizeof(rid), "DAA%dTM", hIdx);
-		if (auto const pTT = TeamTypeClass::Find(rid)) pTT->DestroyAllInstances();
-	}
-	else
-	{
-		// Up to two clusters: strongest sector, then strongest NON-adjacent sector
-		// with >= 1/3 its weight (a genuine second axis, e.g. a split fleet).
+		// Strongest sector, then strongest NON-adjacent sector with >= 1/3 its
+		// weight (a genuine second axis).
 		int s1 = 0; for (int s = 1; s < 8; ++s) if (secDps[s] > secDps[s1]) s1 = s;
 		int s2 = -1; double best2 = 0.0;
 		for (int s = 0; s < 8; ++s)
@@ -2664,11 +2669,24 @@ void Teams::AirDefense(HouseClass* pHouse)
 			if (secDps[s] > best2) { best2 = secDps[s]; s2 = s; }
 		}
 		if (s2 >= 0 && secDps[s2] < secDps[s1] / 3.0) s2 = -1;
+		b1 = std::atan2(secSin[s1], secCos[s1]); w1 = secDps[s1];
+		if (s2 >= 0) { b2 = std::atan2(secSin[s2], secCos[s2]); w2 = secDps[s2]; has2 = true; }
+		have = true;
+	}
+	else if (airHotspot)
+	{
+		double ang; int str;
+		if (DeathZones::HottestAirBearing(pHouse, ang, str)) { b1 = ang; have = true; }
+	}
 
-		double const b1 = std::atan2(secSin[s1], secCos[s1]);
-		double const b2 = (s2 >= 0) ? std::atan2(secSin[s2], secCos[s2]) : 0.0;
-		double const w1 = secDps[s1], w2 = (s2 >= 0) ? secDps[s2] : 0.0;
-
+	if (!have)
+	{
+		// Nothing to screen — release the team back to the AI.
+		char rid[0x18]; std::snprintf(rid, sizeof(rid), "DAA%dTM", hIdx);
+		if (auto const pTT = TeamTypeClass::Find(rid)) pTT->DestroyAllInstances();
+	}
+	else
+	{
 		// Gather own AA-capable mobile units (teamless / on aimd / on our own DAA —
 		// but never poach another doctrine team's units).
 		auto const pTeam = EnsureSquadTeam(pHouse, 24, nullptr, "DAA");
@@ -2689,12 +2707,12 @@ void Teams::AirDefense(HouseClass* pHouse)
 		if (pTeam && !aa.empty())
 		{
 			double const standoff = (cfg.AirDefenseStandoff > 0 ? cfg.AirDefenseStandoff : 12) * 256.0;
-			int const n1 = (s2 >= 0)
+			int const n1 = has2
 				? static_cast<int>(aa.size() * w1 / (w1 + w2) + 0.5)
 				: static_cast<int>(aa.size());
 			for (int k = 0; k < static_cast<int>(aa.size()); ++k)
 			{
-				double const bearing = (s2 >= 0 && k >= n1) ? b2 : b1;
+				double const bearing = (has2 && k >= n1) ? b2 : b1;
 				CoordStruct pt = base;
 				pt.X = base.X + static_cast<int>(std::cos(bearing) * standoff);
 				pt.Y = base.Y + static_cast<int>(std::sin(bearing) * standoff);
@@ -2708,14 +2726,14 @@ void Teams::AirDefense(HouseClass* pHouse)
 				}
 				aaTargets.push_back({ pFoot, pCell });
 			}
-			screens = (s2 >= 0) ? 2 : 1;
+			screens = has2 ? 2 : 1;
 		}
 	}
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] air-defense: house=%s#%d enemyAirDPS=%.0f ownAA=%.0f "
-			"desired=%.0f build=%s queued=%d screens=%d aa=%d.\n",
-			pHouse->get_ID(), hIdx, airDPS, ownAA, desired, built, queued,
+			"desired=%.0f maxAirDeath=%d build=%s queued=%d screens=%d aa=%d.\n",
+			pHouse->get_ID(), hIdx, airDPS, ownAA, desired, maxAir, built, queued,
 			screens, static_cast<int>(aaTargets.size()));
 }
 

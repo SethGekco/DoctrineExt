@@ -139,6 +139,9 @@ public:
 	int AAMaxProduce = 2;            // AntiAir units queued per pass when short
 	int AirDefenseStandoff = 12;     // cells forward of base the AA screen forms
 	int AirScreenRadius = 30;        // cells around base scanned for incoming air
+	double AirDeathFloor = 200.0;    // baseline AA firepower kept once air has
+	                                 // repeatedly hit near base (AA P1c), even
+	                                 // between raids (0 = no floor)
 	// Tech-tree decapitation ([Doctrine.Decap], §10h) — priority target roles.
 	// A rush aims at the highest-scored enemy building; score = weight / how many
 	// of that role the enemy has (fewer providers = a cheaper COMPLETE cut, so a

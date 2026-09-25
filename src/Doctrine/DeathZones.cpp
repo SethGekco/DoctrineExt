@@ -61,6 +61,33 @@ namespace
 		return (it != g_grids.end() && !it->second.Cells.empty()) ? &it->second : nullptr;
 	}
 
+	// Parallel per-house grid of AIR-caused losses (killer was an aircraft) — the
+	// AA P1c channel: where does this house keep taking air damage/deaths?
+	std::map<int, Grid> g_airGrids;
+
+	Grid& AirGridFor(int houseIdx)
+	{
+		auto& g = g_airGrids[houseIdx];
+		if (g.Cells.empty())
+		{
+			auto const& b = MapClass::Instance.MapCoordBounds;
+			g.Bucket = Bucket();
+			g.Left = b.Left; g.Top = b.Top;
+			g.W = (b.Right - b.Left) / g.Bucket + 1;
+			g.H = (b.Bottom - b.Top) / g.Bucket + 1;
+			if (g.W < 1) g.W = 1;
+			if (g.H < 1) g.H = 1;
+			g.Cells.assign(static_cast<size_t>(g.W) * g.H, 0);
+		}
+		return g;
+	}
+
+	const Grid* FindAirGrid(int houseIdx)
+	{
+		auto const it = g_airGrids.find(houseIdx);
+		return (it != g_airGrids.end() && !it->second.Cells.empty()) ? &it->second : nullptr;
+	}
+
 	// Hottest bucket within radius of the base; returns strength + its center.
 	int Hottest(const Grid& g, const CellStruct& base, int radiusCells, int& outCellX, int& outCellY)
 	{
@@ -87,7 +114,7 @@ namespace
 	}
 }
 
-void DeathZones::Record(TechnoClass* pVictim)
+void DeathZones::Record(TechnoClass* pVictim, TechnoClass* pKiller)
 {
 	if (!pVictim) return;
 	auto const pOwner = pVictim->Owner;
@@ -95,13 +122,20 @@ void DeathZones::Record(TechnoClass* pVictim)
 
 	CellStruct cell;
 	pVictim->GetMapCoords(&cell);
+	int const weight = DoctrineConfig::Instance.DeathZoneBumpWeight > 0
+		? DoctrineConfig::Instance.DeathZoneBumpWeight : 64;
+
 	auto& g = GridFor(pOwner->ArrayIndex);
 	int const idx = g.Index(cell.X, cell.Y);
-	if (idx >= 0)
+	if (idx >= 0) g.Cells[idx] += weight;
+
+	// AA P1c: if an aircraft did the killing, also bump the air-death grid so the
+	// air-defense doctrine learns which parts of the base keep getting hit by air.
+	if (pKiller && pKiller->WhatAmI() == AbstractType::Aircraft)
 	{
-		int const weight = DoctrineConfig::Instance.DeathZoneBumpWeight > 0
-			? DoctrineConfig::Instance.DeathZoneBumpWeight : 64;
-		g.Cells[idx] += weight;
+		auto& ag = AirGridFor(pOwner->ArrayIndex);
+		int const aidx = ag.Index(cell.X, cell.Y);
+		if (aidx >= 0) ag.Cells[aidx] += weight;
 	}
 }
 
@@ -117,6 +151,39 @@ void DeathZones::Decay(int frame)
 	for (auto& [idx, g] : g_grids)
 		for (auto& v : g.Cells)
 			if (v) v -= (v >> shift) + 1;
+	for (auto& [idx, g] : g_airGrids)
+		for (auto& v : g.Cells)
+			if (v) v -= (v >> shift) + 1;
+}
+
+// AA P1c queries — hottest AIR-death cluster near the base (bearing + strength),
+// and its peak intensity. Mirror the general-death versions on the air grid.
+bool DeathZones::HottestAirBearing(HouseClass* pHouse, double& outAngle, int& outStrength)
+{
+	auto const pG = FindAirGrid(pHouse->ArrayIndex);
+	if (!pG) return false;
+	auto const& base = pHouse->GetBaseCenter();
+	int const radius = DoctrineConfig::Instance.DeathZoneRadius > 0
+		? DoctrineConfig::Instance.DeathZoneRadius : 30;
+	int cx, cy;
+	int const best = Hottest(*pG, base, radius, cx, cy);
+	int const minStrength = DoctrineConfig::Instance.DeathZoneMinStrength > 0
+		? DoctrineConfig::Instance.DeathZoneMinStrength : 48;
+	if (best < minStrength || cx < 0) return false;
+	outAngle = std::atan2(double(cy - base.Y), double(cx - base.X));
+	outStrength = best;
+	return true;
+}
+
+int DeathZones::MaxAirNear(HouseClass* pHouse)
+{
+	auto const pG = FindAirGrid(pHouse->ArrayIndex);
+	if (!pG) return 0;
+	auto const& base = pHouse->GetBaseCenter();
+	int const radius = DoctrineConfig::Instance.DeathZoneRadius > 0
+		? DoctrineConfig::Instance.DeathZoneRadius : 30;
+	int cx, cy;
+	return Hottest(*pG, base, radius, cx, cy);
 }
 
 bool DeathZones::HottestBearing(HouseClass* pHouse, double& outAngle, int& outStrength)
@@ -167,5 +234,6 @@ int DeathZones::MaxNear(HouseClass* pHouse)
 void DeathZones::Reset()
 {
 	g_grids.clear();
+	g_airGrids.clear();
 	g_lastDecay = -1;
 }

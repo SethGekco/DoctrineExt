@@ -17,8 +17,9 @@ class TechnoClass;
 namespace DeathZones
 {
 	// Record a loss: if pVictim belongs to an AI consumer house, bump that
-	// house's grid at the death location. Called from the kill hook.
-	void Record(TechnoClass* pVictim);
+	// house's grid at the death location. Called from the kill hook. If pKiller is
+	// an aircraft, also bump the house's AIR-death grid (AA P1c).
+	void Record(TechnoClass* pVictim, TechnoClass* pKiller = nullptr);
 
 	// Decay every house's grid on a slow schedule (self-throttled to
 	// DeathZoneDecayInterval). Called from the base tick.
@@ -42,6 +43,11 @@ namespace DeathZones
 	// Max death-zone value within DeathZoneRadius of the base (the
 	// DeathZoneScore observation).
 	int MaxNear(HouseClass* pHouse);
+
+	// AA P1c: hottest AIR-death cluster near base (bearing + strength; false if
+	// below DeathZoneMinStrength), and its peak intensity.
+	bool HottestAirBearing(HouseClass* pHouse, double& outAngle, int& outStrength);
+	int MaxAirNear(HouseClass* pHouse);
 
 	void Reset();
 }

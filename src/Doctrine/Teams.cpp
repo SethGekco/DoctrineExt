@@ -2581,6 +2581,12 @@ namespace
 	{
 		return g_wzZoneWeight ? g_wzZoneWeight("AirDeath", cellX, cellY) : 0;
 	}
+
+	// Persistent ore value at a cell from WarZoneExt's Wealth zone (0 if unbound).
+	int WarZoneWealth(int const cellX, int const cellY)
+	{
+		return g_wzZoneWeight ? g_wzZoneWeight("Wealth", cellX, cellY) : 0;
+	}
 }
 
 void Teams::AirDefense(HouseClass* pHouse)
@@ -2828,7 +2834,116 @@ void Teams::SteerAirDefense(HouseClass* pHouse)
 	}
 }
 
-namespace { std::map<int, int> g_navalLastFire; }
+namespace
+{
+	std::map<int, int> g_navalLastFire;
+	std::map<int, int> g_expandLastFire;
+
+	// First buildable building of a given category for the house (WeaponsFactory /
+	// Refinery), respecting TechLevel + Owner + prereqs.
+	BuildingTypeClass* PickBuildable(HouseClass* const pHouse, bool wantWarFactory, bool wantRefinery)
+	{
+		for (auto const pBt : BuildingTypeClass::Array)
+		{
+			if (!pBt) continue;
+			if (wantWarFactory && !pBt->WeaponsFactory) continue;
+			if (wantRefinery && !pBt->Refinery) continue;
+			if (pBt->Naval) continue; // naval yard handled by the naval doctrine
+			if (!CanBuildStrict(pHouse, pBt)) continue;
+			return pBt;
+		}
+		return nullptr;
+	}
+
+	int CountOwnedBuildings(HouseClass* const pHouse, bool wantWarFactory, bool wantRefinery)
+	{
+		int n = 0;
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || pB->Owner != pHouse || pB->InLimbo || pB->Health <= 0) continue;
+			auto const bt = pB->Type;
+			if (!bt) continue;
+			if (wantWarFactory && bt->WeaponsFactory && !bt->Naval) ++n;
+			else if (wantRefinery && bt->Refinery) ++n;
+		}
+		return n;
+	}
+}
+
+void Teams::BaseExpansion(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.ExpansionEnable) return; // opt-in
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.ExpansionInterval > 0 ? cfg.ExpansionInterval : 450;
+	auto const it = g_expandLastFire.find(hIdx);
+	if (it != g_expandLastFire.end() && now - it->second < interval) return;
+	g_expandLastFire[hIdx] = now;
+
+	EnsureWarZoneLink(); // persistent Wealth zone, if WarZoneExt is installed
+
+	// Scan near base: buildable LAND cells (room to grow) and reachable WEALTH
+	// (WarZoneExt's persistent Wealth zone if present, else current ore on the map).
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	int const radius = cfg.ExpansionRadius > 0 ? cfg.ExpansionRadius : 30;
+	CellStruct const c0 = CellClass::Coord2Cell(base);
+	long long land = 0, wealth = 0;
+	bool const haveWZ = (g_wzZoneWeight != nullptr); // persistent Wealth zone bound?
+	for (int dy = -radius; dy <= radius; dy += 2) // coarse stride — approximate is fine
+		for (int dx = -radius; dx <= radius; dx += 2)
+		{
+			if (dx * dx + dy * dy > radius * radius) continue;
+			int const cx = c0.X + dx, cy = c0.Y + dy;
+			CellStruct cs; cs.X = static_cast<short>(cx); cs.Y = static_cast<short>(cy);
+			auto const pC = MapClass::Instance.TryGetCellAt(cs);
+			if (!pC) continue;
+			auto const lt = pC->LandType;
+			if (lt == LandType::Clear || lt == LandType::Road) land += 4; // 4 = the stride cell's area
+			wealth += haveWZ ? WarZoneWealth(cx, cy) : pC->GetContainedTiberiumValue();
+		}
+
+	// Greedy targets: more production where the land allows, more economy where the
+	// money is. Capped so it can't run away, tunable in [Doctrine.Expansion].
+	int const lpf = cfg.LandPerFactory > 0 ? cfg.LandPerFactory : 120;
+	int const wpr = cfg.WealthPerRefinery > 0 ? cfg.WealthPerRefinery : 5000;
+	int warTarget = 1 + static_cast<int>(land / lpf);
+	if (warTarget > cfg.WarFactoryMax) warTarget = cfg.WarFactoryMax;
+	int refTarget = 1 + static_cast<int>(wealth / wpr);
+	if (refTarget > cfg.RefineryMax) refTarget = cfg.RefineryMax;
+
+	int const wf = CountOwnedBuildings(pHouse, true, false);
+	int const ref = CountOwnedBuildings(pHouse, false, true);
+
+	int queued = 0;
+	const char* wfId = "none"; const char* refId = "none";
+	if (wf < warTarget)
+	{
+		if (auto const pBt = PickBuildable(pHouse, true, false))
+		{
+			wfId = pBt->get_ID();
+			if (auto const pFactory = FindHouseFactory(pHouse, pBt))
+				{ pFactory->DemandProduction(pBt, pHouse, true); ++queued; }
+		}
+	}
+	if (ref < refTarget)
+	{
+		if (auto const pBt = PickBuildable(pHouse, false, true))
+		{
+			refId = pBt->get_ID();
+			if (auto const pFactory = FindHouseFactory(pHouse, pBt))
+				{ pFactory->DemandProduction(pBt, pHouse, true); ++queued; }
+		}
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] expansion: house=%s#%d land=%lld wealth=%lld wz=%d "
+			"warFac=%d/%d(%s) refinery=%d/%d(%s) queued=%d.\n",
+			pHouse->get_ID(), hIdx, land, wealth, haveWZ ? 1 : 0,
+			wf, warTarget, wfId, ref, refTarget, refId, queued);
+}
 
 void Teams::NavalDoctrine(HouseClass* pHouse)
 {
@@ -3152,6 +3267,7 @@ void Teams::Reset()
 	g_airLastFire.clear();
 	g_aaTargets.clear();
 	g_navalLastFire.clear();
+	g_expandLastFire.clear();
 	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();

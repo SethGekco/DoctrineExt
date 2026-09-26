@@ -113,6 +113,11 @@ namespace Teams
 	// gives the water crate squad units to divert. Self-throttled; opt-in.
 	void NavalDoctrine(HouseClass* pHouse);
 
+	// Greedy base-expansion / economy: build more war factories where the land
+	// allows and more refineries where the wealth is (WarZoneExt Wealth zone if
+	// present, else current ore). Self-throttled; opt-in.
+	void BaseExpansion(HouseClass* pHouse);
+
 	// Commander takeover (§10 commander): if the AI has stayed non-aggressive (army
 	// home, not committed at the enemy) for CommanderIdleTime frames, commandeer the
 	// idle army (diverting units off their sitting aimd teams) into an assault team.

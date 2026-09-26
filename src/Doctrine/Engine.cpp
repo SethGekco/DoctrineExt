@@ -167,6 +167,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// are met (the base AI rarely does). Self-throttled + opt-in.
 	Teams::NavalDoctrine(pHouse);
 
+	// Greedy base-expansion/economy: scale production to land and economy to reachable
+	// wealth (reads WarZoneExt Wealth when present). Self-throttled + opt-in.
+	Teams::BaseExpansion(pHouse);
+
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.
 	Teams::RushCheck(pHouse);

@@ -149,6 +149,13 @@ void DoctrineConfig::EnsureParsed()
 	cfg.NavalMinWater = pINI->ReadInteger("Doctrine.Naval", "MinWater", cfg.NavalMinWater);
 	cfg.NavyTarget = pINI->ReadInteger("Doctrine.Naval", "NavyTarget", cfg.NavyTarget);
 	cfg.NavyMaxProduce = pINI->ReadInteger("Doctrine.Naval", "MaxProduce", cfg.NavyMaxProduce);
+	cfg.ExpansionEnable = pINI->ReadBool("Doctrine.Expansion", "Enable", cfg.ExpansionEnable);
+	cfg.ExpansionInterval = pINI->ReadInteger("Doctrine.Expansion", "Interval", cfg.ExpansionInterval);
+	cfg.ExpansionRadius = pINI->ReadInteger("Doctrine.Expansion", "Radius", cfg.ExpansionRadius);
+	cfg.WarFactoryMax = pINI->ReadInteger("Doctrine.Expansion", "WarFactoryMax", cfg.WarFactoryMax);
+	cfg.RefineryMax = pINI->ReadInteger("Doctrine.Expansion", "RefineryMax", cfg.RefineryMax);
+	cfg.LandPerFactory = pINI->ReadInteger("Doctrine.Expansion", "LandPerFactory", cfg.LandPerFactory);
+	cfg.WealthPerRefinery = pINI->ReadInteger("Doctrine.Expansion", "WealthPerRefinery", cfg.WealthPerRefinery);
 	cfg.DecapEnable = pINI->ReadBool("Doctrine.Decap", "Enable", cfg.DecapEnable);
 	cfg.DecapConYard = pINI->ReadInteger("Doctrine.Decap", "ConYard", cfg.DecapConYard);
 	cfg.DecapRefinery = pINI->ReadInteger("Doctrine.Decap", "Refinery", cfg.DecapRefinery);

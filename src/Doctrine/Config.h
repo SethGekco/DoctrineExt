@@ -152,6 +152,16 @@ public:
 	int NavalMinWater = 20;          // min water cells near base to bother building
 	int NavyTarget = 6;              // desired naval combat units once a yard exists
 	int NavyMaxProduce = 2;          // naval units queued per pass
+	// Greedy base-expansion / economy doctrine ([Doctrine.Expansion]) — build MORE
+	// production where the land allows, and MORE economy where the wealth is
+	// (reading WarZoneExt's Wealth zone when present, else current ore). Opt-in.
+	bool ExpansionEnable = false;
+	int ExpansionInterval = 450;     // frames between expansion passes per house
+	int ExpansionRadius = 30;        // cells around base scanned for land + wealth
+	int WarFactoryMax = 4;           // greedy cap on total war factories
+	int RefineryMax = 6;             // greedy cap on total refineries
+	int LandPerFactory = 120;        // buildable land cells per extra war factory
+	int WealthPerRefinery = 5000;    // reachable ore value per extra refinery
 	// Tech-tree decapitation ([Doctrine.Decap], §10h) — priority target roles.
 	// A rush aims at the highest-scored enemy building; score = weight / how many
 	// of that role the enemy has (fewer providers = a cheaper COMPLETE cut, so a

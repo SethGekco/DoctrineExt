@@ -2828,6 +2828,115 @@ void Teams::SteerAirDefense(HouseClass* pHouse)
 	}
 }
 
+namespace { std::map<int, int> g_navalLastFire; }
+
+void Teams::NavalDoctrine(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.NavalEnable) return; // opt-in
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.NavalInterval > 0 ? cfg.NavalInterval : 300;
+	auto const it = g_navalLastFire.find(hIdx);
+	if (it != g_navalLastFire.end() && now - it->second < interval) return;
+	g_navalLastFire[hIdx] = now;
+
+	// Water access near base — no point building a fleet with nowhere to float it.
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	int const scan = cfg.NavalScanRadius > 0 ? cfg.NavalScanRadius : 30;
+	CellStruct const c0 = CellClass::Coord2Cell(base);
+	int water = 0;
+	for (int dy = -scan; dy <= scan; ++dy)
+		for (int dx = -scan; dx <= scan; ++dx)
+		{
+			if (dx * dx + dy * dy > scan * scan) continue;
+			CellStruct cs; cs.X = static_cast<short>(c0.X + dx); cs.Y = static_cast<short>(c0.Y + dy);
+			auto const pC = MapClass::Instance.TryGetCellAt(cs);
+			if (pC && pC->LandType == LandType::Water) ++water;
+		}
+	if (water < cfg.NavalMinWater) return; // landlocked base — no navy
+
+	// A Naval Yard is a naval-flagged building that produces units.
+	int yards = 0;
+	for (int i = 0; i < BuildingClass::Array.Count; ++i)
+	{
+		auto const pB = BuildingClass::Array.GetItem(i);
+		if (!pB || pB->Owner != pHouse || pB->InLimbo || pB->Health <= 0) continue;
+		auto const bt = pB->Type;
+		if (bt && bt->Naval && bt->Factory == AbstractType::UnitType) ++yards;
+	}
+
+	int queuedYard = 0;
+	const char* yardId = "none";
+	if (yards == 0)
+	{
+		// Force the yard the base AI won't: pick a buildable naval-producing
+		// building and demand it at the ConYard (the AI then places it on water).
+		BuildingTypeClass* pYard = nullptr;
+		for (auto const pBt : BuildingTypeClass::Array)
+		{
+			if (!pBt || !pBt->Naval || pBt->Factory != AbstractType::UnitType) continue;
+			if (!CanBuildStrict(pHouse, pBt)) continue;
+			pYard = pBt; break;
+		}
+		if (pYard)
+		{
+			yardId = pYard->get_ID();
+			if (auto const pFactory = FindHouseFactory(pHouse, pYard))
+			{
+				pFactory->DemandProduction(pYard, pHouse, true);
+				++queuedYard;
+			}
+		}
+	}
+
+	// With a yard up, build naval combat units toward the target.
+	int navy = 0;
+	for (int i = 0; i < TechnoClass::Array.Count; ++i)
+	{
+		auto const pT = TechnoClass::Array.GetItem(i);
+		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+		if (pT->WhatAmI() != AbstractType::Unit) continue;
+		auto const ut = static_cast<UnitTypeClass*>(pT->GetTechnoType());
+		if (ut && ut->Naval && !ut->ResourceGatherer && HasOffensiveWeapon(ut)) ++navy;
+	}
+
+	int queuedNavy = 0;
+	const char* navyId = "none";
+	if (yards > 0 && navy < cfg.NavyTarget)
+	{
+		UnitTypeClass* pBest = nullptr; double bestDps = -1.0;
+		for (auto const pUt : UnitTypeClass::Array)
+		{
+			if (!pUt || !pUt->Naval || pUt->ResourceGatherer) continue;
+			if (!HasOffensiveWeapon(pUt) || !CanBuildStrict(pHouse, pUt)) continue;
+			double const dps = RawDPS(pUt);
+			if (dps > bestDps) { bestDps = dps; pBest = pUt; }
+		}
+		if (pBest)
+		{
+			navyId = pBest->get_ID();
+			if (auto const pFactory = FindHouseFactory(pHouse, pBest))
+			{
+				int const cap = cfg.NavyMaxProduce > 0 ? cfg.NavyMaxProduce : 2;
+				int want = cfg.NavyTarget - navy;
+				if (want > cap) want = cap;
+				for (int k = 0; k < want; ++k)
+				{
+					pFactory->DemandProduction(pBest, pHouse, true);
+					++queuedNavy;
+				}
+			}
+		}
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] naval: house=%s#%d water=%d yards=%d navy=%d "
+			"yard=%s queuedYard=%d navy=%s queuedNavy=%d.\n",
+			pHouse->get_ID(), hIdx, water, yards, navy, yardId, queuedYard, navyId, queuedNavy);
+}
+
 int Teams::CountIdleArmed(HouseClass* pHouse)
 {
 	int n = 0;
@@ -3042,6 +3151,7 @@ void Teams::Reset()
 	g_cmdrLastEval.clear();
 	g_airLastFire.clear();
 	g_aaTargets.clear();
+	g_navalLastFire.clear();
 	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();

@@ -108,6 +108,11 @@ namespace Teams
 	// AirDefense); leaves in-position units alone so they fire.
 	void SteerAirDefense(HouseClass* pHouse);
 
+	// Naval doctrine: when there's water near base and the prereqs are met, force
+	// the Naval Yard the base AI won't build, then field navy to a target. Also
+	// gives the water crate squad units to divert. Self-throttled; opt-in.
+	void NavalDoctrine(HouseClass* pHouse);
+
 	// Commander takeover (§10 commander): if the AI has stayed non-aggressive (army
 	// home, not committed at the enemy) for CommanderIdleTime frames, commandeer the
 	// idle army (diverting units off their sitting aimd teams) into an assault team.

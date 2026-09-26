@@ -163,6 +163,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	Teams::AirDefense(pHouse);
 	Teams::SteerAirDefense(pHouse);
 
+	// Naval doctrine: force a Naval Yard + navy when there's water and the prereqs
+	// are met (the base AI rarely does). Self-throttled + opt-in.
+	Teams::NavalDoctrine(pHouse);
+
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.
 	Teams::RushCheck(pHouse);

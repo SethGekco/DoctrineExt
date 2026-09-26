@@ -143,6 +143,12 @@ void DoctrineConfig::EnsureParsed()
 	cfg.AirDefenseStandoff = pINI->ReadInteger("Doctrine.AirDefense", "Standoff", cfg.AirDefenseStandoff);
 	cfg.AirScreenRadius = pINI->ReadInteger("Doctrine.AirDefense", "ScreenRadius", cfg.AirScreenRadius);
 	cfg.AirDeathFloor = pINI->ReadDouble("Doctrine.AirDefense", "AirDeathFloor", cfg.AirDeathFloor);
+	cfg.NavalEnable = pINI->ReadBool("Doctrine.Naval", "Enable", cfg.NavalEnable);
+	cfg.NavalInterval = pINI->ReadInteger("Doctrine.Naval", "Interval", cfg.NavalInterval);
+	cfg.NavalScanRadius = pINI->ReadInteger("Doctrine.Naval", "ScanRadius", cfg.NavalScanRadius);
+	cfg.NavalMinWater = pINI->ReadInteger("Doctrine.Naval", "MinWater", cfg.NavalMinWater);
+	cfg.NavyTarget = pINI->ReadInteger("Doctrine.Naval", "NavyTarget", cfg.NavyTarget);
+	cfg.NavyMaxProduce = pINI->ReadInteger("Doctrine.Naval", "MaxProduce", cfg.NavyMaxProduce);
 	cfg.DecapEnable = pINI->ReadBool("Doctrine.Decap", "Enable", cfg.DecapEnable);
 	cfg.DecapConYard = pINI->ReadInteger("Doctrine.Decap", "ConYard", cfg.DecapConYard);
 	cfg.DecapRefinery = pINI->ReadInteger("Doctrine.Decap", "Refinery", cfg.DecapRefinery);

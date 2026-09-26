@@ -142,6 +142,16 @@ public:
 	double AirDeathFloor = 200.0;    // baseline AA firepower kept once air has
 	                                 // repeatedly hit near base (AA P1c), even
 	                                 // between raids (0 = no floor)
+	// Naval doctrine ([Doctrine.Naval]) — the base AI rarely builds a Naval Yard
+	// (placement is water-adjacent and its planner fumbles it), so it never fields
+	// navy. When there's water near base and the naval prereqs are met, force the
+	// yard then build navy to a target. Also feeds the water crate squad. Opt-in.
+	bool NavalEnable = false;
+	int NavalInterval = 300;         // frames between naval passes per house
+	int NavalScanRadius = 30;        // cells around base scanned for water
+	int NavalMinWater = 20;          // min water cells near base to bother building
+	int NavyTarget = 6;              // desired naval combat units once a yard exists
+	int NavyMaxProduce = 2;          // naval units queued per pass
 	// Tech-tree decapitation ([Doctrine.Decap], §10h) — priority target roles.
 	// A rush aims at the highest-scored enemy building; score = weight / how many
 	// of that role the enemy has (fewer providers = a cheaper COMPLETE cut, so a

@@ -119,6 +119,23 @@ namespace
 		return nullptr;
 	}
 
+	// Factory for producing a BUILDING (the ConYard). FindHouseFactory can't be
+	// used for buildings: it passes the type's Naval flag to GetPrimaryFactory, so
+	// a naval-flagged building (a Naval Yard) misroutes to a "naval factory" that
+	// doesn't exist and returns null — the reason naval yards / expansion buildings
+	// never queued. Buildings always come from the ConYard's building factory.
+	FactoryClass* FindBuildingFactory(HouseClass* const pHouse)
+	{
+		if (auto const f = pHouse->GetPrimaryFactory(
+			AbstractType::BuildingType, false, BuildCat::DontCare))
+			return f;
+		for (auto const pFact : FactoryClass::Array)
+			if (pFact->Owner == pHouse && pFact->Object
+				&& pFact->Object->WhatAmI() == AbstractType::BuildingType)
+				return pFact;
+		return nullptr;
+	}
+
 	// Walk the role's list best-first; take the first type the house can
 	// build right now or already owns units of.
 	TechnoTypeClass* PickType(HouseClass* const pHouse, const DoctrineArsenalRole& role)
@@ -2924,7 +2941,7 @@ void Teams::BaseExpansion(HouseClass* pHouse)
 		if (auto const pBt = PickBuildable(pHouse, true, false))
 		{
 			wfId = pBt->get_ID();
-			if (auto const pFactory = FindHouseFactory(pHouse, pBt))
+			if (auto const pFactory = FindBuildingFactory(pHouse))
 				{ pFactory->DemandProduction(pBt, pHouse, true); ++queued; }
 		}
 	}
@@ -2933,7 +2950,7 @@ void Teams::BaseExpansion(HouseClass* pHouse)
 		if (auto const pBt = PickBuildable(pHouse, false, true))
 		{
 			refId = pBt->get_ID();
-			if (auto const pFactory = FindHouseFactory(pHouse, pBt))
+			if (auto const pFactory = FindBuildingFactory(pHouse))
 				{ pFactory->DemandProduction(pBt, pHouse, true); ++queued; }
 		}
 	}
@@ -2998,7 +3015,7 @@ void Teams::NavalDoctrine(HouseClass* pHouse)
 		if (pYard)
 		{
 			yardId = pYard->get_ID();
-			if (auto const pFactory = FindHouseFactory(pHouse, pYard))
+			if (auto const pFactory = FindBuildingFactory(pHouse)) // ConYard, not a naval factory
 			{
 				pFactory->DemandProduction(pYard, pHouse, true);
 				++queuedYard;

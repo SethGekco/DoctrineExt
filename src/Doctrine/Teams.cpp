@@ -119,21 +119,32 @@ namespace
 		return nullptr;
 	}
 
-	// Factory for producing a BUILDING (the ConYard). FindHouseFactory can't be
-	// used for buildings: it passes the type's Naval flag to GetPrimaryFactory, so
-	// a naval-flagged building (a Naval Yard) misroutes to a "naval factory" that
-	// doesn't exist and returns null — the reason naval yards / expansion buildings
-	// never queued. Buildings always come from the ConYard's building factory.
-	FactoryClass* FindBuildingFactory(HouseClass* const pHouse)
+	// Get a BUILDING built by the AI. DemandProduction is the WRONG tool for AI
+	// buildings: the AI keeps no idle building factory and GetPrimaryFactory is a
+	// human-sidebar concept (returns null), so demand-to-factory never queued
+	// anything. The right path is the AI's OWN base plan: append a BaseNode and the
+	// AI builds AND PLACES it via its normal base logic (handles the water-adjacent
+	// naval-yard placement we can't easily do ourselves). `where` is the desired
+	// cell; the AI searches outward from it. Skips if an unplaced node for this
+	// type is already pending, so we don't spam the plan.
+	bool QueueBaseNode(HouseClass* const pHouse, BuildingTypeClass* const pBt,
+		CellStruct const& where)
 	{
-		if (auto const f = pHouse->GetPrimaryFactory(
-			AbstractType::BuildingType, false, BuildCat::DontCare))
-			return f;
-		for (auto const pFact : FactoryClass::Array)
-			if (pFact->Owner == pHouse && pFact->Object
-				&& pFact->Object->WhatAmI() == AbstractType::BuildingType)
-				return pFact;
-		return nullptr;
+		if (!pBt) return false;
+		int const idx = BuildingTypeClass::Array.FindItemIndex(pBt);
+		if (idx < 0) return false;
+		auto& nodes = pHouse->Base.BaseNodes;
+		for (int i = 0; i < nodes.Count; ++i)
+		{
+			auto const n = nodes.GetItem(i);
+			if (n.BuildingTypeIndex == idx && !n.Placed) return false; // already pending
+		}
+		BaseNodeClass node;
+		node.BuildingTypeIndex = idx;
+		node.MapCoords = where;
+		node.Placed = false;
+		node.Attempts = 0;
+		return nodes.AddItem(node);
 	}
 
 	// Walk the role's list best-first; take the first type the house can
@@ -2941,8 +2952,7 @@ void Teams::BaseExpansion(HouseClass* pHouse)
 		if (auto const pBt = PickBuildable(pHouse, true, false))
 		{
 			wfId = pBt->get_ID();
-			if (auto const pFactory = FindBuildingFactory(pHouse))
-				{ pFactory->DemandProduction(pBt, pHouse, true); ++queued; }
+			if (QueueBaseNode(pHouse, pBt, c0)) ++queued;
 		}
 	}
 	if (ref < refTarget)
@@ -2950,8 +2960,7 @@ void Teams::BaseExpansion(HouseClass* pHouse)
 		if (auto const pBt = PickBuildable(pHouse, false, true))
 		{
 			refId = pBt->get_ID();
-			if (auto const pFactory = FindBuildingFactory(pHouse))
-				{ pFactory->DemandProduction(pBt, pHouse, true); ++queued; }
+			if (QueueBaseNode(pHouse, pBt, c0)) ++queued;
 		}
 	}
 
@@ -3015,11 +3024,10 @@ void Teams::NavalDoctrine(HouseClass* pHouse)
 		if (pYard)
 		{
 			yardId = pYard->get_ID();
-			if (auto const pFactory = FindBuildingFactory(pHouse)) // ConYard, not a naval factory
-			{
-				pFactory->DemandProduction(pYard, pHouse, true);
+			// Add it to the AI's base plan so the AI builds AND places it (its own
+			// logic finds the water-adjacent spot). c0 = base cell; it searches out.
+			if (QueueBaseNode(pHouse, pYard, c0))
 				++queuedYard;
-			}
 		}
 	}
 

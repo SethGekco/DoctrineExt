@@ -1322,6 +1322,46 @@ namespace
 		return ((c.X / 256) << 16) | ((c.Y / 256) & 0xFFFF);
 	}
 
+	// Does the straight route from `from` to the crate cross a proven killbox
+	// (death zone)? Sample a few points along the line. Stop chasing crates whose
+	// path is dangerous (Rex's rule 1).
+	bool CratePathDangerous(HouseClass* const pHouse, CoordStruct const& from, CellClass* const pCell)
+	{
+		auto const to = pCell->GetCellCoords();
+		int const thresh = DoctrineConfig::Instance.DeathZoneMinStrength > 0
+			? DoctrineConfig::Instance.DeathZoneMinStrength : 48;
+		for (int s = 1; s <= 5; ++s)
+		{
+			double const t = s / 6.0;
+			int const x = static_cast<int>((from.X + (to.X - from.X) * t) / 256.0);
+			int const y = static_cast<int>((from.Y + (to.Y - from.Y) * t) / 256.0);
+			if (DeathZones::ScoreAtCell(pHouse, x, y) >= thresh) return true;
+		}
+		return false;
+	}
+
+	// Is an enemy ground unit closer to the crate than `ourDist` — i.e. it will win
+	// the race, so cede it (Rex's rule 2: enemy closer + uncontested). "Uncontested"
+	// is approximated as: no friendly unit of ours already sitting on the crate.
+	bool CrateEnemyCloser(HouseClass* const pHouse, CellClass* const pCell, double const ourDist)
+	{
+		auto const cc = pCell->GetCellCoords();
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->InLimbo || pT->Health <= 0) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Unit && what != AbstractType::Infantry) continue;
+			auto const pO = pT->Owner;
+			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue; // enemy only
+			auto const c = pT->GetCoords();
+			double const d = std::sqrt(double(cc.X - c.X) * (cc.X - c.X)
+				+ double(cc.Y - c.Y) * (cc.Y - c.Y));
+			if (d < ourDist) return true; // an enemy is closer — they'll grab it first
+		}
+		return false;
+	}
+
 	bool IsCrateOverlay(int const idx)
 	{
 		if (idx < 0 || idx >= OverlayTypeClass::Array.Count) return false;
@@ -1390,10 +1430,15 @@ namespace
 				else if (teamed && r < bestListRankTeam) { bestListRankTeam = r; byListTeam = pFoot; }
 			}
 		}
-		if (byListFree)  return byListFree;   // teamless, on the list — ideal
-		if (bySpeedFree) return bySpeedFree;  // teamless, fastest
-		if (byListTeam)  return byListTeam;   // divert: teamed, on the list
-		return bySpeedTeam;                   // divert: teamed, fastest (or null)
+		// A modder-listed grabber wins if we own one (their explicit choice), free
+		// preferred. Otherwise take the FASTEST unit overall — free or teamed — so
+		// crate chasers are genuinely the fastest units (Rex), not just whatever
+		// teamless body happened to be lying around (which picked slow conscripts).
+		if (byListFree) return byListFree;
+		if (byListTeam) return byListTeam;
+		if (bySpeedFree && (!bySpeedTeam || bestSpeedFree >= bestSpeedTeam))
+			return bySpeedFree;
+		return bySpeedTeam;
 	}
 
 	// Can this house recover an MCV normally (owns a ConYard, owns an MCV, or can
@@ -1851,20 +1896,6 @@ namespace
 		return size;
 	}
 
-	// A grabber type's chase radius in CELLS: its [Doctrine.General] CrateChasers
-	// entry (0 = map-wide), or the CrateSquadScan default if unlisted/omitted.
-	// 0 is returned verbatim to mean "unlimited" — callers treat 0 specially.
-	int GrabRadius(TechnoTypeClass* const pType)
-	{
-		auto const& cfg = DoctrineConfig::Instance;
-		int const def = cfg.CrateSquadScan > 0 ? cfg.CrateSquadScan : 60;
-		if (!pType) return def;
-		for (auto const& e : cfg.CrateChasers)
-			if (e.ID == pType->ID)
-				return e.Radius >= 0 ? e.Radius : def;  // 0 = map-wide
-		return def;
-	}
-
 	// The house's PERSISTENT crate squad team (ID "<prefix><house>*", DCRS for the
 	// ground squad / DCRW for the water squad). Created once and kept alive across
 	// ticks (membership managed by hand, not auto-recruited); never destroyed on
@@ -2054,23 +2085,18 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 				addCell(MapClass::Instance.TryGetCellAt(cs));
 			}
 	};
-	bool anyMapwide = false;
-	for (auto const pF : mem) if (GrabRadius(pF->GetTechnoType()) == 0) { anyMapwide = true; break; }
-	if (anyMapwide)
+	// Scan the WHOLE map every pass (Rex: the squad should find and go for any
+	// crate anywhere, not just near base). Crates are sparse and this is throttled,
+	// so a full sweep is cheap. scanBox is kept only for the standby dispersal below.
+	(void)scanBox;
 	{
-		auto const& b = MapClass::Instance.MapCoordBounds; // whole map (cell LTRB)
+		auto const& b = MapClass::Instance.MapCoordBounds; // cell LTRB
 		for (int y = b.Top; y <= b.Bottom; ++y)
 			for (int x = b.Left; x <= b.Right; ++x)
 			{
 				CellStruct cs; cs.X = static_cast<short>(x); cs.Y = static_cast<short>(y);
 				addCell(MapClass::Instance.TryGetCellAt(cs));
 			}
-	}
-	else
-	{
-		scanBox(base, cfg.CrateSquadScan > scan ? cfg.CrateSquadScan : scan);
-		for (auto const pF : mem)
-			scanBox(pF->GetCoords(), GrabRadius(pF->GetTechnoType()));
 	}
 
 	// Drop crates on the unreachable blacklist (a chaser gave up on them); prune
@@ -2099,8 +2125,9 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	{
 		auto const pF = mem[i];
 		auto const fc = pF->GetCoords();
-		int const gr = GrabRadius(pF->GetTechnoType());          // 0 = map-wide
-		double const grLep = gr > 0 ? gr * 256.0 : 1e18;         // this unit's reach
+		// Go for the nearest crate ANYWHERE on the map, but skip ones whose path is
+		// dangerous (crosses a killbox) or that an enemy will reach first — Rex's
+		// two stop conditions. No per-unit reach cap: whatever we have, send it.
 		int best = -1; double bestD = 1e18;
 		for (int c = 0; c < static_cast<int>(crates.size()); ++c)
 		{
@@ -2108,8 +2135,10 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 			auto const cc = crates[c]->GetCellCoords();
 			double const d = std::sqrt(double(cc.X - fc.X) * (cc.X - fc.X)
 				+ double(cc.Y - fc.Y) * (cc.Y - fc.Y));
-			if (d > grLep) continue;                              // beyond its reach
-			if (d < bestD) { bestD = d; best = c; }
+			if (d >= bestD) continue;
+			if (CratePathDangerous(pHouse, fc, crates[c])) continue; // danger in path
+			if (CrateEnemyCloser(pHouse, crates[c], d)) continue;    // enemy closer
+			bestD = d; best = c;
 		}
 		if (best >= 0)
 		{

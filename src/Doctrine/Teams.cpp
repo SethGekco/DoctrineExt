@@ -515,6 +515,16 @@ namespace
 		return false;
 	}
 
+	// Unit the modder forbade as a crate chaser ([Doctrine.General] CrateChaseExclude
+	// — e.g. heroes you don't want risked). Everything else fast stays eligible.
+	bool IsExcludedChaser(TechnoTypeClass* const pType)
+	{
+		if (!pType) return true;
+		for (auto const& ex : DoctrineConfig::Instance.CrateChaseExclude)
+			if (ex == pType->ID) return true;
+		return false;
+	}
+
 	// An "idle armed" unit: owned by the house, on NO team, alive, and carrying
 	// a real weapon — i.e. a combat unit that is hoarded, not a harvester /
 	// engineer / MCV and not already tasked. ResourceGatherer excludes ore
@@ -1340,10 +1350,11 @@ namespace
 		return false;
 	}
 
-	// Is an enemy ground unit closer to the crate than `ourDist` — i.e. it will win
-	// the race, so cede it (Rex's rule 2: enemy closer + uncontested). "Uncontested"
-	// is approximated as: no friendly unit of ours already sitting on the crate.
-	bool CrateEnemyCloser(HouseClass* const pHouse, CellClass* const pCell, double const ourDist)
+	// Cede the crate only if an enemy is BOTH closer than us AND actually heading to
+	// it (its move Destination sits on the crate) — i.e. genuinely racing us for it
+	// (Rex's rule 2). If an enemy is merely nearby but not going for it, snag it
+	// anyway (quick grab). We can read move orders via FootClass::Destination.
+	bool CrateEnemyRacing(HouseClass* const pHouse, CellClass* const pCell, double const ourDist)
 	{
 		auto const cc = pCell->GetCellCoords();
 		for (int i = 0; i < TechnoClass::Array.Count; ++i)
@@ -1357,7 +1368,13 @@ namespace
 			auto const c = pT->GetCoords();
 			double const d = std::sqrt(double(cc.X - c.X) * (cc.X - c.X)
 				+ double(cc.Y - c.Y) * (cc.Y - c.Y));
-			if (d < ourDist) return true; // an enemy is closer — they'll grab it first
+			if (d >= ourDist) continue; // not closer — we can still beat it
+			auto const pDest = static_cast<FootClass*>(pT)->Destination;
+			if (!pDest) continue; // closer but idle / not moving to it — snag it anyway
+			auto const dc = pDest->GetCoords();
+			double const dd = std::sqrt(double(cc.X - dc.X) * (cc.X - dc.X)
+				+ double(cc.Y - dc.Y) * (cc.Y - dc.Y));
+			if (dd <= 3.0 * 256.0) return true; // closer AND heading to the crate — cede
 		}
 		return false;
 	}
@@ -1412,6 +1429,7 @@ namespace
 			auto const pFoot = static_cast<FootClass*>(pT);
 			auto const pType = pT->GetTechnoType();
 			if (!pType || pType->ResourceGatherer) continue;
+			if (IsExcludedChaser(pType)) continue; // modder-protected (e.g. heroes)
 			bool const teamed = (pFoot->Team != nullptr);
 			// The modder list may name anything; the SPEED fallback only takes a
 			// real combat unit (has a weapon) so it never grabs a dummy/spawner
@@ -1980,6 +1998,7 @@ namespace
 			if (pFoot->Team == pExclude && pExclude) continue; // already ours
 			auto const pType = pT->GetTechnoType();
 			if (!pType || pType->ResourceGatherer) continue;
+			if (IsExcludedChaser(pType)) continue; // modder-protected (e.g. heroes)
 			// Terrain capability: water squad takes only water-capable units; the
 			// ground squad takes anything except pure-naval hulls.
 			if (water) { if (!IsWaterCapable(pType)) continue; }
@@ -2085,10 +2104,11 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 				addCell(MapClass::Instance.TryGetCellAt(cs));
 			}
 	};
-	// Scan the WHOLE map every pass (Rex: the squad should find and go for any
-	// crate anywhere, not just near base). Crates are sparse and this is throttled,
-	// so a full sweep is cheap. scanBox is kept only for the standby dispersal below.
-	(void)scanBox;
+	// Crate detection radius: CrateSquadScan=0 sweeps the WHOLE map (find and go for
+	// crates anywhere — the default); >0 restricts to that many cells around base
+	// for modders who prefer a home bubble. Crates are sparse + this is throttled,
+	// so even a full sweep is cheap.
+	if (cfg.CrateSquadScan <= 0)
 	{
 		auto const& b = MapClass::Instance.MapCoordBounds; // cell LTRB
 		for (int y = b.Top; y <= b.Bottom; ++y)
@@ -2097,6 +2117,10 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 				CellStruct cs; cs.X = static_cast<short>(x); cs.Y = static_cast<short>(y);
 				addCell(MapClass::Instance.TryGetCellAt(cs));
 			}
+	}
+	else
+	{
+		scanBox(base, cfg.CrateSquadScan);
 	}
 
 	// Drop crates on the unreachable blacklist (a chaser gave up on them); prune
@@ -2137,7 +2161,7 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 				+ double(cc.Y - fc.Y) * (cc.Y - fc.Y));
 			if (d >= bestD) continue;
 			if (CratePathDangerous(pHouse, fc, crates[c])) continue; // danger in path
-			if (CrateEnemyCloser(pHouse, crates[c], d)) continue;    // enemy closer
+			if (CrateEnemyRacing(pHouse, crates[c], d)) continue;    // enemy racing us there
 			bestD = d; best = c;
 		}
 		if (best >= 0)

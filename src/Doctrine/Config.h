@@ -186,6 +186,10 @@ public:
 	// races a crate within its own radius.
 	struct CrateChaserEntry { std::string ID; int Radius = -1; }; // -1 = default
 	std::vector<CrateChaserEntry> CrateChasers;
+	// Unit IDs NEVER used as crate chasers (e.g. heroes you don't want risked).
+	// Everything else fast stays eligible — dogs, Terror Drones, chrono legionnaires
+	// are all good grabbers, so only list what you truly want to protect.
+	std::vector<std::string> CrateChaseExclude;
 	int CrateScanRadius = 30;        // cells around the base scanned for crates
 	int CrateInterval = 90;          // frames between crate scans per house
 	bool CrateFiresaleMCV = false;   // when stuck with no way to get an MCV and

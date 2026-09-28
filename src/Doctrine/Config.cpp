@@ -199,6 +199,8 @@ void DoctrineConfig::EnsureParsed()
 		else { e.ID = tok.substr(0, pos); e.Radius = std::atoi(tok.substr(pos + 1).c_str()); }
 		if (!e.ID.empty()) cfg.CrateChasers.push_back(e);
 	}
+	pINI->ReadString("Doctrine.General", "CrateChaseExclude", "", buf, sizeof(buf));
+	cfg.CrateChaseExclude = SplitList(buf);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

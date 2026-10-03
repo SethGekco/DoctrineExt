@@ -2326,12 +2326,15 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	}
 
 	if (cfg.DebugTicks)
+	{
+		int const ownedCatchers = pCatcher ? CountOwned(pHouse, pCatcher) : 0;
 		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
-			"builtCatchers=%d(%s t%d) crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
+			"builtCatchers=%d(%s t%d owned=%d) crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
 			pHouse->get_ID(), hIdx, desired, N, recruited, builtCatchers,
-			pCatcher ? pCatcher->get_ID() : "-", catcherTier,
+			pCatcher ? pCatcher->get_ID() : "-", catcherTier, ownedCatchers,
 			static_cast<int>(crates.size()), raced,
 			nearestChase < 1e17 ? nearestChase / 256.0 : -1.0, nearestChaseType);
+	}
 }
 
 void Teams::SteerCrateSquad(HouseClass* pHouse)

@@ -210,6 +210,14 @@ public:
 	                                 // crates (wider than CrateScanRadius — the
 	                                 // squad races across the map, not just home);
 	                                 // also scans CrateScanRadius around each member
+	// Crate-catcher PRODUCTION ([Doctrine.General]) — DoctrineExt builds dedicated
+	// grabbers (from CrateChasers) and MORE of them the better the grabber it can
+	// build: a teleport grabber (CLEG) is worth a full squad, a fast unit half, a
+	// slow one just one. Opt-in; diverting existing units still fills the rest.
+	bool CrateCatcherBuild = false;
+	int CrateCatcherMax = 3;         // cap on dedicated catchers built
+	int CrateCatcherFastSpeed = 8;   // Speed at/above which a grabber counts "fast"
+	int CrateCatcherMaxProduce = 1;  // catchers queued per pass
 	int CrateGiveUpPasses = 4;       // detection passes a chaser can make no
 	                                 // progress toward a crate before it's deemed
 	                                 // unreachable and abandoned (frees the unit)

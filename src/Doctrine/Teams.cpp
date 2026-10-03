@@ -1893,6 +1893,28 @@ namespace
 	// Squad size from [CrateRules]: one racer per expected concurrent crate,
 	// +1 for fast regen, capped so CrateMaximum=1 => a single racer and a busy
 	// map (high CrateMinimum) => a bigger squad. CrateSquadSize>0 overrides.
+	// The best DESIGNATED grabber (from CrateChasers) the house can build right now,
+	// with a quality tier: 3 = teleporter (CLEG — instant grab), 2 = fast, 1 = slow.
+	// outTier=0 and null if none is buildable. Only considers the modder's list (a
+	// "designated" catcher), respects TechLevel/Owner/prereqs and the exclude list.
+	TechnoTypeClass* BestCrateCatcher(HouseClass* const pHouse, int& outTier)
+	{
+		outTier = 0;
+		TechnoTypeClass* best = nullptr;
+		auto const& cfg = DoctrineConfig::Instance;
+		for (auto const& e : cfg.CrateChasers)
+		{
+			auto const pTy = TechnoTypeClass::Find(e.ID.c_str());
+			if (!pTy || IsExcludedChaser(pTy)) continue;
+			if (pTy->ResourceGatherer || !HasOffensiveWeapon(pTy)) continue;
+			if (!CanBuildStrict(pHouse, pTy)) continue;
+			int const tier = pTy->Teleporter ? 3
+				: (pTy->Speed >= cfg.CrateCatcherFastSpeed ? 2 : 1);
+			if (tier > outTier) { outTier = tier; best = pTy; }
+		}
+		return best;
+	}
+
 	int DesiredSquadSize()
 	{
 		auto const& cfg = DoctrineConfig::Instance;
@@ -2037,14 +2059,29 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	if (it != g_crateLastFire.end() && now - it->second < interval) return;
 	g_crateLastFire[hIdx] = now;
 
-	int const desired = DesiredSquadSize();
+	int desired = DesiredSquadSize();
 	if (desired <= 0) return; // crates off globally
 
-	// The squad NEVER produces — it only diverts existing units. A team taskforce
-	// force-builds its entry type ignoring prerequisites AND faction (that is how
-	// a Soviet AI built an Allied CLEG, and an Allied AI built CLEG before owning
-	// its GATECH prereq). So the taskforce type is left null: no production vector
-	// at all, no illegal builds. Membership is filled purely by PickSquadRecruit.
+	// Crate-catcher PRODUCTION (opt-in): if the house can build a designated grabber,
+	// raise the squad target by how GOOD that grabber is — a teleport grabber (CLEG)
+	// is worth a full squad, a fast unit half, a slow one just one. We build toward
+	// it below; diverting existing units still fills the rest.
+	int catcherTier = 0;
+	TechnoTypeClass* const pCatcher = cfg.CrateCatcherBuild
+		? BestCrateCatcher(pHouse, catcherTier) : nullptr;
+	if (pCatcher)
+	{
+		int const cmax = cfg.CrateCatcherMax > 0 ? cfg.CrateCatcherMax : 3;
+		int const catcherTarget = catcherTier >= 3 ? cmax
+			: (catcherTier == 2 ? (cmax + 1) / 2 : 1);
+		if (catcherTarget > desired) desired = catcherTarget;
+		int const sqMax = cfg.CrateSquadMax > 0 ? cfg.CrateSquadMax : 6;
+		if (desired > sqMax) desired = sqMax;
+	}
+
+	// The team taskforce is left null (no auto-production: it would force-build
+	// ignoring prereqs/faction). Membership is filled by diverting existing units
+	// (below) plus explicit, prereq-checked catcher production.
 	auto const pTeam = EnsureSquadTeam(pHouse, desired, nullptr);
 	if (!pTeam) return;
 
@@ -2066,6 +2103,25 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		pR->ShouldGarrisonStructure = false;
 		pR->ShouldEnterOccupiable = false;
 		++members; ++recruited;
+	}
+
+	// Build designated catchers if diverting didn't fill the squad. These are UNITS,
+	// so FindHouseFactory routes to the right factory (unlike buildings), and they
+	// get recruited onto the squad on a later pass. Capped per pass + overall.
+	int builtCatchers = 0;
+	if (pCatcher && members < desired)
+	{
+		if (auto const pFactory = FindHouseFactory(pHouse, pCatcher))
+		{
+			int const cap = cfg.CrateCatcherMaxProduce > 0 ? cfg.CrateCatcherMaxProduce : 1;
+			int want = desired - members;
+			if (want > cap) want = cap;
+			for (int k = 0; k < want; ++k)
+			{
+				pFactory->DemandProduction(pCatcher, pHouse, true);
+				++builtCatchers;
+			}
+		}
 	}
 
 	// Live members, indexed for dispersal + assignment.
@@ -2271,8 +2327,10 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
-			"crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
-			pHouse->get_ID(), hIdx, desired, N, recruited, static_cast<int>(crates.size()), raced,
+			"builtCatchers=%d(%s t%d) crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
+			pHouse->get_ID(), hIdx, desired, N, recruited, builtCatchers,
+			pCatcher ? pCatcher->get_ID() : "-", catcherTier,
+			static_cast<int>(crates.size()), raced,
 			nearestChase < 1e17 ? nearestChase / 256.0 : -1.0, nearestChaseType);
 }
 

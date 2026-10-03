@@ -179,6 +179,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CrateCatcherMax = pINI->ReadInteger("Doctrine.General", "CrateCatcherMax", cfg.CrateCatcherMax);
 	cfg.CrateCatcherFastSpeed = pINI->ReadInteger("Doctrine.General", "CrateCatcherFastSpeed", cfg.CrateCatcherFastSpeed);
 	cfg.CrateCatcherMaxProduce = pINI->ReadInteger("Doctrine.General", "CrateCatcherMaxProduce", cfg.CrateCatcherMaxProduce);
+	cfg.CrateCatcherGiveUp = pINI->ReadInteger("Doctrine.General", "CrateCatcherGiveUp", cfg.CrateCatcherGiveUp);
 	cfg.CrateGiveUpPasses = pINI->ReadInteger("Doctrine.General", "CrateGiveUpPasses", cfg.CrateGiveUpPasses);
 	cfg.CrateBlacklistTime = pINI->ReadInteger("Doctrine.General", "CrateBlacklistTime", cfg.CrateBlacklistTime);
 	cfg.GarrisonInfantry = pINI->ReadBool("Doctrine.General", "GarrisonInfantry", cfg.GarrisonInfantry);

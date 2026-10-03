@@ -218,6 +218,10 @@ public:
 	int CrateCatcherMax = 3;         // cap on dedicated catchers built
 	int CrateCatcherFastSpeed = 8;   // Speed at/above which a grabber counts "fast"
 	int CrateCatcherMaxProduce = 1;  // catchers queued per pass
+	int CrateCatcherGiveUp = 6;      // passes a catcher can be ordered without ever
+	                                 // appearing before we deem it unbuildable (the
+	                                 // leaky CanBuild greenlights units the factory
+	                                 // then refuses) and fall to the next-best grabber
 	int CrateGiveUpPasses = 4;       // detection passes a chaser can make no
 	                                 // progress toward a crate before it's deemed
 	                                 // unreachable and abandoned (frees the unit)

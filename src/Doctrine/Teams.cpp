@@ -1325,6 +1325,10 @@ namespace
 	// chaser made no progress toward them, e.g. across a cliff). Keyed by cell.
 	std::map<int, std::map<int, std::pair<int, int>>> g_crateProgress;
 	std::map<int, std::map<int, int>> g_crateBlacklist;
+	// Catcher-build give-up: per-house per-catcher-ID count of passes it was ordered
+	// yet never appeared (leaky CanBuild greenlit something the factory refuses).
+	// Past CrateCatcherGiveUp, BestCrateCatcher skips it and picks the next-best.
+	std::map<int, std::map<std::string, int>> g_catcherFail;
 
 	int CrateKey(CellClass* const pCell)
 	{
@@ -1902,12 +1906,16 @@ namespace
 		outTier = 0;
 		TechnoTypeClass* best = nullptr;
 		auto const& cfg = DoctrineConfig::Instance;
+		int const giveUp = cfg.CrateCatcherGiveUp > 0 ? cfg.CrateCatcherGiveUp : 6;
+		auto const& fails = g_catcherFail[pHouse->ArrayIndex];
 		for (auto const& e : cfg.CrateChasers)
 		{
 			auto const pTy = TechnoTypeClass::Find(e.ID.c_str());
 			if (!pTy || IsExcludedChaser(pTy)) continue;
 			if (pTy->ResourceGatherer || !HasOffensiveWeapon(pTy)) continue;
 			if (!CanBuildStrict(pHouse, pTy)) continue;
+			auto const fit = fails.find(e.ID);
+			if (fit != fails.end() && fit->second >= giveUp) continue; // proven unbuildable
 			int const tier = pTy->Teleporter ? 3
 				: (pTy->Speed >= cfg.CrateCatcherFastSpeed ? 2 : 1);
 			if (tier > outTier) { outTier = tier; best = pTy; }
@@ -2124,6 +2132,18 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		}
 	}
 
+	// Give-up accounting: if we ordered the catcher yet the house still owns none,
+	// bump its fail streak; once it owns one, reset. BestCrateCatcher drops a type
+	// past CrateCatcherGiveUp and falls to the next grabber (handles leaky CanBuild
+	// greenlighting a unit the factory refuses — e.g. CLEG without a Battle Lab).
+	int const ownedCatchers = pCatcher ? CountOwned(pHouse, pCatcher) : 0;
+	if (pCatcher)
+	{
+		auto& f = g_catcherFail[hIdx][pCatcher->get_ID()];
+		if (ownedCatchers > 0) f = 0;
+		else if (builtCatchers > 0) ++f;
+	}
+
 	// Live members, indexed for dispersal + assignment.
 	std::vector<FootClass*> mem;
 	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
@@ -2326,15 +2346,12 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	}
 
 	if (cfg.DebugTicks)
-	{
-		int const ownedCatchers = pCatcher ? CountOwned(pHouse, pCatcher) : 0;
 		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
 			"builtCatchers=%d(%s t%d owned=%d) crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
 			pHouse->get_ID(), hIdx, desired, N, recruited, builtCatchers,
 			pCatcher ? pCatcher->get_ID() : "-", catcherTier, ownedCatchers,
 			static_cast<int>(crates.size()), raced,
 			nearestChase < 1e17 ? nearestChase / 256.0 : -1.0, nearestChaseType);
-	}
 }
 
 void Teams::SteerCrateSquad(HouseClass* pHouse)
@@ -3395,6 +3412,7 @@ void Teams::Reset()
 	g_reserveLastFire.clear();
 	g_crateLastFire.clear();
 	g_squadTargets.clear();
+	g_catcherFail.clear();
 	g_crateProgress.clear();
 	g_crateBlacklist.clear();
 	g_waterLastFire.clear();

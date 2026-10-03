@@ -2080,10 +2080,11 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	int catcherTier = 0;
 	TechnoTypeClass* const pCatcher = cfg.CrateCatcherBuild
 		? BestCrateCatcher(pHouse, catcherTier) : nullptr;
+	int catcherTarget = 0;
 	if (pCatcher)
 	{
 		int const cmax = cfg.CrateCatcherMax > 0 ? cfg.CrateCatcherMax : 3;
-		int const catcherTarget = catcherTier >= 3 ? cmax
+		catcherTarget = catcherTier >= 3 ? cmax
 			: (catcherTier == 2 ? (cmax + 1) / 2 : 1);
 		if (catcherTarget > desired) desired = catcherTarget;
 		int const sqMax = cfg.CrateSquadMax > 0 ? cfg.CrateSquadMax : 6;
@@ -2116,16 +2117,19 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		++members; ++recruited;
 	}
 
-	// Build designated catchers if diverting didn't fill the squad. These are UNITS,
-	// so FindHouseFactory routes to the right factory (unlike buildings), and they
-	// get recruited onto the squad on a later pass. Capped per pass + overall.
+	// Build DEDICATED catchers toward the target — driven by how many of the chosen
+	// grabber the house OWNS, NOT by squad headcount. (Gating on members<desired let
+	// diversion fill the squad with whatever infantry was lying around and suppressed
+	// ever building a real catcher.) These are UNITS, so FindHouseFactory routes
+	// correctly; produced catchers get recruited onto the squad next pass.
+	int const ownedCatchers = pCatcher ? CountOwned(pHouse, pCatcher) : 0;
 	int builtCatchers = 0;
-	if (pCatcher && members < desired)
+	if (pCatcher && ownedCatchers < catcherTarget)
 	{
 		if (auto const pFactory = FindHouseFactory(pHouse, pCatcher))
 		{
 			int const cap = cfg.CrateCatcherMaxProduce > 0 ? cfg.CrateCatcherMaxProduce : 1;
-			int want = desired - members;
+			int want = catcherTarget - ownedCatchers;
 			if (want > cap) want = cap;
 			for (int k = 0; k < want; ++k)
 			{
@@ -2139,7 +2143,6 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	// bump its fail streak; once it owns one, reset. BestCrateCatcher drops a type
 	// past CrateCatcherGiveUp and falls to the next grabber (handles leaky CanBuild
 	// greenlighting a unit the factory refuses — e.g. CLEG without a Battle Lab).
-	int const ownedCatchers = pCatcher ? CountOwned(pHouse, pCatcher) : 0;
 	if (pCatcher)
 	{
 		auto& f = g_catcherFail[hIdx][pCatcher->get_ID()];

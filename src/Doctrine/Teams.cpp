@@ -1913,6 +1913,9 @@ namespace
 			auto const pTy = TechnoTypeClass::Find(e.ID.c_str());
 			if (!pTy || IsExcludedChaser(pTy)) continue;
 			if (pTy->ResourceGatherer || !HasOffensiveWeapon(pTy)) continue;
+			if (!pHouse->InOwners(pTy)) continue; // faction-correct always (never a
+			                                      // Soviet DRON for an Allied AI etc.),
+			                                      // independent of StrictOwnership
 			if (!CanBuildStrict(pHouse, pTy)) continue;
 			auto const fit = fails.find(e.ID);
 			if (fit != fails.end() && fit->second >= giveUp) continue; // proven unbuildable

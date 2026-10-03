@@ -29,5 +29,11 @@ namespace AITriggerDifficulty
 	// difficulty section defines AITriggerTypes.Inherit=.
 	void EnsureApplied();
 
+	// AITrigger gate (Rex): disable ALL AITriggerTypes at scenario start, then
+	// re-enable them (to the difficulty-applied state) after AITriggerDelay frames,
+	// giving DoctrineExt a head start before the AITrigger load competes for the
+	// AI. Called every base tick; no-op once done, and when AITriggerDelay=0.
+	void GateTick(int frame);
+
 	void Reset();
 }

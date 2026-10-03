@@ -50,6 +50,9 @@ void Engine::TickHouse(HouseClass* pHouse)
 		DoctrineConfig::EnsureParsed();
 	// Remap AITriggerType difficulty flags once, now that they're loaded.
 	AITriggerDifficulty::EnsureApplied();
+	// AITrigger gate: hold triggers off for AITriggerDelay frames so DoctrineExt
+	// gets a head start (no-op when the delay is 0).
+	AITriggerDifficulty::GateTick(Unsorted::CurrentFrame);
 	if (cfg.Rules.empty())
 		return;
 

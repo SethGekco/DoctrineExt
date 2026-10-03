@@ -1,7 +1,9 @@
 #include "Doctrine/AITriggerDifficulty.h"
+#include "Doctrine/Config.h"
 
 #include <AITriggerTypeClass.h>
 #include <CCINIClass.h>
+#include <Unsorted.h>
 #include <Utilities/Debug.h>
 
 #include <cstdlib>
@@ -132,7 +134,62 @@ void AITriggerDifficulty::EnsureApplied()
 		inherit[2].empty() ? "vanilla" : "set", rewritten, bundle.size());
 }
 
+namespace
+{
+	// Gate state: 0 = not started, 1 = disabled & counting down, 2 = done.
+	int g_gatePhase = 0;
+	int g_gateStart = 0;
+	struct Flags { bool e, n, h; };
+	std::vector<Flags> g_gateSnapshot;
+}
+
+void AITriggerDifficulty::GateTick(int const frame)
+{
+	int const delay = DoctrineConfig::Instance.AITriggerDelay;
+	if (delay <= 0) { g_gatePhase = 2; return; }      // feature off — vanilla timing
+	if (g_gatePhase == 2) return;                     // already handled this scenario
+	if (AITriggerTypeClass::Array.Count <= 0) return; // triggers not loaded yet
+
+	if (g_gatePhase == 0)
+	{
+		// Snapshot the (already difficulty-applied) flags, then disable EVERY trigger
+		// so the AI runs none until the countdown — freeing it for DoctrineExt work.
+		g_gateSnapshot.clear();
+		for (auto const pT : AITriggerTypeClass::Array)
+		{
+			if (!pT) { g_gateSnapshot.push_back({ false, false, false }); continue; }
+			g_gateSnapshot.push_back({ pT->Enabled_Easy, pT->Enabled_Normal, pT->Enabled_Hard });
+			pT->Enabled_Easy = pT->Enabled_Normal = pT->Enabled_Hard = false;
+		}
+		g_gateStart = frame;
+		g_gatePhase = 1;
+		Debug::Log("[DoctrineExt] AITriggers GATED OFF at f%d; re-enabling in %d frames "
+			"(%d triggers held).\n", frame, delay, static_cast<int>(g_gateSnapshot.size()));
+	}
+	else if (g_gatePhase == 1 && frame - g_gateStart >= delay)
+	{
+		// Countdown elapsed — restore the snapshot (re-enable to difficulty intent).
+		int i = 0;
+		for (auto const pT : AITriggerTypeClass::Array)
+		{
+			if (pT && i < static_cast<int>(g_gateSnapshot.size()))
+			{
+				pT->Enabled_Easy = g_gateSnapshot[i].e;
+				pT->Enabled_Normal = g_gateSnapshot[i].n;
+				pT->Enabled_Hard = g_gateSnapshot[i].h;
+			}
+			++i;
+		}
+		g_gatePhase = 2;
+		Debug::Log("[DoctrineExt] AITriggers RE-ENABLED at f%d (after %d-frame gate).\n",
+			frame, delay);
+	}
+}
+
 void AITriggerDifficulty::Reset()
 {
 	g_applied = false;
+	g_gatePhase = 0;
+	g_gateStart = 0;
+	g_gateSnapshot.clear();
 }

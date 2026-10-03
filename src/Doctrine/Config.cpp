@@ -201,6 +201,7 @@ void DoctrineConfig::EnsureParsed()
 	}
 	pINI->ReadString("Doctrine.General", "CrateChaseExclude", "", buf, sizeof(buf));
 	cfg.CrateChaseExclude = SplitList(buf);
+	cfg.AITriggerDelay = pINI->ReadInteger("Doctrine.General", "AITriggerDelay", cfg.AITriggerDelay);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);

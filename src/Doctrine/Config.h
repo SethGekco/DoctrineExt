@@ -234,6 +234,11 @@ public:
 	double GCreepW = 1.0;            // weight: farther out = higher (creep bias)
 	double GOreW = 2.0;              // weight: building near ore
 	double GTechW = 2.0;             // weight: building near a neutral tech structure
+	// AITrigger gate ([Doctrine.General]) — DoctrineExt disables ALL AITriggerTypes
+	// at scenario start and re-enables them after this many frames, so the AI can
+	// do DoctrineExt work (crate chasing, etc.) before the AITrigger load kicks in.
+	// 0 = enable instantly (no gate — vanilla timing).
+	int AITriggerDelay = 0;
 	bool AceMobileOnly = true;   // EnemyUnitKills targets only mobile units,
 	                             // not base-defense buildings racking up kills
 	bool AutoProduce = true;     // top up under-strength teams by demanding

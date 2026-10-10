@@ -2124,19 +2124,23 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 	// correctly; produced catchers get recruited onto the squad next pass.
 	int const ownedCatchers = pCatcher ? CountOwned(pHouse, pCatcher) : 0;
 	int builtCatchers = 0;
+	int catcherFac = -1;  // diag: -1 none tried, 0 no factory found, 1 factory found
+	int catcherOK = 0;    // diag: DemandProduction calls that returned true
 	if (pCatcher && ownedCatchers < catcherTarget)
 	{
 		if (auto const pFactory = FindHouseFactory(pHouse, pCatcher))
 		{
+			catcherFac = 1;
 			int const cap = cfg.CrateCatcherMaxProduce > 0 ? cfg.CrateCatcherMaxProduce : 1;
 			int want = catcherTarget - ownedCatchers;
 			if (want > cap) want = cap;
 			for (int k = 0; k < want; ++k)
 			{
-				pFactory->DemandProduction(pCatcher, pHouse, true);
+				if (pFactory->DemandProduction(pCatcher, pHouse, true)) ++catcherOK;
 				++builtCatchers;
 			}
 		}
+		else catcherFac = 0;
 	}
 
 	// Give-up accounting: if we ordered the catcher yet the house still owns none,
@@ -2353,9 +2357,9 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
-			"builtCatchers=%d(%s t%d owned=%d) crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
+			"builtCatchers=%d(%s t%d owned=%d fac=%d ok=%d) crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
 			pHouse->get_ID(), hIdx, desired, N, recruited, builtCatchers,
-			pCatcher ? pCatcher->get_ID() : "-", catcherTier, ownedCatchers,
+			pCatcher ? pCatcher->get_ID() : "-", catcherTier, ownedCatchers, catcherFac, catcherOK,
 			static_cast<int>(crates.size()), raced,
 			nearestChase < 1e17 ? nearestChase / 256.0 : -1.0, nearestChaseType);
 }

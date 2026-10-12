@@ -1329,6 +1329,11 @@ namespace
 	// yet never appeared (leaky CanBuild greenlit something the factory refuses).
 	// Past CrateCatcherGiveUp, BestCrateCatcher skips it and picks the next-best.
 	std::map<int, std::map<std::string, int>> g_catcherFail;
+	// Latched max dedicated-catcher count any AI house has owned this scenario, fed by
+	// CrateSquadDoctrine each pass. The AITrigger gate reads it to release once the AI
+	// has built enough chasers (CrateChaserGateCount). Latched (never decreases) so the
+	// gate stays open once reached — we don't want to re-suppress mid-game.
+	int g_chaserGateMax = 0;
 
 	int CrateKey(CellClass* const pCell)
 	{
@@ -1952,7 +1957,8 @@ namespace
 	// ticks (membership managed by hand, not auto-recruited); never destroyed on
 	// idle, unlike the single-grabber team.
 	TeamClass* EnsureSquadTeam(HouseClass* const pHouse, int const desired,
-		TechnoTypeClass* const pRep, const char* const prefix = "DCRS")
+		TechnoTypeClass* const pRep, const char* const prefix = "DCRS",
+		int const produceCount = 0)
 	{
 		int const hIdx = pHouse->ArrayIndex;
 		char id[0x18];
@@ -1968,11 +1974,15 @@ namespace
 		if (!pSC) pSC = GameCreate<ScriptTypeClass>(id);
 		if (!pTF || !pSC) return nullptr;
 
-		// No production requirement: pRep is null (the squad only diverts existing
-		// units), and amount 0 means the team never force-builds anything — the
-		// force-build path ignores prereqs/faction, so we keep it shut off.
+		// Production requirement: when pRep is set, the taskforce asks the AI to BUILD
+		// `produceCount` of it (the only path that actually produces a unit for an AI
+		// house — DemandProduction merely queues behind the AI's own plan and never
+		// builds). pRep null / amount 0 = no production; membership comes from diversion.
+		// Callers gate pRep by faction+prereq so the force-build can't pick a wrong unit.
+		int const prod = pRep
+			? (produceCount > 0 ? produceCount : (desired > 0 ? desired : 1)) : 0;
 		pTF->CountEntries = pRep ? 1 : 0;
-		pTF->Entries[0] = { pRep ? (desired > 0 ? desired : 1) : 0, pRep };
+		pTF->Entries[0] = { prod, pRep };
 		pTF->Group = -1;
 		pSC->ActionsCount = 1;
 		pSC->ScriptActions[0] = { 5, 120 }; // guard; we steer members each tick
@@ -2011,6 +2021,28 @@ namespace
 		auto const s = pT2->SpeedType;
 		return s == SpeedType::Hover || s == SpeedType::Float
 			|| s == SpeedType::Amphibious || s == SpeedType::FloatBeach;
+	}
+
+	// Speed of the house's fastest eligible mobile unit it currently OWNS (armed,
+	// non-gatherer, not modder-excluded). Used by the catcher logic to decide whether
+	// forcing a dedicated grabber is worth it: if a unit this fast already exists,
+	// diverting it to crates beats spending production on a special catcher.
+	int FastestOwnedEligibleSpeed(HouseClass* const pHouse)
+	{
+		int best = 0;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Unit && what != AbstractType::Infantry) continue;
+			auto const pType = pT->GetTechnoType();
+			if (!pType || pType->ResourceGatherer) continue;
+			if (IsExcludedChaser(pType)) continue;
+			if (!HasOffensiveWeapon(pType)) continue;
+			if (pType->Speed > best) best = pType->Speed;
+		}
+		return best;
 	}
 
 	FootClass* PickSquadRecruit(HouseClass* const pHouse, TeamClass* const pExclude,
@@ -2091,19 +2123,40 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		if (desired > sqMax) desired = sqMax;
 	}
 
-	// The team taskforce is left null (no auto-production: it would force-build
-	// ignoring prereqs/faction). Membership is filled by diverting existing units
-	// (below) plus explicit, prereq-checked catcher production.
-	auto const pTeam = EnsureSquadTeam(pHouse, desired, nullptr);
+	// Decide whether to FORCE a dedicated catcher this pass. DemandProduction only
+	// queues behind the AI's own plan and never builds (confirmed in-game: fac=1 ok=1
+	// owned=0), so the sole working path is the team taskforce below. We force one only
+	// when: the modder opted in (CrateCatcherForceBuild), a faction+prereq-valid grabber
+	// exists (pCatcher, from BestCrateCatcher), the house doesn't already own enough,
+	// and no already-fast unit makes it pointless (CrateCatcherSkipSpeed).
+	int const ownedCatchers = pCatcher ? CountOwned(pHouse, pCatcher) : 0;
+	if (ownedCatchers > g_chaserGateMax) g_chaserGateMax = ownedCatchers; // feeds AITrigger gate
+	int const fastestOwned = cfg.CrateCatcherSkipSpeed > 0
+		? FastestOwnedEligibleSpeed(pHouse) : 0;
+	bool const fastEnough = cfg.CrateCatcherSkipSpeed > 0
+		&& fastestOwned >= cfg.CrateCatcherSkipSpeed;
+	bool const doForce = cfg.CrateCatcherForceBuild && pCatcher
+		&& !fastEnough && ownedCatchers < catcherTarget;
+	// Slots held open for produced catchers: a team already full to `desired` by
+	// diversion leaves the AI no room to place what the taskforce builds.
+	int reserve = doForce ? (catcherTarget - ownedCatchers) : 0;
+	if (reserve < 0) reserve = 0;
+	if (reserve > desired) reserve = desired;
+
+	// Create/refresh the squad team. When force-building, the taskforce carries the
+	// validated catcher so the AI produces `catcherTarget` of it; otherwise null
+	// (diversion-only — the squad still grabs the best grabber the AI already owns).
+	auto const pTeam = EnsureSquadTeam(pHouse, desired,
+		doForce ? pCatcher : nullptr, "DCRS", doForce ? catcherTarget : 0);
 	if (!pTeam) return;
 
-	// Maintain membership: divert fast armed units onto the squad until at
-	// `desired`, liberating teamed ones (the AI owns ~all units via teams).
+	// Maintain membership by diversion, leaving `reserve` slots free for taskforce
+	// production. Liberate teamed recruits (the AI owns ~all units via teams).
 	int members = 0;
 	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
 		if (!pF->InLimbo && pF->Health > 0) ++members;
 	int recruited = 0;
-	while (members < desired)
+	while (members < desired - reserve)
 	{
 		auto const pR = PickSquadRecruit(pHouse, pTeam);
 		if (!pR) break;
@@ -2117,41 +2170,18 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 		++members; ++recruited;
 	}
 
-	// Build DEDICATED catchers toward the target — driven by how many of the chosen
-	// grabber the house OWNS, NOT by squad headcount. (Gating on members<desired let
-	// diversion fill the squad with whatever infantry was lying around and suppressed
-	// ever building a real catcher.) These are UNITS, so FindHouseFactory routes
-	// correctly; produced catchers get recruited onto the squad next pass.
-	int const ownedCatchers = pCatcher ? CountOwned(pHouse, pCatcher) : 0;
-	int builtCatchers = 0;
-	int catcherFac = -1;  // diag: -1 none tried, 0 no factory found, 1 factory found
-	int catcherOK = 0;    // diag: DemandProduction calls that returned true
-	if (pCatcher && ownedCatchers < catcherTarget)
-	{
-		if (auto const pFactory = FindHouseFactory(pHouse, pCatcher))
-		{
-			catcherFac = 1;
-			int const cap = cfg.CrateCatcherMaxProduce > 0 ? cfg.CrateCatcherMaxProduce : 1;
-			int want = catcherTarget - ownedCatchers;
-			if (want > cap) want = cap;
-			for (int k = 0; k < want; ++k)
-			{
-				if (pFactory->DemandProduction(pCatcher, pHouse, true)) ++catcherOK;
-				++builtCatchers;
-			}
-		}
-		else catcherFac = 0;
-	}
-
-	// Give-up accounting: if we ordered the catcher yet the house still owns none,
-	// bump its fail streak; once it owns one, reset. BestCrateCatcher drops a type
-	// past CrateCatcherGiveUp and falls to the next grabber (handles leaky CanBuild
-	// greenlighting a unit the factory refuses — e.g. CLEG without a Battle Lab).
+	// Give-up accounting: while force-building the catcher yet still owning none, bump
+	// its fail streak; reset once one exists. BestCrateCatcher drops a type past
+	// CrateCatcherGiveUp and falls to the next grabber (handles leaky CanBuild
+	// greenlighting a unit the factory refuses — e.g. CLEG without a Battle Lab). The
+	// streak only advances while doForce, so it tolerates normal build time.
+	int catcherFail = 0;
 	if (pCatcher)
 	{
 		auto& f = g_catcherFail[hIdx][pCatcher->get_ID()];
 		if (ownedCatchers > 0) f = 0;
-		else if (builtCatchers > 0) ++f;
+		else if (doForce) ++f;
+		catcherFail = f;
 	}
 
 	// Live members, indexed for dispersal + assignment.
@@ -2357,9 +2387,11 @@ void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] crate squad: house=%s#%d desired=%d members=%d recruited=%d "
-			"builtCatchers=%d(%s t%d owned=%d fac=%d ok=%d) crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
-			pHouse->get_ID(), hIdx, desired, N, recruited, builtCatchers,
-			pCatcher ? pCatcher->get_ID() : "-", catcherTier, ownedCatchers, catcherFac, catcherOK,
+			"catcher=%s t%d owned=%d force=%d fastEnough=%d(spd%d) fail=%d reserve=%d "
+			"crates=%d raced=%d nearestChaseCells=%.1f chaser=%s.\n",
+			pHouse->get_ID(), hIdx, desired, N, recruited,
+			pCatcher ? pCatcher->get_ID() : "-", catcherTier, ownedCatchers,
+			doForce ? 1 : 0, fastEnough ? 1 : 0, fastestOwned, catcherFail, reserve,
 			static_cast<int>(crates.size()), raced,
 			nearestChase < 1e17 ? nearestChase / 256.0 : -1.0, nearestChaseType);
 }
@@ -3406,8 +3438,11 @@ void Teams::RushCheck(HouseClass* pHouse)
 		pDecap && pDecap->Type ? pDecap->Type->ID : "(roam)");
 }
 
+int Teams::ChaserGateMax() { return g_chaserGateMax; }
+
 void Teams::Reset()
 {
+	g_chaserGateMax = 0;
 	g_warned.clear();
 	g_rushLastFire.clear();
 	g_powerTable.clear();

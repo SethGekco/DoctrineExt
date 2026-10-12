@@ -1,5 +1,6 @@
 #include "Doctrine/AITriggerDifficulty.h"
 #include "Doctrine/Config.h"
+#include "Doctrine/Teams.h"
 
 #include <AITriggerTypeClass.h>
 #include <CCINIClass.h>
@@ -146,14 +147,19 @@ namespace
 void AITriggerDifficulty::GateTick(int const frame)
 {
 	int const delay = DoctrineConfig::Instance.AITriggerDelay;
-	if (delay <= 0) { g_gatePhase = 2; return; }      // feature off — vanilla timing
+	int const gateCount = DoctrineConfig::Instance.CrateChaserGateCount;
+	// The gate is active if EITHER release condition is configured: a time delay
+	// (AITriggerDelay) or a chaser-count target (CrateChaserGateCount). Both off =
+	// vanilla timing, nothing held.
+	if (delay <= 0 && gateCount <= 0) { g_gatePhase = 2; return; }
 	if (g_gatePhase == 2) return;                     // already handled this scenario
 	if (AITriggerTypeClass::Array.Count <= 0) return; // triggers not loaded yet
 
 	if (g_gatePhase == 0)
 	{
 		// Snapshot the (already difficulty-applied) flags, then disable EVERY trigger
-		// so the AI runs none until the countdown — freeing it for DoctrineExt work.
+		// so the AI runs none until release — freeing its production for DoctrineExt
+		// work (e.g. building crate chasers before the AI floods the queue with teams).
 		g_gateSnapshot.clear();
 		for (auto const pT : AITriggerTypeClass::Array)
 		{
@@ -163,12 +169,22 @@ void AITriggerDifficulty::GateTick(int const frame)
 		}
 		g_gateStart = frame;
 		g_gatePhase = 1;
-		Debug::Log("[DoctrineExt] AITriggers GATED OFF at f%d; re-enabling in %d frames "
-			"(%d triggers held).\n", frame, delay, static_cast<int>(g_gateSnapshot.size()));
+		Debug::Log("[DoctrineExt] AITriggers GATED OFF at f%d; release on delay=%d or "
+			"chaserGate=%d (%d triggers held).\n", frame, delay, gateCount,
+			static_cast<int>(g_gateSnapshot.size()));
 	}
-	else if (g_gatePhase == 1 && frame - g_gateStart >= delay)
+	else if (g_gatePhase == 1)
 	{
-		// Countdown elapsed — restore the snapshot (re-enable to difficulty intent).
+		int const elapsed = frame - g_gateStart;
+		// Release when the AI has built enough chasers (count-based, Rex's request),
+		// OR the time delay elapsed, whichever first. A hard backstop guarantees we
+		// never hold AITriggers off all game if the count target is never reached
+		// (e.g. the AI can't build any chaser) — pair gateCount with a sane delay.
+		bool const countMet = gateCount > 0 && Teams::ChaserGateMax() >= gateCount;
+		bool const timeMet  = delay > 0 && elapsed >= delay;
+		bool const backstop = elapsed >= 36000;
+		if (!(countMet || timeMet || backstop)) return;
+
 		int i = 0;
 		for (auto const pT : AITriggerTypeClass::Array)
 		{
@@ -181,8 +197,9 @@ void AITriggerDifficulty::GateTick(int const frame)
 			++i;
 		}
 		g_gatePhase = 2;
-		Debug::Log("[DoctrineExt] AITriggers RE-ENABLED at f%d (after %d-frame gate).\n",
-			frame, delay);
+		const char* const why = countMet ? "chaser-count" : (timeMet ? "delay" : "backstop");
+		Debug::Log("[DoctrineExt] AITriggers RE-ENABLED at f%d after %d frames "
+			"(reason=%s, chasersOwned=%d).\n", frame, elapsed, why, Teams::ChaserGateMax());
 	}
 }
 

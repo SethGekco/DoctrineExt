@@ -218,10 +218,27 @@ public:
 	int CrateCatcherMax = 3;         // cap on dedicated catchers built
 	int CrateCatcherFastSpeed = 8;   // Speed at/above which a grabber counts "fast"
 	int CrateCatcherMaxProduce = 1;  // catchers queued per pass
-	int CrateCatcherGiveUp = 6;      // passes a catcher can be ordered without ever
+	int CrateCatcherGiveUp = 15;     // passes a catcher can be force-built without ever
 	                                 // appearing before we deem it unbuildable (the
 	                                 // leaky CanBuild greenlights units the factory
-	                                 // then refuses) and fall to the next-best grabber
+	                                 // then refuses) and fall to the next-best grabber.
+	                                 // Must exceed real build time (taskforce builds
+	                                 // aren't instant) so a slow build isn't abandoned.
+	// How catchers are acquired. DemandProduction (the old path) only QUEUES on an AI
+	// house — the item sits behind the AI's own production and never builds. The only
+	// path that actually PRODUCES a unit for the AI is a team taskforce. ForceBuild=yes
+	// puts the validated catcher in the squad's taskforce so the AI builds it; =no is
+	// diversion-only (the squad still grabs the best grabber the AI already owns).
+	bool CrateCatcherForceBuild = false;
+	// If the house's fastest eligible unit (owned or buildable) is at least this fast,
+	// skip forcing a dedicated catcher — diverting that unit is enough. 0 = always
+	// force the dedicated catcher when ForceBuild=yes (never rely on a merely-fast unit).
+	int CrateCatcherSkipSpeed = 0;
+	// How many chasers an AI house must own before AITriggerTypes stop being cancelled.
+	// While below this, DoctrineExt keeps AITriggerTypes disabled so the AI's production
+	// bandwidth goes to crate chasers first; once reached, AITriggerTypes are released
+	// (latched for the game). 0 = off (don't tie the AITrigger gate to chaser count).
+	int CrateChaserGateCount = 0;
 	int CrateGiveUpPasses = 4;       // detection passes a chaser can make no
 	                                 // progress toward a crate before it's deemed
 	                                 // unreachable and abandoned (frees the unit)

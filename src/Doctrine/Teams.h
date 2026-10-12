@@ -139,5 +139,10 @@ namespace Teams
 	// (silent coordination). Self-throttled; opt-in (RushRatio=0 off).
 	void RushCheck(HouseClass* pHouse);
 
+	// Latched max dedicated-catcher count any AI house has owned this scenario. The
+	// AITrigger gate reads it to release once the AI has built CrateChaserGateCount
+	// chasers (prioritizing chaser production until then). 0 until the squad runs.
+	int ChaserGateMax();
+
 	void Reset();
 }

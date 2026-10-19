@@ -343,7 +343,9 @@ sensors already built.
   make forces avoid routing through hot death buckets.
 - **6c — Weak-point approach.** Scan-around + approach-bearing planner (avoid
   death zones + target's strong axis); steer the counter force in on the weak
-  side.
+  side. **Routing substrate = WarZoneExt `WZ_Routes` (see the WarZoneExt
+  dependency section below):** WarZoneExt enumerates/ranks the routes, this
+  step selects one and steers it. Build after `WZ_Routes` ships.
 - **6d — Anomaly detection (§6.4).** Unusual clusters/paths on top of the grids.
 
 Boundary: all sync-safe (integer grids, deterministic scans, no RNG); AI-only
@@ -645,3 +647,28 @@ DoctrineExt runs exactly as before (local air death-zones only); if it is, AA al
 pre-deploys toward the map's persistent `AirDeath` corridor — useful from game 1 on
 a known map. We never hard-link it. When adding more zone use, extend WarZoneExt
 additively (new zone name) and update its CHANGELOG in the same commit.
+
+### Route enumeration via `WZ_Routes` (scoped 2026-10-19, Rex) — the §10b steering substrate
+
+The safe-approach planner in §10b (6b/6c) needs "enumerate the ways to reach the
+target, rank by threat, pick one to steer along." That enumeration was scoped
+into **WarZoneExt itself** (its `## Routing` section / `WZ_Routes`), deliberately —
+multiple brains want route answers, so the node graph + threat-weighted k-shortest
+search live in the shared primitive, not here. WarZoneExt already owns every input
+(threat zones, `Terrain.GroundZone/WaterZone` connectivity, the bucket grid) and
+builds the graph once.
+
+**The boundary this creates, and it is DoctrineExt's whole job on this feature:**
+WarZoneExt *enumerates and ranks* routes; **DoctrineExt *selects* one and *steers*
+the team along it** (acting — forbidden to WarZoneExt). So 6c's approach-bearing
+planner becomes: call `WZ_Routes(ownBase, target, locomotor, "Kill", useHistory, k,
+...)`, pick the lowest-threat route whose peak-threat node clears the doctrine's
+tolerance, and feed its waypoints into the existing `MoveDoctrineTeam` steering
+loop one at a time. The lane/threat-grid routing in step 4 of §10b is exactly this
+call once WarZoneExt supplies it.
+
+Bind it the same lazy/optional way as `AirDefense`: `WZ_Version() >= 2` (the routing
+export bumps WarZoneExt to v2), fall back to the current straight-line/own-grid
+approach when absent. Honour `useHistory` against `WZ_HistoryUsable()` so MP routing
+never leans on cross-game history. **Not built on either side yet** — WarZoneExt
+ships `WZ_Routes` first (pure query, low risk), then this consumes it.

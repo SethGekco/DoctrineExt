@@ -188,6 +188,89 @@ namespace
 	// is above the game's max-10 tech level, so never buildable) and Owner=,
 	// then let CanBuild cover prerequisites + build limits. Used before any
 	// DemandProduction; the recruit path may still USE already-owned units.
+	// Is a generic-prerequisite category (POWER/FACTORY/BARRACKS/RADAR/TECH/PROC from
+	// [GeneralPrerequisites]) SATISFIED for the house? True if the house owns at least
+	// one building from the list — OR the list is EMPTY, which means the category isn't
+	// restricted in this ruleset (this modpack has no loose [GeneralPrerequisites]; a
+	// sibling PrerequisiteExt.dll may manage prereqs). Empty => satisfied keeps us from
+	// ever over-blocking a legit build; we only tighten when the list is populated.
+	bool OwnsPrereqCategory(HouseClass* const pHouse, TypeList<int> const& list)
+	{
+		bool any = false;
+		for (int idx : list)
+		{
+			any = true;
+			if (idx < 0 || idx >= BuildingTypeClass::Array.Count) continue;
+			auto const bt = BuildingTypeClass::Array.GetItem(idx);
+			if (bt && pHouse->CountOwnedAndPresent(bt) > 0) return true;
+		}
+		return !any; // empty list => category not restricted => satisfied
+	}
+
+	// Does the house ACTUALLY own pType's prerequisites? The engine's CanBuild leaks the
+	// generic TECH prereq for AI houses — it greenlit CLEG (Prerequisite=GAPILE,TECH) at
+	// ~54s with no Battle Lab, so the force-build built a Chrono Legionnaire with no
+	// GATECH. We resolve prereqs ourselves: every SPECIFIC building must be present, and
+	// every GENERIC category (negative-encoded) must be satisfied by a building from the
+	// matching [GeneralPrerequisites] list. Owning a PrerequisiteOverride building
+	// bypasses all of it (vanilla override semantics, e.g. CLEG via the Smithsonian).
+	int CountList(TypeList<int> const& list) { int n = 0; for (int i : list) { (void)i; ++n; } return n; }
+
+	bool HasRealPrerequisites(HouseClass* const pHouse, TechnoTypeClass* const pType)
+	{
+		if (!pType) return false;
+		auto const pRules = RulesClass::Instance;
+		if (!pRules) return true; // can't resolve the category lists — don't block
+
+		// One-time: dump the generic-prereq category sizes. If Tech=0 here, the ruleset
+		// doesn't restrict TECH at the engine level (a sibling PrerequisiteExt may), so
+		// this check can't enforce "needs a Battle Lab" and the CLEG-without-GATECH case
+		// is a prereq-config matter, not DoctrineExt.
+		static bool catLogged = false;
+		if (!catLogged)
+		{
+			catLogged = true;
+			Debug::Log("[DoctrineExt] prereq categories (0=unrestricted): Power=%d Factory=%d "
+				"Barracks=%d Radar=%d Tech=%d Proc=%d\n",
+				CountList(pRules->PrerequisitePower), CountList(pRules->PrerequisiteFactory),
+				CountList(pRules->PrerequisiteBarracks), CountList(pRules->PrerequisiteRadar),
+				CountList(pRules->PrerequisiteTech), CountList(pRules->PrerequisiteProc));
+		}
+
+		for (int idx : pType->PrerequisiteOverride)
+		{
+			if (idx < 0 || idx >= BuildingTypeClass::Array.Count) continue;
+			auto const bt = BuildingTypeClass::Array.GetItem(idx);
+			if (bt && pHouse->CountOwnedAndPresent(bt) > 0) return true;
+		}
+
+		for (int pre : pType->Prerequisite)
+		{
+			if (pre >= 0)
+			{
+				if (pre >= BuildingTypeClass::Array.Count) return false;
+				auto const bt = BuildingTypeClass::Array.GetItem(pre);
+				if (!bt || pHouse->CountOwnedAndPresent(bt) <= 0) return false;
+			}
+			else
+			{
+				bool ok = true;
+				switch (static_cast<Prerequisite>(pre))
+				{
+				case Prerequisite::Power:    ok = OwnsPrereqCategory(pHouse, pRules->PrerequisitePower); break;
+				case Prerequisite::Factory:  ok = OwnsPrereqCategory(pHouse, pRules->PrerequisiteFactory); break;
+				case Prerequisite::Barracks: ok = OwnsPrereqCategory(pHouse, pRules->PrerequisiteBarracks); break;
+				case Prerequisite::Radar:    ok = OwnsPrereqCategory(pHouse, pRules->PrerequisiteRadar); break;
+				case Prerequisite::Tech:     ok = OwnsPrereqCategory(pHouse, pRules->PrerequisiteTech); break;
+				case Prerequisite::Proc:     ok = OwnsPrereqCategory(pHouse, pRules->PrerequisiteProc); break;
+				default: ok = true; break;  // unknown encoding — don't block
+				}
+				if (!ok) return false;
+			}
+		}
+		return true;
+	}
+
 	bool CanBuildStrict(HouseClass* const pHouse, TechnoTypeClass* const pType)
 	{
 		if (!pType) return false;
@@ -199,6 +282,10 @@ namespace
 			? pHouse->TechLevel : 10;
 		if (tl > maxTL) return false;                      // e.g. TechLevel=11
 		if (DoctrineConfig::Instance.StrictOwnership && !pHouse->InOwners(pType))
+			return false;
+		// Our own prereq check FIRST — CanBuild leaks the generic TECH prereq for AI
+		// houses (built CLEG with no Battle Lab), so don't trust it alone.
+		if (!HasRealPrerequisites(pHouse, pType))
 			return false;
 		return pHouse->CanBuild(pType, false, true) == CanBuildResult::Buildable;
 	}

@@ -183,6 +183,9 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CrateCatcherForceBuild = pINI->ReadBool("Doctrine.General", "CrateCatcherForceBuild", cfg.CrateCatcherForceBuild);
 	cfg.CrateCatcherSkipSpeed = pINI->ReadInteger("Doctrine.General", "CrateCatcherSkipSpeed", cfg.CrateCatcherSkipSpeed);
 	cfg.CrateChaserGateCount = pINI->ReadInteger("Doctrine.General", "CrateChaserGateCount", cfg.CrateChaserGateCount);
+	cfg.HonorPrerequisites = pINI->ReadBool("Doctrine.General", "HonorPrerequisites", cfg.HonorPrerequisites);
+	cfg.CrateChaserHonorPrereq = pINI->ReadInteger("Doctrine.General", "CrateChaserHonorPrereq", cfg.CrateChaserHonorPrereq);
+	cfg.RushHonorPrereq = pINI->ReadInteger("Doctrine.General", "RushHonorPrereq", cfg.RushHonorPrereq);
 	cfg.CrateGiveUpPasses = pINI->ReadInteger("Doctrine.General", "CrateGiveUpPasses", cfg.CrateGiveUpPasses);
 	cfg.CrateBlacklistTime = pINI->ReadInteger("Doctrine.General", "CrateBlacklistTime", cfg.CrateBlacklistTime);
 	cfg.GarrisonInfantry = pINI->ReadBool("Doctrine.General", "GarrisonInfantry", cfg.GarrisonInfantry);

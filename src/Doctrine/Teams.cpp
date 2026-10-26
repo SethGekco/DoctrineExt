@@ -271,7 +271,12 @@ namespace
 		return true;
 	}
 
-	bool CanBuildStrict(HouseClass* const pHouse, TechnoTypeClass* const pType)
+	// honorPrereq: when true, enforce our own prerequisite-ownership check (the engine's
+	// CanBuild leaks the generic TECH prereq for AI houses, so it alone let the AI
+	// force-build a CLEG with no Battle Lab). Callers pass the per-task config toggle
+	// (HonorPrereqForCrate / HonorPrereqForRush); defaults to honoring.
+	bool CanBuildStrict(HouseClass* const pHouse, TechnoTypeClass* const pType,
+		bool const honorPrereq = true)
 	{
 		if (!pType) return false;
 		int const tl = pType->TechLevel;
@@ -283,9 +288,9 @@ namespace
 		if (tl > maxTL) return false;                      // e.g. TechLevel=11
 		if (DoctrineConfig::Instance.StrictOwnership && !pHouse->InOwners(pType))
 			return false;
-		// Our own prereq check FIRST — CanBuild leaks the generic TECH prereq for AI
-		// houses (built CLEG with no Battle Lab), so don't trust it alone.
-		if (!HasRealPrerequisites(pHouse, pType))
+		// Our own prereq check FIRST (when honoring) — CanBuild leaks the generic TECH
+		// prereq for AI houses, so don't trust it alone.
+		if (honorPrereq && !HasRealPrerequisites(pHouse, pType))
 			return false;
 		return pHouse->CanBuild(pType, false, true) == CanBuildResult::Buildable;
 	}
@@ -960,7 +965,7 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	// Only PRODUCE if the unit is legitimately buildable now (TechLevel + Owner=
 	// + prereqs). If pType was chosen only because the house already owns some
 	// (recruit path), we field those but never illegally build more.
-	if (cfg.AutoProduce && got < count && CanBuildStrict(pHouse, pType))
+	if (cfg.AutoProduce && got < count && CanBuildStrict(pHouse, pType, cfg.HonorPrereqForRush()))
 	{
 		auto const pFactory = FindHouseFactory(pHouse, pType);
 		if (pFactory)
@@ -2008,7 +2013,7 @@ namespace
 			if (!pHouse->InOwners(pTy)) continue; // faction-correct always (never a
 			                                      // Soviet DRON for an Allied AI etc.),
 			                                      // independent of StrictOwnership
-			if (!CanBuildStrict(pHouse, pTy)) continue;
+			if (!CanBuildStrict(pHouse, pTy, cfg.HonorPrereqForCrate())) continue;
 			auto const fit = fails.find(e.ID);
 			if (fit != fails.end() && fit->second >= giveUp) continue; // proven unbuildable
 			int const tier = pTy->Teleporter ? 3

@@ -239,6 +239,20 @@ public:
 	// bandwidth goes to crate chasers first; once reached, AITriggerTypes are released
 	// (latched for the game). 0 = off (don't tie the AITrigger gate to chaser count).
 	int CrateChaserGateCount = 0;
+	// Whether DoctrineExt makes the AI obey real build prerequisites for the units it
+	// drives the AI to PRODUCE. The engine's own CanBuild leaks generic prereqs (TECH)
+	// for AI houses, so without this the AI force-built a Chrono Legionnaire with no
+	// Battle Lab. HonorPrerequisites is the GLOBAL default; the per-task knobs override
+	// it (-1 = inherit the global, 0 = ignore prereqs / let the AI "cheat", 1 = obey).
+	//   CrateChaserHonorPrereq — crate-catcher force-build (BestCrateCatcher).
+	//   RushHonorPrereq        — rush/attack production (Dispatch).
+	bool HonorPrerequisites = true;
+	int CrateChaserHonorPrereq = -1;
+	int RushHonorPrereq = -1;
+	bool HonorPrereqForCrate() const
+		{ return CrateChaserHonorPrereq < 0 ? HonorPrerequisites : (CrateChaserHonorPrereq != 0); }
+	bool HonorPrereqForRush() const
+		{ return RushHonorPrereq < 0 ? HonorPrerequisites : (RushHonorPrereq != 0); }
 	int CrateGiveUpPasses = 4;       // detection passes a chaser can make no
 	                                 // progress toward a crate before it's deemed
 	                                 // unreachable and abandoned (frees the unit)

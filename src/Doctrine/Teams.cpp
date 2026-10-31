@@ -3534,24 +3534,25 @@ void Teams::RushCheck(HouseClass* pHouse)
 		pDecap && pDecap->Type ? pDecap->Type->ID : "(roam)");
 }
 
-// Suspend every one of the house's factories that is NOT producing a building, so all
-// income funnels into the ConYard finishing the priority building; also halt repairs
-// (the other cash drain). Re-applied each pass while the lockdown holds.
-static void BudgetSeizeProduction(HouseClass* const pHouse)
+// Hold OFFENSIVE production (vehicles / aircraft / navy) so income funnels into the
+// priority building — but leave INFANTRY and the ConYard free, so a defensive screen and
+// base defenses still go up while the economy scales. blockRepair also halts the repair
+// cash drain (only wanted for a brief one-off rush, not the long economy phase, where we
+// want defenses kept healthy). Re-applied each pass while the hold is in force.
+static void BudgetSeizeProduction(HouseClass* const pHouse, bool const blockRepair)
 {
 	for (auto const pFact : FactoryClass::Array)
 	{
 		if (!pFact || pFact->Owner != pHouse) continue;
 		auto const pObj = pFact->Object;
-		if (!pObj) continue;                              // idle — leave it alone, so an
-		                                                  // idle ConYard is free to start
-		                                                  // the priority building
-		if (pObj->WhatAmI() == AbstractType::Building) continue; // keep building production
-		pFact->Suspend(true);                            // suspend active unit/inf/air/navy
+		if (!pObj) continue;                              // idle — leave it free
+		auto const what = pObj->WhatAmI();
+		// Keep infantry (defensive formations) and buildings (ConYard = refineries +
+		// base defenses) producing; suspend only offensive vehicle/aircraft/ship output.
+		if (what == AbstractType::Building || what == AbstractType::Infantry) continue;
+		pFact->Suspend(true);
 	}
-	// Block repair — the AI's repair handholder plus any active building repair, so the
-	// repair cash drain stops too (healing docks / the repair tool included: no building
-	// of this house stays in a repairing state while locked down).
+	if (!blockRepair) return;
 	pHouse->Repairing = false;
 	for (int i = 0; i < BuildingClass::Array.Count; ++i)
 	{
@@ -3577,10 +3578,12 @@ static void BudgetRelease(HouseClass* const pHouse)
 }
 
 // Forced budget (§ Rex 2026-10-30): an Easy AI that can't afford a pricey essential (a
-// FreeUnit-inflated refinery) sells its base to pay for it. Walk the priority tiers,
-// find the highest-priority building the house is MISSING and can actually build, make
-// sure it's planned, and — once the house holds that tier's Reserve in cash — seize all
-// non-building production and repair so the money finishes the building instead.
+// FreeUnit-inflated refinery) sells its base to pay for it, then — once that's stopped —
+// stays stuck at one refinery, perpetually broke, under-defended. Walk the priority tiers,
+// find the highest-priority building the house is below Count of and can build, plan it,
+// and hold OFFENSIVE production so income funnels there — economy buildings (Count>1)
+// continuously until the target, one-offs (Count==1) once the Reserve is reached. Infantry
+// and the ConYard keep working throughout, so defenses/formations still go up.
 void Teams::ForcedBudget(HouseClass* pHouse)
 {
 	auto const& cfg = DoctrineConfig::Instance;
@@ -3595,19 +3598,21 @@ void Teams::ForcedBudget(HouseClass* pHouse)
 	if (it != g_budgetLastFire.end() && now - it->second < interval) return;
 	g_budgetLastFire[hIdx] = now;
 
-	// Highest-priority building the house is missing AND can build now (so we never lock
-	// down forever on something whose prerequisites aren't met — those earlier buildings
-	// get focused first, which is exactly the right order).
-	BuildingTypeClass* focus = nullptr; int focusTier = -1;
+	// Highest-priority building the house hasn't reached Count of yet AND can build now
+	// (so we never hold forever on something whose prerequisites aren't met — those
+	// earlier buildings get focused first, which is exactly the right order: power before
+	// the refineries that need it).
+	BuildingTypeClass* focus = nullptr; int focusTier = -1; int focusCount = 1;
 	for (int t = 0; t < static_cast<int>(cfg.BudgetTiers.size()) && !focus; ++t)
 	{
-		for (auto const& id : cfg.BudgetTiers[t].Buildings)
+		auto const& tier = cfg.BudgetTiers[t];
+		for (auto const& id : tier.Buildings)
 		{
 			auto const pBt = BuildingTypeClass::Find(id.c_str());
 			if (!pBt || !pHouse->InOwners(pBt)) continue;
-			if (pHouse->CountOwnedAndPresent(pBt) > 0) continue;   // already have one
-			if (!CanBuildStrict(pHouse, pBt)) continue;            // can't build it yet
-			focus = pBt; focusTier = t; break;
+			if (pHouse->CountOwnedAndPresent(pBt) >= tier.Count) continue; // reached target
+			if (!CanBuildStrict(pHouse, pBt)) continue;                    // can't build yet
+			focus = pBt; focusTier = t; focusCount = tier.Count; break;
 		}
 	}
 
@@ -3619,15 +3624,25 @@ void Teams::ForcedBudget(HouseClass* pHouse)
 	int const reserve = cfg.BudgetTiers[focusTier].Reserve;
 	int const cash = static_cast<int>(pHouse->Available_Money());
 
-	if (cash >= reserve)
+	// Economy scaling (Count>1, e.g. 3 refineries): hold offensive production CONTINUOUSLY
+	// while below the target, breaking the one-refinery poverty trap — income funnels into
+	// the economy while infantry + base defenses still build (repair left on). One-off
+	// essential (Count==1): only once cash reaches the Reserve, rush it (also blocking
+	// repair), then release. Either way infantry and the ConYard keep working.
+	bool const economyMode = focusCount > 1;
+	bool const engage = economyMode || cash >= reserve;
+
+	if (engage)
 	{
 		bool const wasLocked = g_budgetLocked[hIdx];
-		BudgetSeizeProduction(pHouse);
+		BudgetSeizeProduction(pHouse, /*blockRepair=*/!economyMode);
 		g_budgetLocked[hIdx] = true;
 		if (!wasLocked && cfg.DebugTicks)
-			Debug::Log("[DoctrineExt] budget LOCKDOWN: house=%s#%d focus=%s tier=%d "
-				"cash=%d>=reserve=%d — seizing production until built.\n",
-				pHouse->get_ID(), hIdx, focus->ID, focusTier, cash, reserve);
+			Debug::Log("[DoctrineExt] budget %s: house=%s#%d focus=%s tier=%d (%d/%d) cash=%d "
+				"reserve=%d — holding offensive production%s (infantry+defenses keep building).\n",
+				economyMode ? "ECONOMY" : "RUSH", pHouse->get_ID(), hIdx, focus->ID, focusTier,
+				pHouse->CountOwnedAndPresent(focus), focusCount, cash, reserve,
+				economyMode ? "" : " + repair");
 	}
 	else
 	{

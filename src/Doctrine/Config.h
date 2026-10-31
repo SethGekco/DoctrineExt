@@ -106,13 +106,18 @@ public:
 	int ReserveGrowthWindow = 1800;  // frames the growth is measured over
 	std::vector<std::string> ReserveBuild; // ordered unit IDs to build w/ surplus
 	// Forced budget / priority buildings ([Doctrine.Budget]). Fixes an AI that can't
-	// afford a pricey essential (e.g. a FreeUnit-inflated refinery) so it sells its
-	// base to pay for it. Each tier is a list of building IDs, highest priority first;
-	// the AI focuses on the highest-priority building it is MISSING. Once the house's
-	// cash reaches that tier's Reserve, DoctrineExt seizes production — suspends every
-	// factory except building production (the ConYard) and blocks repair — so the cash
-	// funnels into finishing that building instead of being frittered away or sold for.
-	struct BudgetTier { std::vector<std::string> Buildings; int Reserve = 0; };
+	// afford a pricey essential (e.g. a FreeUnit-inflated refinery) so it sells its base
+	// to pay for it — AND the follow-on poverty trap where it stays at one refinery,
+	// perpetually broke, under-defended. Each tier is a list of building IDs, highest
+	// priority first; the AI focuses on the highest-priority building it hasn't reached
+	// Count of yet and can build. Two modes, so economy scales WITHOUT going defenceless:
+	//  · Count==1 (a one-off essential): once cash reaches the tier's Reserve, seize
+	//    offensive production + block repair to rush it, then release.
+	//  · Count>1 (economy scaling, e.g. 3 refineries): while below Count, continuously
+	//    hold OFFENSIVE production (vehicles/aircraft/navy) so income funnels into the
+	//    buildings — but leave INFANTRY and the ConYard free, so a defensive screen and
+	//    base defenses still go up (repair stays on). Released once Count is reached.
+	struct BudgetTier { std::vector<std::string> Buildings; int Reserve = 0; int Count = 1; };
 	std::vector<BudgetTier> BudgetTiers;
 	bool BudgetEnable = true;        // active only when BudgetTiers is non-empty
 	int BudgetInterval = 15;         // frames between budget passes per house

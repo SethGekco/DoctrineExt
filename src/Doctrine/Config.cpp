@@ -139,6 +139,9 @@ void DoctrineConfig::EnsureParsed()
 		if (tier.Buildings.empty()) continue;
 		std::snprintf(key, sizeof(key), "PriorityBuildings.Reserve[%d]", i);
 		tier.Reserve = pINI->ReadInteger("Doctrine.Budget", key, 0);
+		std::snprintf(key, sizeof(key), "PriorityBuildings.Count[%d]", i);
+		tier.Count = pINI->ReadInteger("Doctrine.Budget", key, 1);
+		if (tier.Count < 1) tier.Count = 1;
 		cfg.BudgetTiers.push_back(tier);
 	}
 	cfg.BudgetEnable = !cfg.BudgetTiers.empty()

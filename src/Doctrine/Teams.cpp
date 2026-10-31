@@ -3543,10 +3543,11 @@ static void BudgetSeizeProduction(HouseClass* const pHouse)
 	{
 		if (!pFact || pFact->Owner != pHouse) continue;
 		auto const pObj = pFact->Object;
-		// keep building production running (the ConYard builds the priority building);
-		// suspend infantry / vehicle / aircraft / navy production.
-		if (pObj && pObj->WhatAmI() == AbstractType::Building) continue;
-		pFact->Suspend(true);
+		if (!pObj) continue;                              // idle — leave it alone, so an
+		                                                  // idle ConYard is free to start
+		                                                  // the priority building
+		if (pObj->WhatAmI() == AbstractType::Building) continue; // keep building production
+		pFact->Suspend(true);                            // suspend active unit/inf/air/navy
 	}
 	// Block repair — the AI's repair handholder plus any active building repair, so the
 	// repair cash drain stops too (healing docks / the repair tool included: no building

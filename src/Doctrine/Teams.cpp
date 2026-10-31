@@ -3577,6 +3577,31 @@ static void BudgetRelease(HouseClass* const pHouse)
 			pHouse->get_ID(), hIdx);
 }
 
+// Refuse to let the AI liquidate its essentials. Each tick, cancel any in-progress sale
+// (CurrentMission/QueuedMission == Selling) of the ConYard or a priority-list building by
+// forcing it back to Guard. This stops the base-center firesale/relocate seen even at
+// AIMode=0 with healthy cash — whatever decides to sell them (engine, modpack AI, a
+// trigger), we veto it, so the economy the budget is scaling isn't torn down under it.
+static void BudgetProtectEssentials(HouseClass* const pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	for (auto const pBld : pHouse->Buildings)
+	{
+		if (!pBld || !pBld->Type) continue;
+		if (pBld->CurrentMission != Mission::Selling
+			&& pBld->QueuedMission != Mission::Selling) continue;
+		bool essential = pBld->Type->ConstructionYard;
+		for (auto it = cfg.BudgetTiers.begin(); !essential && it != cfg.BudgetTiers.end(); ++it)
+			for (auto const& id : it->Buildings)
+				if (BuildingTypeClass::Find(id.c_str()) == pBld->Type) { essential = true; break; }
+		if (!essential) continue;
+		pBld->ForceMission(Mission::Guard);              // veto the sale
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] budget: house=%s#%d VETOED sale of essential %s.\n",
+				pHouse->get_ID(), pHouse->ArrayIndex, pBld->Type->ID);
+	}
+}
+
 // Forced budget (§ Rex 2026-10-30): an Easy AI that can't afford a pricey essential (a
 // FreeUnit-inflated refinery) sells its base to pay for it, then — once that's stopped —
 // stays stuck at one refinery, perpetually broke, under-defended. Walk the priority tiers,
@@ -3590,6 +3615,10 @@ void Teams::ForcedBudget(HouseClass* pHouse)
 	if (!cfg.BudgetEnable || cfg.BudgetTiers.empty()) return;
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral() || pHouse->IsControlledByHuman())
 		return;                                           // AI houses only
+
+	// Protect essentials every tick (not throttled), so a sale is vetoed before it
+	// completes (~24 frames) — this is cheap (only acts when something is selling).
+	BudgetProtectEssentials(pHouse);
 
 	int const now = Unsorted::CurrentFrame;
 	int const hIdx = pHouse->ArrayIndex;

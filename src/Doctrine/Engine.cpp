@@ -178,6 +178,11 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// allied AIs converge on the same target. Self-throttled + opt-in.
 	Teams::RushCheck(pHouse);
 
+	// Forced budget: a cash-strapped AI finishes its priority buildings (e.g. a
+	// FreeUnit-inflated refinery) instead of selling its base to afford them.
+	// Self-throttled + opt-in ([Doctrine.Budget] PriorityBuildings=...).
+	Teams::ForcedBudget(pHouse);
+
 	// Team-fill trace (~every 5s under DebugTicks): shows produced units
 	// joining live doctrine teams via engine-side recruiting over time.
 	if (cfg.DebugTicks && (frame % (sense * 5)) < sense)

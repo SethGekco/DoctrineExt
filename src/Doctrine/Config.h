@@ -105,6 +105,17 @@ public:
 	                                 // — spend to keep up on rich maps (0 = off)
 	int ReserveGrowthWindow = 1800;  // frames the growth is measured over
 	std::vector<std::string> ReserveBuild; // ordered unit IDs to build w/ surplus
+	// Forced budget / priority buildings ([Doctrine.Budget]). Fixes an AI that can't
+	// afford a pricey essential (e.g. a FreeUnit-inflated refinery) so it sells its
+	// base to pay for it. Each tier is a list of building IDs, highest priority first;
+	// the AI focuses on the highest-priority building it is MISSING. Once the house's
+	// cash reaches that tier's Reserve, DoctrineExt seizes production — suspends every
+	// factory except building production (the ConYard) and blocks repair — so the cash
+	// funnels into finishing that building instead of being frittered away or sold for.
+	struct BudgetTier { std::vector<std::string> Buildings; int Reserve = 0; };
+	std::vector<BudgetTier> BudgetTiers;
+	bool BudgetEnable = true;        // active only when BudgetTiers is non-empty
+	int BudgetInterval = 15;         // frames between budget passes per house
 	// Force-comparison rush ([Doctrine.General], §10g)
 	double RushRatio = 0.0;          // allied power must be >= target x this to
 	                                 // rush (0 = feature off)

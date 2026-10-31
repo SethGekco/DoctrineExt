@@ -440,6 +440,10 @@ namespace
 	std::map<int, int> g_floodLastFire;
 	// houseIndex -> last frame the reserve spender built (its own cooldown).
 	std::map<int, int> g_reserveLastFire;
+	// Forced-budget state: last pass frame, and whether the house is currently in a
+	// production lockdown (factories suspended to save for a priority building).
+	std::map<int, int> g_budgetLastFire;
+	std::map<int, bool> g_budgetLocked;
 	// houseIndex -> rolling (frame, money) samples, for the growth trigger.
 	std::map<int, std::deque<std::pair<int, int>>> g_moneyHistory;
 	// houseIndex -> last frame this house committed an all-in rush.
@@ -3530,11 +3534,113 @@ void Teams::RushCheck(HouseClass* pHouse)
 		pDecap && pDecap->Type ? pDecap->Type->ID : "(roam)");
 }
 
+// Suspend every one of the house's factories that is NOT producing a building, so all
+// income funnels into the ConYard finishing the priority building; also halt repairs
+// (the other cash drain). Re-applied each pass while the lockdown holds.
+static void BudgetSeizeProduction(HouseClass* const pHouse)
+{
+	for (auto const pFact : FactoryClass::Array)
+	{
+		if (!pFact || pFact->Owner != pHouse) continue;
+		auto const pObj = pFact->Object;
+		// keep building production running (the ConYard builds the priority building);
+		// suspend infantry / vehicle / aircraft / navy production.
+		if (pObj && pObj->WhatAmI() == AbstractType::Building) continue;
+		pFact->Suspend(true);
+	}
+	// Block repair — the AI's repair handholder plus any active building repair, so the
+	// repair cash drain stops too (healing docks / the repair tool included: no building
+	// of this house stays in a repairing state while locked down).
+	pHouse->Repairing = false;
+	for (int i = 0; i < BuildingClass::Array.Count; ++i)
+	{
+		auto const pB = BuildingClass::Array.GetItem(i);
+		if (!pB || pB->Owner != pHouse) continue;
+		pB->IsBeingRepaired = false;
+		pB->NeedsRepairs = false;
+	}
+}
+
+// Undo a lockdown: resume every factory. Logs only on the actual transition.
+static void BudgetRelease(HouseClass* const pHouse)
+{
+	int const hIdx = pHouse->ArrayIndex;
+	auto const it = g_budgetLocked.find(hIdx);
+	if (it == g_budgetLocked.end() || !it->second) return;
+	for (auto const pFact : FactoryClass::Array)
+		if (pFact && pFact->Owner == pHouse) pFact->Unsuspend(true);
+	it->second = false;
+	if (DoctrineConfig::Instance.DebugTicks)
+		Debug::Log("[DoctrineExt] budget: house=%s#%d lockdown released.\n",
+			pHouse->get_ID(), hIdx);
+}
+
+// Forced budget (§ Rex 2026-10-30): an Easy AI that can't afford a pricey essential (a
+// FreeUnit-inflated refinery) sells its base to pay for it. Walk the priority tiers,
+// find the highest-priority building the house is MISSING and can actually build, make
+// sure it's planned, and — once the house holds that tier's Reserve in cash — seize all
+// non-building production and repair so the money finishes the building instead.
+void Teams::ForcedBudget(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.BudgetEnable || cfg.BudgetTiers.empty()) return;
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral() || pHouse->IsControlledByHuman())
+		return;                                           // AI houses only
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.BudgetInterval > 0 ? cfg.BudgetInterval : 15;
+	auto const it = g_budgetLastFire.find(hIdx);
+	if (it != g_budgetLastFire.end() && now - it->second < interval) return;
+	g_budgetLastFire[hIdx] = now;
+
+	// Highest-priority building the house is missing AND can build now (so we never lock
+	// down forever on something whose prerequisites aren't met — those earlier buildings
+	// get focused first, which is exactly the right order).
+	BuildingTypeClass* focus = nullptr; int focusTier = -1;
+	for (int t = 0; t < static_cast<int>(cfg.BudgetTiers.size()) && !focus; ++t)
+	{
+		for (auto const& id : cfg.BudgetTiers[t].Buildings)
+		{
+			auto const pBt = BuildingTypeClass::Find(id.c_str());
+			if (!pBt || !pHouse->InOwners(pBt)) continue;
+			if (pHouse->CountOwnedAndPresent(pBt) > 0) continue;   // already have one
+			if (!CanBuildStrict(pHouse, pBt)) continue;            // can't build it yet
+			focus = pBt; focusTier = t; break;
+		}
+	}
+
+	if (!focus) { BudgetRelease(pHouse); return; }        // every priority satisfied
+
+	// Make sure the AI actually plans it (no-op if a node for it is already pending).
+	QueueBaseNode(pHouse, focus, pHouse->GetBaseCenter());
+
+	int const reserve = cfg.BudgetTiers[focusTier].Reserve;
+	int const cash = static_cast<int>(pHouse->Available_Money());
+
+	if (cash >= reserve)
+	{
+		bool const wasLocked = g_budgetLocked[hIdx];
+		BudgetSeizeProduction(pHouse);
+		g_budgetLocked[hIdx] = true;
+		if (!wasLocked && cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] budget LOCKDOWN: house=%s#%d focus=%s tier=%d "
+				"cash=%d>=reserve=%d — seizing production until built.\n",
+				pHouse->get_ID(), hIdx, focus->ID, focusTier, cash, reserve);
+	}
+	else
+	{
+		BudgetRelease(pHouse);                            // below reserve: build normally
+	}
+}
+
 int Teams::ChaserGateMax() { return g_chaserGateMax; }
 
 void Teams::Reset()
 {
 	g_chaserGateMax = 0;
+	g_budgetLastFire.clear();
+	g_budgetLocked.clear();
 	g_warned.clear();
 	g_rushLastFire.clear();
 	g_powerTable.clear();

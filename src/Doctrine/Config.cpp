@@ -11,6 +11,7 @@
 #include <Utilities/Debug.h>
 #include <Utilities/Macro.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -125,6 +126,28 @@ void DoctrineConfig::EnsureParsed()
 	if (cfg.ReserveAmount > 0 || cfg.ReserveGrowth > 0)
 		Debug::Log("[DoctrineExt] [Doctrine.Reserve]: Amount=%d Growth=%d/%df Cooldown=%d Build=%s\n",
 			cfg.ReserveAmount, cfg.ReserveGrowth, cfg.ReserveGrowthWindow, cfg.ReserveCooldown, buf);
+	// [Doctrine.Budget] — PriorityBuildings[0..] + PriorityBuildings.Reserve[0..].
+	cfg.BudgetTiers.clear();
+	for (int i = 0; ; ++i)
+	{
+		char key[48];
+		std::snprintf(key, sizeof(key), "PriorityBuildings[%d]", i);
+		pINI->ReadString("Doctrine.Budget", key, "", buf, sizeof(buf));
+		if (!*buf) break;                         // first gap ends the list
+		DoctrineConfig::BudgetTier tier;
+		tier.Buildings = SplitList(buf);
+		if (tier.Buildings.empty()) continue;
+		std::snprintf(key, sizeof(key), "PriorityBuildings.Reserve[%d]", i);
+		tier.Reserve = pINI->ReadInteger("Doctrine.Budget", key, 0);
+		cfg.BudgetTiers.push_back(tier);
+	}
+	cfg.BudgetEnable = !cfg.BudgetTiers.empty()
+		&& pINI->ReadBool("Doctrine.Budget", "Enable", true);
+	cfg.BudgetInterval = pINI->ReadInteger("Doctrine.Budget", "Interval", cfg.BudgetInterval);
+	if (cfg.BudgetEnable)
+		Debug::Log("[DoctrineExt] [Doctrine.Budget]: %d priority tier(s), interval=%d.\n",
+			static_cast<int>(cfg.BudgetTiers.size()), cfg.BudgetInterval);
+
 	cfg.RushRatio = pINI->ReadDouble("Doctrine.General", "RushRatio", cfg.RushRatio);
 	cfg.RushSafety = pINI->ReadDouble("Doctrine.General", "RushSafety", cfg.RushSafety);
 	cfg.RushCooldown = pINI->ReadInteger("Doctrine.General", "RushCooldown", cfg.RushCooldown);

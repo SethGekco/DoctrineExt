@@ -139,6 +139,12 @@ namespace Teams
 	// (silent coordination). Self-throttled; opt-in (RushRatio=0 off).
 	void RushCheck(HouseClass* pHouse);
 
+	// Forced budget ([Doctrine.Budget]): make a cash-strapped AI finish its priority
+	// buildings (e.g. a FreeUnit-inflated refinery) instead of selling its base to
+	// afford them — once it holds a tier's Reserve, seize all non-building production
+	// and repair until the building is up. Self-throttled; opt-in (no tiers = off).
+	void ForcedBudget(HouseClass* pHouse);
+
 	// Latched max dedicated-catcher count any AI house has owned this scenario. The
 	// AITrigger gate reads it to release once the AI has built CrateChaserGateCount
 	// chasers (prioritizing chaser production until then). 0 until the squad runs.

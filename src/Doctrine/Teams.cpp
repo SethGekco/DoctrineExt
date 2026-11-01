@@ -4119,25 +4119,14 @@ namespace
 		}
 	}
 
-	// Resume every factory of the house (full release — used when income arrives).
-	void EconomyReleaseHold(HouseClass* const pHouse)
-	{
-		int const hIdx = pHouse->ArrayIndex;
-		auto const it = g_economyLocked.find(hIdx);
-		if (it == g_economyLocked.end() || !it->second) return;
-		for (auto const pFact : FactoryClass::Array)
-			if (pFact && pFact->Owner == pHouse) pFact->Unsuspend(true);
-		it->second = false;
-		if (DoctrineConfig::Instance.DebugTicks)
-			Debug::Log("[DoctrineExt] economy: house=%s#%d pauses lifted (income secured).\n",
-				pHouse->get_ID(), hIdx);
-	}
-
-	// Apply per-category pauses (only while the house has NO income). A factory is paused when
-	// its category threshold is >0 and cash is at/below it, UNLESS: emergency; the Object's ID
-	// is in that category's Exclude; or it's in BreakRules and the break condition holds. Income
-	// infrastructure is exempt (EcoCatFor null). Returns true if anything was paused this pass.
-	bool EconomyApplyPauses(HouseClass* const pHouse, int const cash, bool const emergency)
+	// Apply per-category pauses. Threshold semantics: 0 = never pause; -1 (any negative) = ALWAYS
+	// halt that category (debug: production never turns on, ignoring income AND emergency); >0 =
+	// pause while the house has NO income and cash is at/below it (lifted by an emergency or once
+	// income exists). Always exempt: income infrastructure (EcoCatFor null), an Object in the
+	// category's Exclude, or in BreakRules while the break condition holds. Returns true if
+	// anything was paused this pass. Runs regardless of income so a -1 halt keeps applying.
+	bool EconomyApplyPauses(HouseClass* const pHouse, int const cash, bool const hasIncome,
+		bool const emergency)
 	{
 		auto const& cfg = DoctrineConfig::Instance;
 		bool const breakCond = cfg.EconomyBreakConditionNeutral.empty()
@@ -4149,10 +4138,15 @@ namespace
 			auto const pObj = pFact->Object;
 			if (!pObj) continue;                              // idle — leave free
 			bool pause = false;
-			if (!emergency)
+			auto const pCat = EcoCatFor(pObj);
+			if (pCat)
 			{
-				auto const pCat = EcoCatFor(pObj);
-				if (pCat && pCat->Threshold > 0 && cash <= pCat->Threshold)
+				int const thr = pCat->Threshold;
+				bool want;
+				if (thr == 0) want = false;                   // never halt
+				else if (thr < 0) want = true;                // -1: always halt (debug); ignores income/emergency
+				else want = (!hasIncome && !emergency && cash <= thr); // budget: halt while broke + no income
+				if (want)
 				{
 					auto const pType = pObj->GetTechnoType();
 					const char* const id = pType ? pType->ID : "";
@@ -4175,9 +4169,6 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
 		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
 
-	// Income already secured? Opening done — lift all pauses so the AI plays normally.
-	if (HasIncome(pHouse)) { EconomyReleaseHold(pHouse); return; }
-
 	int const now = Unsorted::CurrentFrame;
 	int const hIdx = pHouse->ArrayIndex;
 	int const interval = cfg.EconomyInterval > 0 ? cfg.EconomyInterval : 15;
@@ -4187,17 +4178,19 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 
 	bool const honorPrereq = cfg.HonorPrereqForEconomy();
 	int const cash = static_cast<int>(pHouse->Available_Money());
+	bool const hasIncome = HasIncome(pHouse);
 	bool const emergency = EnemyCombatNear(pHouse, cfg.EconomyEmergencyRadius);
 
-	// What to BUILD toward income. If it owns an income structure but still has no income, it's
-	// the "refinery but no miner" case — don't queue another refinery; a miner (never paused) is
-	// what then builds. Otherwise pick the opening: capture a near derrick, or force a refinery
-	// (barracks first for rush safety when the whole opening is affordable).
+	// What to BUILD toward income — only while we don't have it yet. If it owns an income
+	// structure but still has no income, it's the "refinery but no miner" case — don't queue
+	// another refinery; a miner (never paused) is what then builds. Otherwise pick the opening:
+	// capture a near derrick, or force a refinery (barracks first for rush safety when affordable).
+	// (Pause enforcement below runs regardless of income, so a -1 debug halt keeps applying.)
 	bool const derrickNear = cfg.EconomyCaptureForIncome && cfg.CaptureEnable
 		&& NeutralCapturableNear(pHouse, cfg.EconomyDerrickTargets, cfg.EconomyRadius);
-	const char* branch = "wait-miner";
+	const char* branch = hasIncome ? "has-income" : "wait-miner";
 
-	if (!OwnsIncomeStructure(pHouse))
+	if (!hasIncome && !OwnsIncomeStructure(pHouse))
 	{
 		if (derrickNear)
 		{
@@ -4237,13 +4230,13 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 	// early army. Emergency (enemy near) or income (top of fn) lifts it. Safe to hold: the
 	// firesale is the modpack AI going broke, NOT our production hold (proven with DoctrineExt
 	// removed entirely).
-	bool const anyPaused = EconomyApplyPauses(pHouse, cash, emergency);
+	bool const anyPaused = EconomyApplyPauses(pHouse, cash, hasIncome, emergency);
 	g_economyLocked[hIdx] = anyPaused;
 
 	if (cfg.DebugTicks)
-		Debug::Log("[DoctrineExt] economy: house=%s#%d branch=%s cash=%d paused=%d emergency=%d "
-			"ownsBarracks=%d ownsIncomeStruct=%d.\n", pHouse->get_ID(), hIdx, branch, cash,
-			anyPaused, emergency, OwnsBarracks(pHouse), OwnsIncomeStructure(pHouse));
+		Debug::Log("[DoctrineExt] economy: house=%s#%d branch=%s cash=%d hasIncome=%d paused=%d "
+			"emergency=%d ownsBarracks=%d ownsIncomeStruct=%d.\n", pHouse->get_ID(), hIdx, branch,
+			cash, hasIncome, anyPaused, emergency, OwnsBarracks(pHouse), OwnsIncomeStructure(pHouse));
 }
 
 void Teams::PreventFiresale(HouseClass* pHouse)

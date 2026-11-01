@@ -360,10 +360,12 @@ public:
 	// miner — never paused — is what then gets built, not a second refinery).
 	bool EconomyIncomeRequiresMiner = true;         // IncomeRequiresMiner
 	std::vector<std::string> EconomyMinerUnits;     // MinerUnits — empty = auto (ResourceGatherer)
-	// Per-category production pause. Threshold: pause while the house has NO income and cash <=
-	// this (0 = never pause). Exclude: IDs never paused (unconditional). BreakRules: IDs allowed
-	// through the pause WHEN the break condition holds. Income infrastructure (refineries, cash
-	// buildings, miners) is ALWAYS exempt so the AI can always build its economy.
+	// Per-category production pause. Threshold: >0 = pause while the house has NO income and cash
+	// <= this; 0 = never pause; -1 (any negative) = ALWAYS halt this category — a debug switch to
+	// keep that production permanently off, ignoring income and emergencies. Exclude: IDs never
+	// paused (unconditional). BreakRules: IDs allowed through the pause WHEN the break condition
+	// holds. Income infrastructure (refineries, cash buildings, miners) is ALWAYS exempt so the
+	// AI can always build its economy even under a -1 halt.
 	struct EconomyPauseCat
 	{
 		int Threshold = 0;

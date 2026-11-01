@@ -294,6 +294,8 @@ void DoctrineConfig::EnsureParsed()
 	pINI->ReadString("Doctrine.Economy", "BreakProductionRulesCondition.NeutralBuildings", "", buf, sizeof(buf));
 	cfg.EconomyBreakConditionNeutral = SplitList(buf);
 	cfg.EconomyEmergencyRadius = pINI->ReadInteger("Doctrine.Economy", "EmergencyRadius", cfg.EconomyEmergencyRadius);
+	cfg.EconomyPreventSelling = pINI->ReadBool("Doctrine.Economy", "PreventSelling", cfg.EconomyPreventSelling);
+	cfg.EconomyPreventSellingAlways = pINI->ReadBool("Doctrine.Economy", "PreventSellingAlways", cfg.EconomyPreventSellingAlways);
 	cfg.EconomyHonorPrereq = pINI->ReadInteger("Doctrine.Economy", "HonorPrereq", cfg.EconomyHonorPrereq);
 	if (cfg.EconomyEnable)
 		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "

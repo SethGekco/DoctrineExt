@@ -117,6 +117,11 @@ namespace Teams
 	// Self-throttled; opt-in (EconomyEnable). AI houses only.
 	void EconomyOpening(HouseClass* pHouse);
 
+	// Prevent the broke-window firesale (§10k): set AI_Sellable=false on the AI's own buildings
+	// so it never decides to sell its base while securing income (with a ForceMission(Guard)
+	// fallback if one still starts). Run every tick (unthrottled, cheap). AI houses only.
+	void PreventFiresale(HouseClass* pHouse);
+
 	// Air-defense (AA P1): keep own anti-air firepower >= enemy air DPS x ratio,
 	// building AntiAir arsenal units when short (scales as the enemy adds air), and
 	// screen AA forward of base split across incoming-air bearings.

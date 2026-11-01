@@ -4246,6 +4246,29 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 			anyPaused, emergency, OwnsBarracks(pHouse), OwnsIncomeStructure(pHouse));
 }
 
+void Teams::PreventFiresale(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.EconomyEnable || !cfg.EconomyPreventSelling) return;
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
+		|| pHouse->IsControlledByHuman()) return;                         // AI houses only; human untouched
+	if (!cfg.EconomyPreventSellingAlways && HasIncome(pHouse)) return;    // only the vulnerable window
+
+	for (auto const pBld : pHouse->Buildings)
+	{
+		if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
+		pBld->AI_Sellable = false;                                        // block the decision (clean, no mid-sale)
+		if (pBld->CurrentMission == Mission::Selling || pBld->QueuedMission == Mission::Selling)
+		{
+			pBld->ForceMission(Mission::Guard);                           // guaranteed fallback veto
+			if (cfg.DebugTicks)
+				Debug::Log("[DoctrineExt] economy: house=%s#%d VETOED sale of %s "
+					"(AI_Sellable didn't block it).\n", pHouse->get_ID(),
+					pHouse->ArrayIndex, pBld->Type->ID);
+		}
+	}
+}
+
 int Teams::ChaserGateMax() { return g_chaserGateMax; }
 
 void Teams::Reset()

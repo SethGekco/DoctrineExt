@@ -382,6 +382,15 @@ public:
 	// CAOILD worth sending engineers for). Empty = the BreakRules apply unconditionally.
 	std::vector<std::string> EconomyBreakConditionNeutral;
 	int EconomyEmergencyRadius = 12; // EmergencyRadius — enemy combat unit within = lift pauses
+	// Prevent the broke-window firesale. Building a refinery necessarily drains the AI into a
+	// low-cash window; the modpack AI firesales its base there, BEFORE the refinery's income
+	// recovers it (seen selling at ~$448 the frame before income would have hit $3400). This
+	// blocks that sale at the source — sets AI_Sellable=false on the AI's own buildings (the AI
+	// never decides to sell them, so no mid-sale animation) — with a ForceMission(Guard) veto
+	// as a guaranteed fallback if one still enters Selling. AI houses only; the human is
+	// untouched. By default only while the house has no income (the vulnerable window).
+	bool EconomyPreventSelling = true;       // PreventSelling
+	bool EconomyPreventSellingAlways = false;// PreventSellingAlways — else only while no income
 	int EconomyHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEconomy() const
 		{ return EconomyHonorPrereq < 0 ? HonorPrerequisites : (EconomyHonorPrereq != 0); }

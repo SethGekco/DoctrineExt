@@ -158,6 +158,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// production until income is up. Runs before capture so the barracks is planned
 	// first. Self-throttled + opt-in; releases once the house owns an income building.
 	Teams::EconomyOpening(pHouse);
+	// Block the broke-window firesale every tick (unthrottled, cheap): the modpack AI sells its
+	// base at low cash before the new refinery's income recovers it — AI_Sellable=false stops
+	// that decision, with a ForceMission(Guard) fallback. AI houses only.
+	Teams::PreventFiresale(pHouse);
 
 	// Capture doctrine (§10j): grab neutral/enemy tech buildings (oil derricks etc.)
 	// with engineers, nearest-first. Additive production only — can't destabilise the

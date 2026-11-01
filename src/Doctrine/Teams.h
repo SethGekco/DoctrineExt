@@ -99,6 +99,17 @@ namespace Teams
 	void CrateWaterSquad(HouseClass* pHouse);
 	void SteerCrateWaterSquad(HouseClass* pHouse);
 
+	// Capture doctrine (§10j): grab neutral/enemy tech buildings (oil derricks etc.)
+	// with engineers, nearest base-first. Additive production only (builds engineers
+	// via the taskforce path, steers our own units) — never seizes the AI's own
+	// production, so it can't destabilise the base. Self-throttled; opt-in (Enable).
+	void CaptureDoctrine(HouseClass* pHouse);
+
+	// Re-issue each capture engineer's Capture order onto its nearest target EVERY
+	// base tick (a once-per-pass order gets countermanded by the base AI before the
+	// engineer arrives), like SteerCrateSquad. Cheap: small building scan, no build.
+	void SteerCapture(HouseClass* pHouse);
+
 	// Air-defense (AA P1): keep own anti-air firepower >= enemy air DPS x ratio,
 	// building AntiAir arsenal units when short (scales as the enemy adds air), and
 	// screen AA forward of base split across incoming-air bearings.

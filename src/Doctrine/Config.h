@@ -305,6 +305,25 @@ public:
 	int MaxProducePerDispatch = 2; // cap on units queued per dispatch, so
 	                             // doctrine never floods the AI's economy
 
+	// ─── Capture doctrine ([Doctrine.Capture], §10j) ───────────────────────────
+	// Drive the AI to capture neutral/enemy tech buildings (oil derricks etc.) with
+	// engineers, NEAREST base-first. Purely ADDITIVE: it builds engineers through the
+	// proven taskforce path and steers our own units — it never seizes the AI's own
+	// production or force-missions its buildings, so (unlike the forced budget) it
+	// can't destabilise the base into sell/relocate.
+	bool CaptureEnable = false;      // opt-in master switch
+	std::vector<std::string> CaptureTargets; // building IDs to grab (CAOILD, ...);
+	                                 // empty = ANY Capturable neutral/enemy building
+	int CaptureInterval = 90;        // frames between capture passes per house
+	int CaptureMaxTeams = 2;         // concurrent targets (engineers committed at once)
+	int CaptureRadius = 0;           // max cells from base to consider (0 = whole map)
+	int CaptureEngineerMax = 2;      // engineers queued per pass toward targets
+	bool CaptureEnemyOwned = false;  // also capture ENEMY-owned capturables (not just
+	                                 // neutral tech) when an engineer can reach them
+	int CaptureHonorPrereq = -1;     // -1 inherit HonorPrerequisites, 0 ignore, 1 obey
+	bool HonorPrereqForCapture() const
+		{ return CaptureHonorPrereq < 0 ? HonorPrerequisites : (CaptureHonorPrereq != 0); }
+
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;
 

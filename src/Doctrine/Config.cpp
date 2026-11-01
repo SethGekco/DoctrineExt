@@ -238,6 +238,21 @@ void DoctrineConfig::EnsureParsed()
 	}
 	pINI->ReadString("Doctrine.General", "CrateChaseExclude", "", buf, sizeof(buf));
 	cfg.CrateChaseExclude = SplitList(buf);
+	// ─── [Doctrine.Capture] — capture neutral/enemy tech buildings w/ engineers ──
+	cfg.CaptureEnable = pINI->ReadBool("Doctrine.Capture", "Enable", cfg.CaptureEnable);
+	pINI->ReadString("Doctrine.Capture", "Targets", "", buf, sizeof(buf));
+	cfg.CaptureTargets = SplitList(buf);
+	cfg.CaptureInterval = pINI->ReadInteger("Doctrine.Capture", "Interval", cfg.CaptureInterval);
+	cfg.CaptureMaxTeams = pINI->ReadInteger("Doctrine.Capture", "MaxTeams", cfg.CaptureMaxTeams);
+	cfg.CaptureRadius = pINI->ReadInteger("Doctrine.Capture", "Radius", cfg.CaptureRadius);
+	cfg.CaptureEngineerMax = pINI->ReadInteger("Doctrine.Capture", "EngineerMax", cfg.CaptureEngineerMax);
+	cfg.CaptureEnemyOwned = pINI->ReadBool("Doctrine.Capture", "EnemyOwned", cfg.CaptureEnemyOwned);
+	cfg.CaptureHonorPrereq = pINI->ReadInteger("Doctrine.Capture", "HonorPrereq", cfg.CaptureHonorPrereq);
+	if (cfg.CaptureEnable)
+		Debug::Log("[DoctrineExt] [Doctrine.Capture]: Enable=1 Targets=%u (empty=any) Interval=%d "
+			"MaxTeams=%d Radius=%d EngineerMax=%d EnemyOwned=%d HonorPrereq=%d\n",
+			static_cast<unsigned>(cfg.CaptureTargets.size()), cfg.CaptureInterval, cfg.CaptureMaxTeams,
+			cfg.CaptureRadius, cfg.CaptureEngineerMax, cfg.CaptureEnemyOwned, cfg.CaptureHonorPrereq);
 	cfg.AITriggerDelay = pINI->ReadInteger("Doctrine.General", "AITriggerDelay", cfg.AITriggerDelay);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);

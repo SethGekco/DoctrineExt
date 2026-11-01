@@ -153,6 +153,12 @@ void Engine::TickHouse(HouseClass* pHouse)
 			Teams::SteerCrate(pHouse);
 	}
 
+	// Capture doctrine (§10j): grab neutral/enemy tech buildings (oil derricks etc.)
+	// with engineers, nearest-first. Additive production only — can't destabilise the
+	// base. Pass throttled; steering every tick so the capture order sticks. Opt-in.
+	Teams::CaptureDoctrine(pHouse);
+	Teams::SteerCapture(pHouse);
+
 	// Commander takeover: if the base AI sits idle (its own aimd/AITrigger teams
 	// never attack) for CommanderIdleTime, DoctrineExt seizes command and drives
 	// the idle army into an assault. Evaluation throttled; steering every tick so

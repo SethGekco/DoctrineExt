@@ -2022,7 +2022,11 @@ namespace
 			if (fit != fails.end() && fit->second >= giveUp) continue; // proven unbuildable
 			int const tier = pTy->Teleporter ? 3
 				: (pTy->Speed >= cfg.CrateCatcherFastSpeed ? 2 : 1);
-			if (tier > outTier) { outTier = tier; best = pTy; }
+			// Prefer the better tier; among equal tiers prefer the actually-FASTEST unit
+			// (Rex: "when more than one is buildable, pick the fastest"). The list stays
+			// a progression — early only a dog is buildable, a teleporter wins once it is.
+			if (tier > outTier || (tier == outTier && best && pTy->Speed > best->Speed))
+				{ outTier = tier; best = pTy; }
 		}
 		return best;
 	}
@@ -3679,6 +3683,244 @@ void Teams::ForcedBudget(HouseClass* pHouse)
 	}
 }
 
+// ─── Capture doctrine (§10j) ─────────────────────────────────────────────────
+namespace
+{
+	std::map<int, int> g_captureLastFire;                                // house -> last pass frame
+	// Per-house capture-target progress + temporary blacklist for UNREACHABLE targets
+	// (e.g. an island derrick), keyed by the target cell (buildings don't move). Mirrors
+	// the crate squad's guard so an engineer never freezes on an unreachable building.
+	std::map<int, std::map<int, std::pair<int, int>>> g_captureProgress; // cellKey -> {lastDist, stuck}
+	std::map<int, std::map<int, int>> g_captureBlacklist;                // cellKey -> expire frame
+
+	int CaptureCellKey(CellStruct const& c)
+		{ return (static_cast<int>(c.X) << 16) | (static_cast<int>(c.Y) & 0xFFFF); }
+
+	// Cheapest buildable, faction-correct engineer the house can field. Engineers are the
+	// only unit that captures a building; honor prerequisites (barracks) per the toggle so
+	// we never force one the house has no legitimate way to build.
+	TechnoTypeClass* BestEngineer(HouseClass* const pHouse, bool const honorPrereq)
+	{
+		TechnoTypeClass* best = nullptr; int bestCost = 1 << 30;
+		for (auto const pIt : InfantryTypeClass::Array)
+		{
+			if (!pIt || !pIt->Engineer) continue;
+			if (!pHouse->InOwners(pIt)) continue;                        // faction-correct
+			if (!CanBuildStrict(pHouse, pIt, honorPrereq)) continue;
+			if (pIt->Cost < bestCost) { bestCost = pIt->Cost; best = pIt; }
+		}
+		return best;
+	}
+
+	// Does this building type match the modder's capture list? Empty list = any Capturable
+	// building qualifies (so CAOILD and every tech structure are fair game).
+	bool WantsCapture(BuildingTypeClass* const pBt)
+	{
+		if (!pBt || !pBt->Capturable) return false;
+		auto const& list = DoctrineConfig::Instance.CaptureTargets;
+		if (list.empty()) return true;
+		for (auto const& id : list)
+			if (id == pBt->ID) return true;
+		return false;
+	}
+
+	// Capturable buildings this house should grab, NEAREST base-center first. Skips
+	// own/allied owners, (optionally) enemy-owned, out-of-range, and blacklisted ones.
+	std::vector<std::pair<BuildingClass*, double>> FindCaptureTargets(HouseClass* const pHouse)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		int const now = Unsorted::CurrentFrame;
+		int const hIdx = pHouse->ArrayIndex;
+		auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+		double const maxD = cfg.CaptureRadius > 0 ? static_cast<double>(cfg.CaptureRadius) * 256.0 : 0.0;
+		auto const& bl = g_captureBlacklist[hIdx];
+		std::vector<std::pair<BuildingClass*, double>> out;
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0) continue;
+			if (!WantsCapture(pB->Type)) continue;
+			auto const pO = pB->Owner;
+			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;    // ours / an ally's
+			if (!pO->IsNeutral() && !cfg.CaptureEnemyOwned) continue;         // enemy-owned off
+			auto const c = pB->GetCoords();
+			double const d = std::sqrt(static_cast<double>(c.X - base.X) * (c.X - base.X)
+				+ static_cast<double>(c.Y - base.Y) * (c.Y - base.Y));
+			if (maxD > 0.0 && d > maxD) continue;
+			auto const blit = bl.find(CaptureCellKey(pB->GetMapCoords()));
+			if (blit != bl.end() && blit->second > now) continue;            // temporarily given up
+			out.push_back({ pB, d });
+		}
+		std::sort(out.begin(), out.end(),
+			[](std::pair<BuildingClass*, double> const& a,
+			   std::pair<BuildingClass*, double> const& b) { return a.second < b.second; });
+		return out;
+	}
+
+	// Live engineers currently on a capture team.
+	int EngineersOnTeam(TeamClass* const pTeam)
+	{
+		int n = 0;
+		for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+			if (!pF->InLimbo && pF->Health > 0) ++n;
+		return n;
+	}
+
+	// Existing capture team instance for the house, or null.
+	TeamClass* FindCaptureTeam(int const hIdx)
+	{
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DCAP%dTM", hIdx);
+		auto const pTT = TeamTypeClass::Find(id);
+		return (pTT && pTT->cntInstances > 0) ? pTT->FindFirstInstance() : nullptr;
+	}
+}
+
+void Teams::CaptureDoctrine(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.CaptureEnable) return;                                       // opt-in
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
+		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.CaptureInterval > 0 ? cfg.CaptureInterval : 90;
+	auto const it = g_captureLastFire.find(hIdx);
+	if (it != g_captureLastFire.end() && now - it->second < interval) return;
+	g_captureLastFire[hIdx] = now;
+
+	auto const targets = FindCaptureTargets(pHouse);
+	if (targets.empty()) return;                                          // nothing to grab
+
+	// One engineer per target, capped by MaxTeams.
+	int const cap = cfg.CaptureMaxTeams > 0 ? cfg.CaptureMaxTeams : 2;
+	int desired = static_cast<int>(targets.size());
+	if (desired > cap) desired = cap;
+
+	// How many engineers are already committed (so we only build the shortfall).
+	auto const pPrev = FindCaptureTeam(hIdx);
+	int const have = pPrev ? EngineersOnTeam(pPrev) : 0;
+
+	// The only unit that captures. Honor prereqs (needs a barracks) per the toggle.
+	TechnoTypeClass* const pEng = BestEngineer(pHouse, cfg.HonorPrereqForCapture());
+
+	int const perPass = cfg.CaptureEngineerMax > 0 ? cfg.CaptureEngineerMax : 2;
+	int want = desired - have;                                            // engineers short
+	if (want < 0) want = 0;
+	if (want > perPass) want = perPass;
+
+	// Create/refresh the capture team. When a buildable engineer exists and we're short,
+	// the taskforce carries it so the AI PRODUCES `want` (the proven build path for an AI
+	// house); otherwise null — recruit-only, grabbing any idle engineer it already owns.
+	auto const pTeam = EnsureSquadTeam(pHouse, desired,
+		(pEng && want > 0) ? pEng : nullptr, "DCAP", want);
+	if (!pTeam) return;
+
+	// Recruit any idle engineer the house already owns (diversion), so a spare engineer
+	// goes to work instead of sitting. Liberate teamed ones (AI teams own ~all infantry).
+	for (int i = 0; i < TechnoClass::Array.Count && EngineersOnTeam(pTeam) < desired; ++i)
+	{
+		auto const pT = TechnoClass::Array.GetItem(i);
+		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+		if (pT->WhatAmI() != AbstractType::Infantry) continue;
+		auto const pType = pT->GetTechnoType();
+		if (!pType || pType->WhatAmI() != AbstractType::InfantryType) continue;
+		if (!static_cast<InfantryTypeClass*>(pType)->Engineer) continue;
+		auto const pFoot = static_cast<FootClass*>(pT);
+		if (pFoot->Team == pTeam) continue;                              // already ours
+		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot);
+		if (!pTeam->AddMember(pFoot, true)) break;
+		pFoot->ShouldGarrisonStructure = false;                         // keep it on task
+		pFoot->ShouldEnterOccupiable = false;
+	}
+
+	// Unreachable guard (once per pass): for each engineer, track progress toward its
+	// nearest target; if it hasn't closed the gap over several passes, blacklist that
+	// building briefly so the engineer is freed for a reachable one instead of freezing.
+	auto& prog = g_captureProgress[hIdx];
+	int const giveUp = cfg.CrateGiveUpPasses > 0 ? cfg.CrateGiveUpPasses : 4;
+	std::vector<bool> taken(targets.size(), false);
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+	{
+		if (pF->InLimbo || pF->Health <= 0) continue;
+		auto const fc = pF->GetCoords();
+		int best = -1; double bestD = 1e18;
+		for (int k = 0; k < static_cast<int>(targets.size()); ++k)
+		{
+			if (taken[k]) continue;
+			auto const c = targets[k].first->GetCoords();
+			double const d = std::sqrt(static_cast<double>(c.X - fc.X) * (c.X - fc.X)
+				+ static_cast<double>(c.Y - fc.Y) * (c.Y - fc.Y));
+			if (d < bestD) { bestD = d; best = k; }
+		}
+		if (best < 0) break;                                            // more engineers than targets
+		taken[best] = true;
+		if (bestD <= 2.0 * 256.0) continue;                            // within ~2 cells: mid-capture
+		int const key = CaptureCellKey(targets[best].first->GetMapCoords());
+		auto const pit = prog.find(key);
+		int const stuck = (pit != prog.end() && bestD >= pit->second.first - 256.0)
+			? pit->second.second + 1 : 0;
+		if (stuck >= giveUp)
+		{
+			g_captureBlacklist[hIdx][key] = now
+				+ (cfg.CrateBlacklistTime > 0 ? cfg.CrateBlacklistTime : 1800);
+			prog.erase(key);
+			if (cfg.DebugTicks)
+				Debug::Log("[DoctrineExt] capture unreachable: house=%s#%d gave up at %.1f "
+					"cells, blacklisted %s.\n", pHouse->get_ID(), hIdx, bestD / 256.0,
+					targets[best].first->Type->ID);
+		}
+		else prog[key] = { static_cast<int>(bestD), stuck };
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] capture: house=%s#%d targets=%d desired=%d have=%d "
+			"eng=%s build=%d nearest=%s@%.1f.\n",
+			pHouse->get_ID(), hIdx, static_cast<int>(targets.size()), desired,
+			EngineersOnTeam(pTeam), pEng ? pEng->get_ID() : "(none)", want,
+			targets[0].first->Type->ID, targets[0].second / 256.0);
+}
+
+void Teams::SteerCapture(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.CaptureEnable) return;
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
+		|| pHouse->IsControlledByHuman()) return;
+
+	auto const pTeam = FindCaptureTeam(pHouse->ArrayIndex);
+	if (!pTeam || !pTeam->FirstUnit) return;
+
+	auto const targets = FindCaptureTargets(pHouse);
+	if (targets.empty()) return;
+
+	// Assign each engineer to its nearest un-taken target and (re)issue the capture
+	// order every tick, so the base AI can't countermand it before the engineer lands.
+	std::vector<bool> taken(targets.size(), false);
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+	{
+		if (pF->InLimbo || pF->Health <= 0) continue;
+		auto const fc = pF->GetCoords();
+		int best = -1; double bestD = 1e18;
+		for (int k = 0; k < static_cast<int>(targets.size()); ++k)
+		{
+			if (taken[k]) continue;
+			auto const c = targets[k].first->GetCoords();
+			double const d = std::sqrt(static_cast<double>(c.X - fc.X) * (c.X - fc.X)
+				+ static_cast<double>(c.Y - fc.Y) * (c.Y - fc.Y));
+			if (d < bestD) { bestD = d; best = k; }
+		}
+		if (best < 0) break;                                            // more engineers than targets
+		taken[best] = true;
+		auto const pB = targets[best].first;
+		// Canonical engineer-capture order: target the building + Mission::Capture (the
+		// mission handles the approach). Re-issued each tick so the base AI can't steal it.
+		pF->SetTarget(pB);
+		pF->QueueMission(Mission::Capture, false);
+	}
+}
+
 int Teams::ChaserGateMax() { return g_chaserGateMax; }
 
 void Teams::Reset()
@@ -3716,4 +3958,7 @@ void Teams::Reset()
 	g_garrisonLastFire.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();
+	g_captureLastFire.clear();
+	g_captureProgress.clear();
+	g_captureBlacklist.clear();
 }

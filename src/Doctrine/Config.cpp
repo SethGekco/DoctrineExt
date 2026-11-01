@@ -253,6 +253,15 @@ void DoctrineConfig::EnsureParsed()
 			"MaxTeams=%d Radius=%d EngineerMax=%d EnemyOwned=%d HonorPrereq=%d\n",
 			static_cast<unsigned>(cfg.CaptureTargets.size()), cfg.CaptureInterval, cfg.CaptureMaxTeams,
 			cfg.CaptureRadius, cfg.CaptureEngineerMax, cfg.CaptureEnemyOwned, cfg.CaptureHonorPrereq);
+	// ─── [Doctrine.Economy] — broke-proof opening (derrick-capture or refinery first) ──
+	cfg.EconomyEnable = pINI->ReadBool("Doctrine.Economy", "Enable", cfg.EconomyEnable);
+	cfg.EconomyRadius = pINI->ReadInteger("Doctrine.Economy", "Radius", cfg.EconomyRadius);
+	cfg.EconomyInterval = pINI->ReadInteger("Doctrine.Economy", "Interval", cfg.EconomyInterval);
+	cfg.EconomyHold = pINI->ReadBool("Doctrine.Economy", "Hold", cfg.EconomyHold);
+	cfg.EconomyHonorPrereq = pINI->ReadInteger("Doctrine.Economy", "HonorPrereq", cfg.EconomyHonorPrereq);
+	if (cfg.EconomyEnable)
+		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Radius=%d Interval=%d Hold=%d HonorPrereq=%d\n",
+			cfg.EconomyRadius, cfg.EconomyInterval, cfg.EconomyHold, cfg.EconomyHonorPrereq);
 	cfg.AITriggerDelay = pINI->ReadInteger("Doctrine.General", "AITriggerDelay", cfg.AITriggerDelay);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);

@@ -324,6 +324,24 @@ public:
 	bool HonorPrereqForCapture() const
 		{ return CaptureHonorPrereq < 0 ? HonorPrerequisites : (CaptureHonorPrereq != 0); }
 
+	// ─── Economy opening ([Doctrine.Economy], §10k) ─────────────────────────────
+	// The budgeting Rex asked for: a broke-proof opening. This modpack's Easy AI has
+	// $7500 at start — enough for a refinery — but spends it on power + barracks + GIs,
+	// never builds income, goes bankrupt and firesales its base to death (reproduced
+	// with DoctrineExt entirely OUT, so it's the modpack AI, not us). The opening makes
+	// the AI secure income FIRST: if a capturable oil derrick (ProduceCashAmount) is
+	// near, build a barracks and let the capture doctrine grab it (cheap passive cash);
+	// otherwise force a refinery. Either way it HOLDS offensive production so the cash
+	// funds income, not an early army. Releases the moment income exists. AI houses only.
+	bool EconomyEnable = false;      // opt-in master switch
+	int EconomyRadius = 20;          // cells scanned around base for a capturable derrick
+	int EconomyInterval = 15;        // frames between opening passes (responsive early game)
+	bool EconomyHold = true;         // suspend offensive (vehicle/air) production to funnel
+	                                 // cash into income; infantry + ConYard keep building
+	int EconomyHonorPrereq = -1;     // -1 inherit HonorPrerequisites, 0 ignore, 1 obey
+	bool HonorPrereqForEconomy() const
+		{ return EconomyHonorPrereq < 0 ? HonorPrerequisites : (EconomyHonorPrereq != 0); }
+
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;
 

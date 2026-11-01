@@ -110,6 +110,13 @@ namespace Teams
 	// engineer arrives), like SteerCrateSquad. Cheap: small building scan, no build.
 	void SteerCapture(HouseClass* pHouse);
 
+	// Economy opening (§10k): make a broke-prone AI secure income FIRST with its starting
+	// cash — if a capturable oil derrick is near, build a barracks and let CaptureDoctrine
+	// grab it; otherwise force a refinery. Holds offensive production so the cash funds
+	// income, not an early army; releases the instant the house owns an income building.
+	// Self-throttled; opt-in (EconomyEnable). AI houses only.
+	void EconomyOpening(HouseClass* pHouse);
+
 	// Air-defense (AA P1): keep own anti-air firepower >= enemy air DPS x ratio,
 	// building AntiAir arsenal units when short (scales as the enemy adds air), and
 	// screen AA forward of base split across incoming-air bearings.

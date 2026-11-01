@@ -3921,6 +3921,163 @@ void Teams::SteerCapture(HouseClass* pHouse)
 	}
 }
 
+// ─── Economy opening (§10k) ──────────────────────────────────────────────────
+namespace
+{
+	std::map<int, int> g_economyLastFire;                        // house -> last pass frame
+	std::map<int, bool> g_economyLocked;                         // house -> offensive prod held
+
+	// Does the house already own an income building — a refinery or a cash-producer
+	// (a captured oil derrick: ProduceCashAmount>0)? Once true, the opening is done.
+	bool HasIncomeBuilding(HouseClass* const pHouse)
+	{
+		for (auto const pBld : pHouse->Buildings)
+		{
+			if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
+			if (pBld->Type->Refinery || pBld->Type->ProduceCashAmount > 0) return true;
+		}
+		return false;
+	}
+
+	// Is there a capturable cash structure (oil derrick) within `radiusCells` of base,
+	// not owned by us or an ally? This is the "scan around myself for a derrick" test.
+	bool CapturableDerrickNear(HouseClass* const pHouse, int const radiusCells)
+	{
+		auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+		double const maxD = static_cast<double>(radiusCells > 0 ? radiusCells : 20) * 256.0;
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0) continue;
+			if (!pB->Type->Capturable || pB->Type->ProduceCashAmount <= 0) continue; // cash struct only
+			auto const pO = pB->Owner;
+			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;           // ours / an ally's
+			auto const c = pB->GetCoords();
+			double const d = std::sqrt(static_cast<double>(c.X - base.X) * (c.X - base.X)
+				+ static_cast<double>(c.Y - base.Y) * (c.Y - base.Y));
+			if (d <= maxD) return true;
+		}
+		return false;
+	}
+
+	// Cheapest buildable, faction-correct building of a kind: Refinery, or barracks
+	// (Factory produces infantry). Honors prereqs per the toggle.
+	BuildingTypeClass* BestEconomyBuilding(HouseClass* const pHouse, bool const wantRefinery,
+		bool const honorPrereq)
+	{
+		BuildingTypeClass* best = nullptr; int bestCost = 1 << 30;
+		for (auto const pBt : BuildingTypeClass::Array)
+		{
+			if (!pBt) continue;
+			bool const match = wantRefinery
+				? pBt->Refinery
+				: (pBt->Factory == AbstractType::InfantryType);
+			if (!match) continue;
+			if (!pHouse->InOwners(pBt)) continue;
+			if (!CanBuildStrict(pHouse, pBt, honorPrereq)) continue;
+			if (pBt->Cost < bestCost) { bestCost = pBt->Cost; best = pBt; }
+		}
+		return best;
+	}
+
+	// Does the house own a barracks (infantry factory) already?
+	bool OwnsBarracks(HouseClass* const pHouse)
+	{
+		for (auto const pBld : pHouse->Buildings)
+		{
+			if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
+			if (pBld->Type->Factory == AbstractType::InfantryType) return true;
+		}
+		return false;
+	}
+
+	// Release an economy hold: resume every factory, clear the lock (logs on transition).
+	void EconomyReleaseHold(HouseClass* const pHouse)
+	{
+		int const hIdx = pHouse->ArrayIndex;
+		auto const it = g_economyLocked.find(hIdx);
+		if (it == g_economyLocked.end() || !it->second) return;
+		for (auto const pFact : FactoryClass::Array)
+			if (pFact && pFact->Owner == pHouse) pFact->Unsuspend(true);
+		it->second = false;
+		if (DoctrineConfig::Instance.DebugTicks)
+			Debug::Log("[DoctrineExt] economy: house=%s#%d opening hold released (income secured).\n",
+				pHouse->get_ID(), hIdx);
+	}
+}
+
+void Teams::EconomyOpening(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.EconomyEnable) return;                                       // opt-in
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
+		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
+
+	// Income already secured? Opening done — release any hold so the AI plays normally.
+	if (HasIncomeBuilding(pHouse)) { EconomyReleaseHold(pHouse); return; }
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.EconomyInterval > 0 ? cfg.EconomyInterval : 15;
+	auto const it = g_economyLastFire.find(hIdx);
+	if (it != g_economyLastFire.end() && now - it->second < interval) return;
+	g_economyLastFire[hIdx] = now;
+
+	bool const honorPrereq = cfg.HonorPrereqForEconomy();
+	bool planned = false;
+
+	// Branch A needs the capture doctrine to actually grab the derrick; without it, a
+	// derrick nearby is useless to us, so fall through to the refinery branch.
+	if (cfg.CaptureEnable && CapturableDerrickNear(pHouse, cfg.EconomyRadius))
+	{
+		// Branch A — oil derrick near: build a barracks so the capture doctrine can make
+		// engineers, then it grabs the derrick (cheap passive income). The AI builds the
+		// barracks itself normally; nudge it only if it has none planned/owned.
+		if (!OwnsBarracks(pHouse))
+		{
+			auto const pBar = BestEconomyBuilding(pHouse, /*wantRefinery=*/false, honorPrereq);
+			if (pBar) planned = QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());
+		}
+		else
+		{
+			planned = true; // barracks up; CaptureDoctrine handles engineers + the grab
+		}
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] economy: house=%s#%d OPENING=derrick (barracks+capture) "
+				"ownsBarracks=%d planned=%d cash=%d.\n", pHouse->get_ID(), hIdx,
+				OwnsBarracks(pHouse), planned, static_cast<int>(pHouse->Available_Money()));
+	}
+	else
+	{
+		// Branch B — no derrick near: force a refinery FIRST.
+		auto const pRef = BestEconomyBuilding(pHouse, /*wantRefinery=*/true, honorPrereq);
+		if (pRef) planned = QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter());
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] economy: house=%s#%d OPENING=refinery ref=%s planned=%d "
+				"cash=%d.\n", pHouse->get_ID(), hIdx, pRef ? pRef->ID : "(none)", planned,
+				static_cast<int>(pHouse->Available_Money()));
+	}
+
+	// Plan the money: hold OFFENSIVE production (vehicles/aircraft) so the starting cash
+	// funds the income building, not an early army. Infantry (engineers) + the ConYard keep
+	// building, so the barracks/refinery and capture engineers still go up. Released the
+	// instant income exists (top of this function). Safe: the firesale is the modpack AI
+	// going broke, NOT our production hold (reproduced with DoctrineExt entirely out).
+	if (planned && cfg.EconomyHold)
+	{
+		bool const wasLocked = g_economyLocked[hIdx];
+		BudgetSeizeProduction(pHouse, /*blockRepair=*/false);
+		g_economyLocked[hIdx] = true;
+		if (!wasLocked && cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] economy: house=%s#%d holding offensive production until "
+				"income is up.\n", pHouse->get_ID(), hIdx);
+	}
+	else
+	{
+		EconomyReleaseHold(pHouse);
+	}
+}
+
 int Teams::ChaserGateMax() { return g_chaserGateMax; }
 
 void Teams::Reset()
@@ -3961,4 +4118,6 @@ void Teams::Reset()
 	g_captureLastFire.clear();
 	g_captureProgress.clear();
 	g_captureBlacklist.clear();
+	g_economyLastFire.clear();
+	g_economyLocked.clear();
 }

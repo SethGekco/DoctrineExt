@@ -153,6 +153,12 @@ void Engine::TickHouse(HouseClass* pHouse)
 			Teams::SteerCrate(pHouse);
 	}
 
+	// Economy opening (§10k): secure income FIRST with the starting cash — barracks +
+	// derrick capture if one is near, else force a refinery — holding offensive
+	// production until income is up. Runs before capture so the barracks is planned
+	// first. Self-throttled + opt-in; releases once the house owns an income building.
+	Teams::EconomyOpening(pHouse);
+
 	// Capture doctrine (§10j): grab neutral/enemy tech buildings (oil derricks etc.)
 	// with engineers, nearest-first. Additive production only — can't destabilise the
 	// base. Pass throttled; steering every tick so the capture order sticks. Opt-in.

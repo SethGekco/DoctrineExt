@@ -325,20 +325,44 @@ public:
 		{ return CaptureHonorPrereq < 0 ? HonorPrerequisites : (CaptureHonorPrereq != 0); }
 
 	// ─── Economy opening ([Doctrine.Economy], §10k) ─────────────────────────────
-	// The budgeting Rex asked for: a broke-proof opening. This modpack's Easy AI has
-	// $7500 at start — enough for a refinery — but spends it on power + barracks + GIs,
-	// never builds income, goes bankrupt and firesales its base to death (reproduced
-	// with DoctrineExt entirely OUT, so it's the modpack AI, not us). The opening makes
-	// the AI secure income FIRST: if a capturable oil derrick (ProduceCashAmount) is
-	// near, build a barracks and let the capture doctrine grab it (cheap passive cash);
-	// otherwise force a refinery. Either way it HOLDS offensive production so the cash
-	// funds income, not an early army. Releases the moment income exists. AI houses only.
-	bool EconomyEnable = false;      // opt-in master switch
-	int EconomyRadius = 20;          // cells scanned around base for a capturable derrick
-	int EconomyInterval = 15;        // frames between opening passes (responsive early game)
-	bool EconomyHold = true;         // suspend offensive (vehicle/air) production to funnel
-	                                 // cash into income; infantry + ConYard keep building
-	int EconomyHonorPrereq = -1;     // -1 inherit HonorPrerequisites, 0 ignore, 1 obey
+	// The budgeting Rex asked for, fully tag-driven (all $ values are mod-specific). This
+	// modpack's Easy AI has starting cash enough for a refinery but spends it on power +
+	// barracks + infantry, never builds income, goes bankrupt and firesales its base to
+	// death (reproduced with DoctrineExt entirely OUT — it's the modpack AI, not us). The
+	// opening makes the AI secure income FIRST: if a capturable oil derrick is near AND
+	// worth it, build a barracks and let the capture doctrine grab it (cheap passive cash
+	// — an engineer is far cheaper than a refinery); otherwise force a refinery. It PAUSES
+	// production per category (below a cash threshold, while no income) so the cash funds
+	// income, not an early army — lifted by an emergency (enemy near) or once income exists.
+	// Everything is a tag; 0 / empty = sensible auto-default. AI houses only.
+	bool EconomyEnable = false;      // Enable — opt-in master switch
+	int EconomyInterval = 15;        // Interval — frames between opening passes
+	int EconomyRadius = 20;          // Radius — cells scanned around base for a derrick
+	// Which owned buildings mean "income is secured" (lifts all pauses). Empty = auto:
+	// any Refinery-flagged building, or any building that produces cash (a captured derrick).
+	std::vector<std::string> EconomyIncomeBuildings;    // IncomeBuildings
+	// Capturable tech worth BREAKING the refinery rule to grab for income. Empty = auto:
+	// any Capturable building with ProduceCashAmount>0 (oil derricks).
+	std::vector<std::string> EconomyDerrickTargets;     // DerrickTargets
+	// The refinery/economy building(s) to force when no derrick. Empty = auto: cheapest
+	// buildable Refinery-flagged building.
+	std::vector<std::string> EconomyRefineryBuild;      // RefineryBuild
+	// The barracks to force for barracks-first / derrick capture. Empty = auto: cheapest
+	// buildable building whose Factory produces infantry.
+	std::vector<std::string> EconomyBarracksBuild;      // BarracksBuild
+	bool EconomyCaptureForIncome = true; // CaptureForIncome — prefer a near derrick over a refinery
+	bool EconomyBarracksFirst = true;    // BarracksFirst — barracks before refinery when affordable
+	int EconomyBarracksFirstCash = 0;    // BarracksFirstCash — cash to allow barracks-first;
+	                                     // 0 = auto (power + barracks + refinery cost)
+	// PauseProduction.<Category> — pause that production while the house has NO income and
+	// money <= this; 0 = never pause. (Infantry is never paused on the derrick branch, since
+	// engineers are infantry and are the plan.) An emergency lifts every pause.
+	int EconomyPauseInfantry = 0;    // PauseProduction.Infantry
+	int EconomyPauseVehicle = 0;     // PauseProduction.Vehicle
+	int EconomyPauseAircraft = 0;    // PauseProduction.Aircraft
+	int EconomyPauseNavy = 0;        // PauseProduction.Navy
+	int EconomyEmergencyRadius = 12; // EmergencyRadius — enemy combat unit within = lift pauses
+	int EconomyHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEconomy() const
 		{ return EconomyHonorPrereq < 0 ? HonorPrerequisites : (EconomyHonorPrereq != 0); }
 

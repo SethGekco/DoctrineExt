@@ -253,15 +253,36 @@ void DoctrineConfig::EnsureParsed()
 			"MaxTeams=%d Radius=%d EngineerMax=%d EnemyOwned=%d HonorPrereq=%d\n",
 			static_cast<unsigned>(cfg.CaptureTargets.size()), cfg.CaptureInterval, cfg.CaptureMaxTeams,
 			cfg.CaptureRadius, cfg.CaptureEngineerMax, cfg.CaptureEnemyOwned, cfg.CaptureHonorPrereq);
-	// ─── [Doctrine.Economy] — broke-proof opening (derrick-capture or refinery first) ──
+	// ─── [Doctrine.Economy] — broke-proof opening (fully tag-driven budget) ──
 	cfg.EconomyEnable = pINI->ReadBool("Doctrine.Economy", "Enable", cfg.EconomyEnable);
-	cfg.EconomyRadius = pINI->ReadInteger("Doctrine.Economy", "Radius", cfg.EconomyRadius);
 	cfg.EconomyInterval = pINI->ReadInteger("Doctrine.Economy", "Interval", cfg.EconomyInterval);
-	cfg.EconomyHold = pINI->ReadBool("Doctrine.Economy", "Hold", cfg.EconomyHold);
+	cfg.EconomyRadius = pINI->ReadInteger("Doctrine.Economy", "Radius", cfg.EconomyRadius);
+	pINI->ReadString("Doctrine.Economy", "IncomeBuildings", "", buf, sizeof(buf));
+	cfg.EconomyIncomeBuildings = SplitList(buf);
+	pINI->ReadString("Doctrine.Economy", "DerrickTargets", "", buf, sizeof(buf));
+	cfg.EconomyDerrickTargets = SplitList(buf);
+	pINI->ReadString("Doctrine.Economy", "RefineryBuild", "", buf, sizeof(buf));
+	cfg.EconomyRefineryBuild = SplitList(buf);
+	pINI->ReadString("Doctrine.Economy", "BarracksBuild", "", buf, sizeof(buf));
+	cfg.EconomyBarracksBuild = SplitList(buf);
+	cfg.EconomyCaptureForIncome = pINI->ReadBool("Doctrine.Economy", "CaptureForIncome", cfg.EconomyCaptureForIncome);
+	cfg.EconomyBarracksFirst = pINI->ReadBool("Doctrine.Economy", "BarracksFirst", cfg.EconomyBarracksFirst);
+	cfg.EconomyBarracksFirstCash = pINI->ReadInteger("Doctrine.Economy", "BarracksFirstCash", cfg.EconomyBarracksFirstCash);
+	cfg.EconomyPauseInfantry = pINI->ReadInteger("Doctrine.Economy", "PauseProduction.Infantry", cfg.EconomyPauseInfantry);
+	cfg.EconomyPauseVehicle = pINI->ReadInteger("Doctrine.Economy", "PauseProduction.Vehicle", cfg.EconomyPauseVehicle);
+	cfg.EconomyPauseAircraft = pINI->ReadInteger("Doctrine.Economy", "PauseProduction.Aircraft", cfg.EconomyPauseAircraft);
+	cfg.EconomyPauseNavy = pINI->ReadInteger("Doctrine.Economy", "PauseProduction.Navy", cfg.EconomyPauseNavy);
+	cfg.EconomyEmergencyRadius = pINI->ReadInteger("Doctrine.Economy", "EmergencyRadius", cfg.EconomyEmergencyRadius);
 	cfg.EconomyHonorPrereq = pINI->ReadInteger("Doctrine.Economy", "HonorPrereq", cfg.EconomyHonorPrereq);
 	if (cfg.EconomyEnable)
-		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Radius=%d Interval=%d Hold=%d HonorPrereq=%d\n",
-			cfg.EconomyRadius, cfg.EconomyInterval, cfg.EconomyHold, cfg.EconomyHonorPrereq);
+		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
+			"DerrickTargets=%u RefineryBuild=%u BarracksBuild=%u CaptureForIncome=%d BarracksFirst=%d/%d "
+			"Pause(I/V/A/N)=%d/%d/%d/%d EmergencyRadius=%d HonorPrereq=%d\n",
+			cfg.EconomyInterval, cfg.EconomyRadius, static_cast<unsigned>(cfg.EconomyIncomeBuildings.size()),
+			static_cast<unsigned>(cfg.EconomyDerrickTargets.size()), static_cast<unsigned>(cfg.EconomyRefineryBuild.size()),
+			static_cast<unsigned>(cfg.EconomyBarracksBuild.size()), cfg.EconomyCaptureForIncome, cfg.EconomyBarracksFirst,
+			cfg.EconomyBarracksFirstCash, cfg.EconomyPauseInfantry, cfg.EconomyPauseVehicle, cfg.EconomyPauseAircraft,
+			cfg.EconomyPauseNavy, cfg.EconomyEmergencyRadius, cfg.EconomyHonorPrereq);
 	cfg.AITriggerDelay = pINI->ReadInteger("Doctrine.General", "AITriggerDelay", cfg.AITriggerDelay);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);

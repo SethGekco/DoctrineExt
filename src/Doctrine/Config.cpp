@@ -268,21 +268,44 @@ void DoctrineConfig::EnsureParsed()
 	cfg.EconomyCaptureForIncome = pINI->ReadBool("Doctrine.Economy", "CaptureForIncome", cfg.EconomyCaptureForIncome);
 	cfg.EconomyBarracksFirst = pINI->ReadBool("Doctrine.Economy", "BarracksFirst", cfg.EconomyBarracksFirst);
 	cfg.EconomyBarracksFirstCash = pINI->ReadInteger("Doctrine.Economy", "BarracksFirstCash", cfg.EconomyBarracksFirstCash);
-	cfg.EconomyPauseInfantry = pINI->ReadInteger("Doctrine.Economy", "PauseProduction.Infantry", cfg.EconomyPauseInfantry);
-	cfg.EconomyPauseVehicle = pINI->ReadInteger("Doctrine.Economy", "PauseProduction.Vehicle", cfg.EconomyPauseVehicle);
-	cfg.EconomyPauseAircraft = pINI->ReadInteger("Doctrine.Economy", "PauseProduction.Aircraft", cfg.EconomyPauseAircraft);
-	cfg.EconomyPauseNavy = pINI->ReadInteger("Doctrine.Economy", "PauseProduction.Navy", cfg.EconomyPauseNavy);
+	cfg.EconomyIncomeRequiresMiner = pINI->ReadBool("Doctrine.Economy", "IncomeRequiresMiner", cfg.EconomyIncomeRequiresMiner);
+	pINI->ReadString("Doctrine.Economy", "MinerUnits", "", buf, sizeof(buf));
+	cfg.EconomyMinerUnits = SplitList(buf);
+	// Per-category pause: threshold + .Exclude + BreakProductionRules.<cat>.
+	auto parseEcoCat = [&](const char* const thrKey, const char* const brkName,
+		DoctrineConfig::EconomyPauseCat& c)
+	{
+		c.Threshold = pINI->ReadInteger("Doctrine.Economy", thrKey, c.Threshold);
+		char key[96];
+		std::snprintf(key, sizeof(key), "%s.Exclude", thrKey);
+		pINI->ReadString("Doctrine.Economy", key, "", buf, sizeof(buf));
+		c.Exclude = SplitList(buf);
+		std::snprintf(key, sizeof(key), "BreakProductionRules.%s", brkName);
+		pINI->ReadString("Doctrine.Economy", key, "", buf, sizeof(buf));
+		c.BreakRules = SplitList(buf);
+	};
+	parseEcoCat("PauseProduction.Infantry", "Infantry", cfg.EcoInfantry);
+	parseEcoCat("PauseProduction.Vehicle", "Vehicle", cfg.EcoVehicle);
+	parseEcoCat("PauseProduction.Aircraft", "Aircraft", cfg.EcoAircraft);
+	parseEcoCat("PauseProduction.Navy", "Navy", cfg.EcoNavy);
+	parseEcoCat("PauseProduction.Buildings", "Buildings", cfg.EcoBuildings);
+	parseEcoCat("PauseProduction.Defenses", "Defenses", cfg.EcoDefenses);
+	parseEcoCat("PausePricedSuperWeapons", "SuperWeapons", cfg.EcoSuperWeapons);
+	pINI->ReadString("Doctrine.Economy", "BreakProductionRulesCondition.NeutralBuildings", "", buf, sizeof(buf));
+	cfg.EconomyBreakConditionNeutral = SplitList(buf);
 	cfg.EconomyEmergencyRadius = pINI->ReadInteger("Doctrine.Economy", "EmergencyRadius", cfg.EconomyEmergencyRadius);
 	cfg.EconomyHonorPrereq = pINI->ReadInteger("Doctrine.Economy", "HonorPrereq", cfg.EconomyHonorPrereq);
 	if (cfg.EconomyEnable)
 		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
-			"DerrickTargets=%u RefineryBuild=%u BarracksBuild=%u CaptureForIncome=%d BarracksFirst=%d/%d "
-			"Pause(I/V/A/N)=%d/%d/%d/%d EmergencyRadius=%d HonorPrereq=%d\n",
+			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "
+			"Pause(I/V/A/N/B/D/SW)=%d/%d/%d/%d/%d/%d/%d BreakCond=%u EmergencyRadius=%d HonorPrereq=%d\n",
 			cfg.EconomyInterval, cfg.EconomyRadius, static_cast<unsigned>(cfg.EconomyIncomeBuildings.size()),
-			static_cast<unsigned>(cfg.EconomyDerrickTargets.size()), static_cast<unsigned>(cfg.EconomyRefineryBuild.size()),
-			static_cast<unsigned>(cfg.EconomyBarracksBuild.size()), cfg.EconomyCaptureForIncome, cfg.EconomyBarracksFirst,
-			cfg.EconomyBarracksFirstCash, cfg.EconomyPauseInfantry, cfg.EconomyPauseVehicle, cfg.EconomyPauseAircraft,
-			cfg.EconomyPauseNavy, cfg.EconomyEmergencyRadius, cfg.EconomyHonorPrereq);
+			static_cast<unsigned>(cfg.EconomyDerrickTargets.size()), cfg.EconomyCaptureForIncome,
+			cfg.EconomyBarracksFirst, cfg.EconomyBarracksFirstCash, cfg.EconomyIncomeRequiresMiner,
+			cfg.EcoInfantry.Threshold, cfg.EcoVehicle.Threshold, cfg.EcoAircraft.Threshold, cfg.EcoNavy.Threshold,
+			cfg.EcoBuildings.Threshold, cfg.EcoDefenses.Threshold, cfg.EcoSuperWeapons.Threshold,
+			static_cast<unsigned>(cfg.EconomyBreakConditionNeutral.size()), cfg.EconomyEmergencyRadius,
+			cfg.EconomyHonorPrereq);
 	cfg.AITriggerDelay = pINI->ReadInteger("Doctrine.General", "AITriggerDelay", cfg.AITriggerDelay);
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);

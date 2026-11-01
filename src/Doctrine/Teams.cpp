@@ -3929,35 +3929,79 @@ namespace
 
 	enum class EcoKind { Refinery, Barracks, Power };
 
-	// Is a building/type ID in a modder list (exact match, as the lists carry rules IDs)?
 	bool InIdList(const char* const id, std::vector<std::string> const& list)
 	{
 		for (auto const& s : list) if (s == id) return true;
 		return false;
 	}
 
-	// Does the house own an income building? Configurable (EconomyIncomeBuildings); empty =
-	// auto: any Refinery-flagged building OR any building that produces cash (captured derrick).
-	bool HasIncomeBuilding(HouseClass* const pHouse)
+	// Does the house own a working MINER — any owned ResourceGatherer unit (harvester, or a
+	// slave that mines), or a type on the modder's MinerUnits list? Used so a refinery with no
+	// miner (dead harvester / slave-miner moved off) isn't mistaken for income (Rex's SMIN point).
+	bool OwnsMiner(HouseClass* const pHouse)
 	{
-		auto const& list = DoctrineConfig::Instance.EconomyIncomeBuildings;
-		for (auto const pBld : pHouse->Buildings)
+		auto const& list = DoctrineConfig::Instance.EconomyMinerUnits;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
 		{
-			if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
-			if (list.empty()
-				? (pBld->Type->Refinery || pBld->Type->ProduceCashAmount > 0)
-				: InIdList(pBld->Type->ID, list))
-				return true;
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+			auto const pType = pT->GetTechnoType();
+			if (!pType) continue;
+			if (pType->ResourceGatherer) return true;
+			if (!list.empty() && InIdList(pType->ID, list)) return true;
 		}
 		return false;
 	}
 
-	// Is a worth-it capturable cash structure (oil derrick) within `radiusCells` of base,
-	// not ours/an ally's? Configurable (EconomyDerrickTargets); empty = auto: any Capturable
-	// building with ProduceCashAmount>0. "Scan around myself for a derrick worth grabbing."
-	bool CapturableDerrickNear(HouseClass* const pHouse, int const radiusCells)
+	// Classify an owned building as an income source: 2 = passive cash (a derrick:
+	// ProduceCashAmount>0, income on its own), 1 = refinery (needs a miner to earn), 0 = not.
+	// Honors the modder IncomeBuildings list (listed = income, passive if it also makes cash);
+	// empty list = auto by flag.
+	int IncomeKindOf(BuildingTypeClass* const pBt)
 	{
-		auto const& list = DoctrineConfig::Instance.EconomyDerrickTargets;
+		if (!pBt) return 0;
+		auto const& list = DoctrineConfig::Instance.EconomyIncomeBuildings;
+		bool const passive = pBt->ProduceCashAmount > 0;
+		if (!list.empty())
+			return InIdList(pBt->ID, list) ? (passive ? 2 : 1) : 0;
+		if (passive) return 2;
+		return pBt->Refinery ? 1 : 0;
+	}
+
+	// Real income? A passive cash building (derrick) counts alone; a refinery counts only when
+	// the house also owns a miner (unless IncomeRequiresMiner=no).
+	bool HasIncome(HouseClass* const pHouse)
+	{
+		bool ownsRefinery = false;
+		for (auto const pBld : pHouse->Buildings)
+		{
+			if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
+			int const k = IncomeKindOf(pBld->Type);
+			if (k == 2) return true;                          // passive cash — income by itself
+			if (k == 1) ownsRefinery = true;
+		}
+		if (!ownsRefinery) return false;
+		if (!DoctrineConfig::Instance.EconomyIncomeRequiresMiner) return true;
+		return OwnsMiner(pHouse);                             // refinery needs a miner to earn
+	}
+
+	// Owns any income STRUCTURE (refinery or cash building), miner or not? Used so we don't
+	// queue a second refinery when it already has one but no miner.
+	bool OwnsIncomeStructure(HouseClass* const pHouse)
+	{
+		for (auto const pBld : pHouse->Buildings)
+		{
+			if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
+			if (IncomeKindOf(pBld->Type) > 0) return true;
+		}
+		return false;
+	}
+
+	// Is a capturable neutral/enemy building whose ID is in `ids` within `radiusCells` of base?
+	// Empty `ids` = any Capturable building with ProduceCashAmount>0 (auto oil-derrick).
+	bool NeutralCapturableNear(HouseClass* const pHouse, std::vector<std::string> const& ids,
+		int const radiusCells)
+	{
 		auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
 		double const maxD = static_cast<double>(radiusCells > 0 ? radiusCells : 20) * 256.0;
 		for (int i = 0; i < BuildingClass::Array.Count; ++i)
@@ -3965,11 +4009,11 @@ namespace
 			auto const pB = BuildingClass::Array.GetItem(i);
 			if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0) continue;
 			if (!pB->Type->Capturable) continue;
-			bool const isDerrick = list.empty()
-				? (pB->Type->ProduceCashAmount > 0) : InIdList(pB->Type->ID, list);
-			if (!isDerrick) continue;
+			bool const match = ids.empty()
+				? (pB->Type->ProduceCashAmount > 0) : InIdList(pB->Type->ID, ids);
+			if (!match) continue;
 			auto const pO = pB->Owner;
-			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;           // ours / an ally's
+			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;
 			auto const c = pB->GetCoords();
 			double const d = std::sqrt(static_cast<double>(c.X - base.X) * (c.X - base.X)
 				+ static_cast<double>(c.Y - base.Y) * (c.Y - base.Y));
@@ -3979,8 +4023,7 @@ namespace
 	}
 
 	// Cheapest buildable, faction-correct building of a kind. Refinery/Barracks honor the
-	// modder lists (EconomyRefineryBuild / EconomyBarracksBuild); empty = auto by flag
-	// (Refinery / Factory==InfantryType / PowerBonus>0). Prereq-aware.
+	// modder lists; empty = auto by flag (Refinery / Factory==InfantryType / PowerBonus>0).
 	BuildingTypeClass* BestEconomyBuilding(HouseClass* const pHouse, EcoKind const kind,
 		bool const honorPrereq)
 	{
@@ -4010,7 +4053,7 @@ namespace
 		return best;
 	}
 
-	// Does the house own a barracks already (configurable; empty = Factory==InfantryType)?
+	// Owns a barracks (configurable; empty = Factory==InfantryType)?
 	bool OwnsBarracks(HouseClass* const pHouse)
 	{
 		auto const& list = DoctrineConfig::Instance.EconomyBarracksBuild;
@@ -4025,7 +4068,7 @@ namespace
 	}
 
 	// Emergency: an enemy COMBAT unit within `radiusCells` of base — lifts every pause so a
-	// cornered opening AI can still build defenders instead of sitting paused under attack.
+	// cornered opening AI builds defenders instead of sitting paused under attack.
 	bool EnemyCombatNear(HouseClass* const pHouse, int const radiusCells)
 	{
 		if (radiusCells <= 0) return false;
@@ -4050,7 +4093,33 @@ namespace
 		return false;
 	}
 
-	// Resume every factory of the house (used when income arrives — full release).
+	// The pause category for a factory's current Object, or null for "never pause". Income
+	// infrastructure (refineries, cash buildings, miners) is always exempt so the AI can
+	// always build its economy regardless of pause config.
+	DoctrineConfig::EconomyPauseCat const* EcoCatFor(TechnoClass* const pObj)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		auto const pType = pObj->GetTechnoType();
+		if (!pType) return nullptr;
+		if (pType->ResourceGatherer) return nullptr;          // miners always build
+		switch (pObj->WhatAmI())
+		{
+		case AbstractType::Infantry: return &cfg.EcoInfantry;
+		case AbstractType::Aircraft: return &cfg.EcoAircraft;
+		case AbstractType::Unit:     return pType->Naval ? &cfg.EcoNavy : &cfg.EcoVehicle;
+		case AbstractType::Building:
+		{
+			auto const pBt = static_cast<BuildingTypeClass*>(pType);
+			if (IncomeKindOf(pBt) > 0) return nullptr;        // refinery / cash building always builds
+			if (pBt->HasSuperWeapon()) return &cfg.EcoSuperWeapons;
+			if (pBt->IsBaseDefense) return &cfg.EcoDefenses;
+			return &cfg.EcoBuildings;
+		}
+		default: return nullptr;
+		}
+	}
+
+	// Resume every factory of the house (full release — used when income arrives).
 	void EconomyReleaseHold(HouseClass* const pHouse)
 	{
 		int const hIdx = pHouse->ArrayIndex;
@@ -4064,42 +4133,32 @@ namespace
 				pHouse->get_ID(), hIdx);
 	}
 
-	// Apply per-category production pauses to protect cash for income. Called only while the
-	// house has NO income. A category is paused when its PauseProduction.<cat> threshold is
-	// >0 and the house's cash is at/below it; emergency lifts all; infantry is never paused on
-	// the derrick branch (engineers are infantry and are the plan). Returns true if anything
-	// was paused this pass (so the lock is set and a later income release unsuspends all).
-	bool EconomyApplyPauses(HouseClass* const pHouse, int const cash,
-		bool const derrickBranch, bool const emergency)
+	// Apply per-category pauses (only while the house has NO income). A factory is paused when
+	// its category threshold is >0 and cash is at/below it, UNLESS: emergency; the Object's ID
+	// is in that category's Exclude; or it's in BreakRules and the break condition holds. Income
+	// infrastructure is exempt (EcoCatFor null). Returns true if anything was paused this pass.
+	bool EconomyApplyPauses(HouseClass* const pHouse, int const cash, bool const emergency)
 	{
 		auto const& cfg = DoctrineConfig::Instance;
+		bool const breakCond = cfg.EconomyBreakConditionNeutral.empty()
+			|| NeutralCapturableNear(pHouse, cfg.EconomyBreakConditionNeutral, cfg.EconomyRadius);
 		bool anyPaused = false;
 		for (auto const pFact : FactoryClass::Array)
 		{
 			if (!pFact || pFact->Owner != pHouse) continue;
 			auto const pObj = pFact->Object;
-			if (!pObj) continue;                              // idle — leave free (ConYard builds income)
+			if (!pObj) continue;                              // idle — leave free
 			bool pause = false;
 			if (!emergency)
 			{
-				switch (pObj->WhatAmI())
-				{
-				case AbstractType::Infantry:
-					if (!derrickBranch && cfg.EconomyPauseInfantry > 0 && cash <= cfg.EconomyPauseInfantry)
-						pause = true;
-					break;
-				case AbstractType::Unit:
+				auto const pCat = EcoCatFor(pObj);
+				if (pCat && pCat->Threshold > 0 && cash <= pCat->Threshold)
 				{
 					auto const pType = pObj->GetTechnoType();
-					bool const naval = pType && pType->Naval;
-					int const thr = naval ? cfg.EconomyPauseNavy : cfg.EconomyPauseVehicle;
-					if (thr > 0 && cash <= thr) pause = true;
-					break;
-				}
-				case AbstractType::Aircraft:
-					if (cfg.EconomyPauseAircraft > 0 && cash <= cfg.EconomyPauseAircraft) pause = true;
-					break;
-				default: break;                               // Building (ConYard) etc. — never pause
+					const char* const id = pType ? pType->ID : "";
+					bool const exempt = InIdList(id, pCat->Exclude)
+						|| (breakCond && InIdList(id, pCat->BreakRules));
+					if (!exempt) pause = true;
 				}
 			}
 			if (pause) { pFact->Suspend(true); anyPaused = true; }
@@ -4117,7 +4176,7 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
 
 	// Income already secured? Opening done — lift all pauses so the AI plays normally.
-	if (HasIncomeBuilding(pHouse)) { EconomyReleaseHold(pHouse); return; }
+	if (HasIncome(pHouse)) { EconomyReleaseHold(pHouse); return; }
 
 	int const now = Unsorted::CurrentFrame;
 	int const hIdx = pHouse->ArrayIndex;
@@ -4129,61 +4188,62 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 	bool const honorPrereq = cfg.HonorPrereqForEconomy();
 	int const cash = static_cast<int>(pHouse->Available_Money());
 	bool const emergency = EnemyCombatNear(pHouse, cfg.EconomyEmergencyRadius);
-	bool planned = false;
 
-	// Derrick branch needs the capture doctrine to actually grab it; without it a nearby
-	// derrick is useless to us, so fall through to the refinery branch.
-	bool const derrickBranch = cfg.EconomyCaptureForIncome && cfg.CaptureEnable
-		&& CapturableDerrickNear(pHouse, cfg.EconomyRadius);
+	// What to BUILD toward income. If it owns an income structure but still has no income, it's
+	// the "refinery but no miner" case — don't queue another refinery; a miner (never paused) is
+	// what then builds. Otherwise pick the opening: capture a near derrick, or force a refinery
+	// (barracks first for rush safety when the whole opening is affordable).
+	bool const derrickNear = cfg.EconomyCaptureForIncome && cfg.CaptureEnable
+		&& NeutralCapturableNear(pHouse, cfg.EconomyDerrickTargets, cfg.EconomyRadius);
+	const char* branch = "wait-miner";
 
-	if (derrickBranch)
+	if (!OwnsIncomeStructure(pHouse))
 	{
-		// Build a barracks so the capture doctrine can make engineers (an engineer is far
-		// cheaper than a refinery), then it grabs the derrick for cheap passive income.
-		if (!OwnsBarracks(pHouse))
+		if (derrickNear)
 		{
+			branch = "derrick";
+			if (!OwnsBarracks(pHouse))
+			{
+				auto const pBar = BestEconomyBuilding(pHouse, EcoKind::Barracks, honorPrereq);
+				if (pBar) QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());
+			}
+			// CaptureDoctrine builds the engineers (allowed through the pause by a
+			// BreakProductionRules.Infantry=ENGINEER + Condition.NeutralBuildings rule) and grabs it.
+		}
+		else
+		{
+			branch = "refinery";
+			auto const pRef = BestEconomyBuilding(pHouse, EcoKind::Refinery, honorPrereq);
 			auto const pBar = BestEconomyBuilding(pHouse, EcoKind::Barracks, honorPrereq);
-			if (pBar) planned = QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());
+			int threshold = cfg.EconomyBarracksFirstCash;
+			if (threshold <= 0)                               // 0 = auto: power + barracks + refinery
+			{
+				auto const pPow = BestEconomyBuilding(pHouse, EcoKind::Power, honorPrereq);
+				threshold = (pPow ? pPow->Cost : 0) + (pBar ? pBar->Cost : 0) + (pRef ? pRef->Cost : 0);
+			}
+			bool const barracksFirst = cfg.EconomyBarracksFirst && pBar
+				&& !OwnsBarracks(pHouse) && cash >= threshold;
+			if (barracksFirst)
+			{
+				QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());           // rush safety first
+				if (pRef) QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter()); // refinery next
+			}
+			else if (pRef) QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter());
+			else if (pBar && !OwnsBarracks(pHouse)) QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());
 		}
-		else planned = true;                                  // barracks up; CaptureDoctrine grabs it
-	}
-	else
-	{
-		// No derrick: force a refinery. Build a BARRACKS FIRST (rush safety) when we can
-		// afford the whole opening (power + barracks + refinery), else refinery first.
-		auto const pRef = BestEconomyBuilding(pHouse, EcoKind::Refinery, honorPrereq);
-		auto const pBar = BestEconomyBuilding(pHouse, EcoKind::Barracks, honorPrereq);
-		int threshold = cfg.EconomyBarracksFirstCash;
-		if (threshold <= 0)                                   // 0 = auto: power + barracks + refinery
-		{
-			auto const pPow = BestEconomyBuilding(pHouse, EcoKind::Power, honorPrereq);
-			threshold = (pPow ? pPow->Cost : 0) + (pBar ? pBar->Cost : 0) + (pRef ? pRef->Cost : 0);
-		}
-		bool const barracksFirst = cfg.EconomyBarracksFirst && pBar
-			&& !OwnsBarracks(pHouse) && cash >= threshold;
-		if (barracksFirst)
-		{
-			planned = QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());  // barracks first
-			if (pRef) QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter());  // refinery next
-		}
-		else if (pRef)
-			planned = QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter());
-		else if (pBar && !OwnsBarracks(pHouse))
-			planned = QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());
 	}
 
 	// Enforce the budget: pause production per the thresholds so the cash funds income, not an
 	// early army. Emergency (enemy near) or income (top of fn) lifts it. Safe to hold: the
 	// firesale is the modpack AI going broke, NOT our production hold (proven with DoctrineExt
 	// removed entirely).
-	bool const anyPaused = EconomyApplyPauses(pHouse, cash, derrickBranch, emergency);
+	bool const anyPaused = EconomyApplyPauses(pHouse, cash, emergency);
 	g_economyLocked[hIdx] = anyPaused;
 
 	if (cfg.DebugTicks)
-		Debug::Log("[DoctrineExt] economy: house=%s#%d branch=%s cash=%d planned=%d paused=%d "
-			"emergency=%d ownsBarracks=%d.\n", pHouse->get_ID(), hIdx,
-			derrickBranch ? "derrick" : "refinery", cash, planned, anyPaused, emergency,
-			OwnsBarracks(pHouse));
+		Debug::Log("[DoctrineExt] economy: house=%s#%d branch=%s cash=%d paused=%d emergency=%d "
+			"ownsBarracks=%d ownsIncomeStruct=%d.\n", pHouse->get_ID(), hIdx, branch, cash,
+			anyPaused, emergency, OwnsBarracks(pHouse), OwnsIncomeStructure(pHouse));
 }
 
 int Teams::ChaserGateMax() { return g_chaserGateMax; }

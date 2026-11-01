@@ -354,13 +354,33 @@ public:
 	bool EconomyBarracksFirst = true;    // BarracksFirst — barracks before refinery when affordable
 	int EconomyBarracksFirstCash = 0;    // BarracksFirstCash — cash to allow barracks-first;
 	                                     // 0 = auto (power + barracks + refinery cost)
-	// PauseProduction.<Category> — pause that production while the house has NO income and
-	// money <= this; 0 = never pause. (Infantry is never paused on the derrick branch, since
-	// engineers are infantry and are the plan.) An emergency lifts every pause.
-	int EconomyPauseInfantry = 0;    // PauseProduction.Infantry
-	int EconomyPauseVehicle = 0;     // PauseProduction.Vehicle
-	int EconomyPauseAircraft = 0;    // PauseProduction.Aircraft
-	int EconomyPauseNavy = 0;        // PauseProduction.Navy
+	// "Income" needs a MINER, not just a refinery (Rex's SMIN point): a plain refinery counts
+	// as income only when the house also owns a miner; a passive cash building (derrick) always
+	// counts. So a refinery whose harvester/slaves are gone keeps the opening active (and a
+	// miner — never paused — is what then gets built, not a second refinery).
+	bool EconomyIncomeRequiresMiner = true;         // IncomeRequiresMiner
+	std::vector<std::string> EconomyMinerUnits;     // MinerUnits — empty = auto (ResourceGatherer)
+	// Per-category production pause. Threshold: pause while the house has NO income and cash <=
+	// this (0 = never pause). Exclude: IDs never paused (unconditional). BreakRules: IDs allowed
+	// through the pause WHEN the break condition holds. Income infrastructure (refineries, cash
+	// buildings, miners) is ALWAYS exempt so the AI can always build its economy.
+	struct EconomyPauseCat
+	{
+		int Threshold = 0;
+		std::vector<std::string> Exclude;
+		std::vector<std::string> BreakRules;
+	};
+	EconomyPauseCat EcoInfantry;      // PauseProduction.Infantry[.Exclude] + BreakProductionRules.Infantry
+	EconomyPauseCat EcoVehicle;       // PauseProduction.Vehicle...
+	EconomyPauseCat EcoAircraft;      // PauseProduction.Aircraft...
+	EconomyPauseCat EcoNavy;          // PauseProduction.Navy...
+	EconomyPauseCat EcoBuildings;     // PauseProduction.Buildings... (non-defense structures)
+	EconomyPauseCat EcoDefenses;      // PauseProduction.Defenses... (IsBaseDefense structures)
+	EconomyPauseCat EcoSuperWeapons;  // PausePricedSuperWeapons[.Exclude] + BreakProductionRules.SuperWeapons
+	// BreakProductionRulesCondition.NeutralBuildings — the BreakRules apply only while a
+	// capturable neutral building of one of these IDs is within Radius of the base (e.g. a
+	// CAOILD worth sending engineers for). Empty = the BreakRules apply unconditionally.
+	std::vector<std::string> EconomyBreakConditionNeutral;
 	int EconomyEmergencyRadius = 12; // EmergencyRadius — enemy combat unit within = lift pauses
 	int EconomyHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEconomy() const

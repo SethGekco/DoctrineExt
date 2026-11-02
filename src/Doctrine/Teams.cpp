@@ -4067,6 +4067,18 @@ namespace
 		return false;
 	}
 
+	// Owns a power plant (any building that produces power)? The refinery's prerequisite and what
+	// runs it, so the opening builds one first if missing.
+	bool OwnsPowerPlant(HouseClass* const pHouse)
+	{
+		for (auto const pBld : pHouse->Buildings)
+		{
+			if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
+			if (pBld->Type->PowerBonus > 0) return true;
+		}
+		return false;
+	}
+
 	// Emergency: an enemy COMBAT unit within `radiusCells` of base — lifts every pause so a
 	// cornered opening AI builds defenders instead of sitting paused under attack.
 	bool EnemyCombatNear(HouseClass* const pHouse, int const radiusCells)
@@ -4211,27 +4223,50 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 			auto const pPow = BestEconomyBuilding(pHouse, EcoKind::Power, honorPrereq);
 			int const powCost = pPow ? pPow->Cost : 0;
 			int const barCost = pBar ? pBar->Cost : 0;
-			int const refCost = pRef ? pRef->Cost : 0;
-			int threshold = cfg.EconomyBarracksFirstCash > 0
-				? cfg.EconomyBarracksFirstCash : (powCost + barCost + refCost);
+			// refCost: if the refinery isn't buildable yet (its prereq power plant is missing, so
+			// honorPrereq makes pRef null), still price it via the no-prereq lookup for the budget math.
+			auto const pRefCost = pRef ? pRef : BestEconomyBuilding(pHouse, EcoKind::Refinery, false);
+			int const refCost = pRefCost ? pRefCost->Cost : 0;
+
+			// The refinery's PREREQUISITE (and what powers it) is a power plant — build it FIRST if
+			// the house has none, so the refinery becomes buildable and actually runs. honorPrereq
+			// keeps pRef null until the power plant exists, so this naturally sequences power -> refinery.
+			bool const ownsPower = OwnsPowerPlant(pHouse);
+			if (!ownsPower && pPow)
+			{
+				QueueBaseNode(pHouse, pPow, pHouse->GetBaseCenter());
+				branch = "power(prereq)";
+			}
+
 			// Barracks-first delays the refinery, so income arrives LATER — the cash bottoms out
 			// (power + barracks + refinery all spent, no income yet) and the modpack AI firesales
 			// its base in that low-cash window. Only do barracks-first when the whole opening would
 			// still leave at least SolvencyReserve BEFORE income — otherwise build the refinery
-			// FIRST so its income leads and the AI never dips that low. (Conservatively counts all
-			// three costs; left alone the Easy AI naturally builds the refinery before the barracks,
-			// which is exactly what we want.)
-			int const reserve = cfg.EconomySolvencyReserve;
-			bool const openingSolvent = (cash - powCost - barCost - refCost) >= reserve;
+			// FIRST so its income leads and the AI never dips that low. (Left alone the Easy AI
+			// naturally builds the refinery before the barracks, which is exactly what we want.)
+			int const threshold = cfg.EconomyBarracksFirstCash > 0
+				? cfg.EconomyBarracksFirstCash : (powCost + barCost + refCost);
+			bool const openingSolvent = (cash - powCost - barCost - refCost) >= cfg.EconomySolvencyReserve;
 			bool const barracksFirst = cfg.EconomyBarracksFirst && pBar
 				&& !OwnsBarracks(pHouse) && cash >= threshold && openingSolvent;
-			if (barracksFirst)
+
+			if (pRef)                                          // refinery buildable (power is up)
 			{
-				QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());           // rush safety first
-				if (pRef) QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter()); // refinery next
+				if (barracksFirst)
+				{
+					QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());       // rush safety first
+					QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter());       // refinery next
+					branch = "barracks+refinery";
+				}
+				else { QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter()); branch = "refinery(income-first)"; }
 			}
-			else if (pRef) QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter()); // refinery FIRST (income leads)
-			else if (pBar && !OwnsBarracks(pHouse)) QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());
+			else if (ownsPower && pBar && !OwnsBarracks(pHouse))
+			{
+				// Refinery not buildable despite power (some other prereq) — don't stall; get a barracks.
+				QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());
+				branch = "barracks(fallback)";
+			}
+			// else: waiting on the power plant (prereq) queued above before the refinery can go up.
 		}
 	}
 

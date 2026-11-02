@@ -354,6 +354,11 @@ public:
 	bool EconomyBarracksFirst = true;    // BarracksFirst — barracks before refinery when affordable
 	int EconomyBarracksFirstCash = 0;    // BarracksFirstCash — cash to allow barracks-first;
 	                                     // 0 = auto (power + barracks + refinery cost)
+	int EconomySolvencyReserve = 1000;   // SolvencyReserve — barracks-first only if the whole
+	                                     // opening (power+barracks+refinery) would still leave at
+	                                     // least this much BEFORE income; else refinery-first so the
+	                                     // refinery's income leads and the AI never dips into the
+	                                     // low-cash window where the modpack AI firesales its base.
 	// "Income" needs a MINER, not just a refinery (Rex's SMIN point): a plain refinery counts
 	// as income only when the house also owns a miner; a passive cash building (derrick) always
 	// counts. So a refinery whose harvester/slaves are gone keeps the opening active (and a

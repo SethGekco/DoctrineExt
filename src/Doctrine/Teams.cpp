@@ -4208,20 +4208,29 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 			branch = "refinery";
 			auto const pRef = BestEconomyBuilding(pHouse, EcoKind::Refinery, honorPrereq);
 			auto const pBar = BestEconomyBuilding(pHouse, EcoKind::Barracks, honorPrereq);
-			int threshold = cfg.EconomyBarracksFirstCash;
-			if (threshold <= 0)                               // 0 = auto: power + barracks + refinery
-			{
-				auto const pPow = BestEconomyBuilding(pHouse, EcoKind::Power, honorPrereq);
-				threshold = (pPow ? pPow->Cost : 0) + (pBar ? pBar->Cost : 0) + (pRef ? pRef->Cost : 0);
-			}
+			auto const pPow = BestEconomyBuilding(pHouse, EcoKind::Power, honorPrereq);
+			int const powCost = pPow ? pPow->Cost : 0;
+			int const barCost = pBar ? pBar->Cost : 0;
+			int const refCost = pRef ? pRef->Cost : 0;
+			int threshold = cfg.EconomyBarracksFirstCash > 0
+				? cfg.EconomyBarracksFirstCash : (powCost + barCost + refCost);
+			// Barracks-first delays the refinery, so income arrives LATER — the cash bottoms out
+			// (power + barracks + refinery all spent, no income yet) and the modpack AI firesales
+			// its base in that low-cash window. Only do barracks-first when the whole opening would
+			// still leave at least SolvencyReserve BEFORE income — otherwise build the refinery
+			// FIRST so its income leads and the AI never dips that low. (Conservatively counts all
+			// three costs; left alone the Easy AI naturally builds the refinery before the barracks,
+			// which is exactly what we want.)
+			int const reserve = cfg.EconomySolvencyReserve;
+			bool const openingSolvent = (cash - powCost - barCost - refCost) >= reserve;
 			bool const barracksFirst = cfg.EconomyBarracksFirst && pBar
-				&& !OwnsBarracks(pHouse) && cash >= threshold;
+				&& !OwnsBarracks(pHouse) && cash >= threshold && openingSolvent;
 			if (barracksFirst)
 			{
 				QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());           // rush safety first
 				if (pRef) QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter()); // refinery next
 			}
-			else if (pRef) QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter());
+			else if (pRef) QueueBaseNode(pHouse, pRef, pHouse->GetBaseCenter()); // refinery FIRST (income leads)
 			else if (pBar && !OwnsBarracks(pHouse)) QueueBaseNode(pHouse, pBar, pHouse->GetBaseCenter());
 		}
 	}
@@ -4247,18 +4256,17 @@ void Teams::PreventFiresale(HouseClass* pHouse)
 		|| pHouse->IsControlledByHuman()) return;                         // AI houses only; human untouched
 	if (!cfg.EconomyPreventSellingAlways && HasIncome(pHouse)) return;    // only the vulnerable window
 
+	// Set AI_Sellable=false on the AI's own buildings. On this modpack the engine's sell path
+	// ignores it (the AI still enters Mission::Selling), but it's harmless and some mods honor it.
+	// We do NOT ForceMission(Guard) the sale here: that ping-pongs (AI re-issues Selling every
+	// tick -> Guard -> Selling), which is the buildup-animation loop. The real fix is upstream —
+	// keep the refinery's income leading (EconomyOpening) so the AI never reaches the broke
+	// window where it decides to sell. If firesales recur despite that, the next step is an
+	// engine-level block at the sell-command itself, not a mid-sale revert.
 	for (auto const pBld : pHouse->Buildings)
 	{
 		if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
-		pBld->AI_Sellable = false;                                        // block the decision (clean, no mid-sale)
-		if (pBld->CurrentMission == Mission::Selling || pBld->QueuedMission == Mission::Selling)
-		{
-			pBld->ForceMission(Mission::Guard);                           // guaranteed fallback veto
-			if (cfg.DebugTicks)
-				Debug::Log("[DoctrineExt] economy: house=%s#%d VETOED sale of %s "
-					"(AI_Sellable didn't block it).\n", pHouse->get_ID(),
-					pHouse->ArrayIndex, pBld->Type->ID);
-		}
+		pBld->AI_Sellable = false;
 	}
 }
 

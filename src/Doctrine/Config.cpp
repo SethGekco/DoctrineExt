@@ -268,6 +268,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.EconomyCaptureForIncome = pINI->ReadBool("Doctrine.Economy", "CaptureForIncome", cfg.EconomyCaptureForIncome);
 	cfg.EconomyBarracksFirst = pINI->ReadBool("Doctrine.Economy", "BarracksFirst", cfg.EconomyBarracksFirst);
 	cfg.EconomyBarracksFirstCash = pINI->ReadInteger("Doctrine.Economy", "BarracksFirstCash", cfg.EconomyBarracksFirstCash);
+	cfg.EconomySolvencyReserve = pINI->ReadInteger("Doctrine.Economy", "SolvencyReserve", cfg.EconomySolvencyReserve);
 	cfg.EconomyIncomeRequiresMiner = pINI->ReadBool("Doctrine.Economy", "IncomeRequiresMiner", cfg.EconomyIncomeRequiresMiner);
 	pINI->ReadString("Doctrine.Economy", "MinerUnits", "", buf, sizeof(buf));
 	cfg.EconomyMinerUnits = SplitList(buf);

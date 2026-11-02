@@ -30,6 +30,7 @@
 #include <Unsorted.h>
 #include <GeneralDefinitions.h>
 #include <Utilities/Debug.h>
+#include <Utilities/Macro.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -4283,26 +4284,31 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 			cash, hasIncome, anyPaused, emergency, OwnsBarracks(pHouse), OwnsIncomeStructure(pHouse));
 }
 
-void Teams::PreventFiresale(HouseClass* pHouse)
+bool Teams::ShouldBlockSell(BuildingClass* pBld)
 {
 	auto const& cfg = DoctrineConfig::Instance;
-	if (!cfg.EconomyEnable || !cfg.EconomyPreventSelling) return;
-	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
-		|| pHouse->IsControlledByHuman()) return;                         // AI houses only; human untouched
-	if (!cfg.EconomyPreventSellingAlways && HasIncome(pHouse)) return;    // only the vulnerable window
+	if (!cfg.EconomyEnable || !cfg.EconomyPreventSelling) return false;
+	if (!pBld || !pBld->Type) return false;
+	auto const pH = pBld->Owner;
+	if (!pH || pH->Defeated || pH->IsNeutral() || pH->IsControlledByHuman())
+		return false;                                     // AI houses only; never the human player
+	// Protect only while the house is still securing income (the firesale window) unless the modder
+	// wants it always. Once it owns a working refinery+miner (HasIncome) it may sell normally again.
+	if (!cfg.EconomyPreventSellingAlways && HasIncome(pH)) return false;
+	return true;
+}
 
-	// Set AI_Sellable=false on the AI's own buildings. On this modpack the engine's sell path
-	// ignores it (the AI still enters Mission::Selling), but it's harmless and some mods honor it.
-	// We do NOT ForceMission(Guard) the sale here: that ping-pongs (AI re-issues Selling every
-	// tick -> Guard -> Selling), which is the buildup-animation loop. The real fix is upstream —
-	// keep the refinery's income leading (EconomyOpening) so the AI never reaches the broke
-	// window where it decides to sell. If firesales recur despite that, the next step is an
-	// engine-level block at the sell-command itself, not a mid-sale revert.
-	for (auto const pBld : pHouse->Buildings)
-	{
-		if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
-		pBld->AI_Sellable = false;
-	}
+// BuildingClass::Sell (ObjectClass::Sell override, entry 0x447110) — both the control==-1 and the
+// "other control" paths jmp to 0x44717d to QueueMission(Mission::Selling); control==0 only continues
+// an already-started sale. So 0x44717d is the single point a NEW sale is committed. For a protected
+// AI building we jump to the engine's own don't-sell return (0x447203 = pop esi; ret 4), so the
+// building never enters Mission::Selling — no sell-down animation, no Guard ping-pong. 6 stolen bytes
+// (mov edx,(esi); push 0; push 0x13) land on a clean boundary and don't overlap the Ares/Antares
+// hooks at 0x447113 / 0x4471D5.
+DEFINE_HOOK(0x44717D, BuildingClass_Sell_BlockAIFiresale, 0x6)
+{
+	GET(BuildingClass* const, pThis, ESI);
+	return Teams::ShouldBlockSell(pThis) ? 0x447203 : 0;
 }
 
 int Teams::ChaserGateMax() { return g_chaserGateMax; }

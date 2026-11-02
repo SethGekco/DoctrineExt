@@ -2,6 +2,7 @@
 
 class HouseClass;
 class TechnoClass;
+class BuildingClass;
 struct DoctrineRule;
 
 // The act step (DESIGN.md §7): a small pool of DLL-owned TeamType/TaskForce/
@@ -117,10 +118,11 @@ namespace Teams
 	// Self-throttled; opt-in (EconomyEnable). AI houses only.
 	void EconomyOpening(HouseClass* pHouse);
 
-	// Prevent the broke-window firesale (§10k): set AI_Sellable=false on the AI's own buildings
-	// so it never decides to sell its base while securing income (with a ForceMission(Guard)
-	// fallback if one still starts). Run every tick (unthrottled, cheap). AI houses only.
-	void PreventFiresale(HouseClass* pHouse);
+	// Should this building's sale be blocked? True for an AI house's building while it is still
+	// securing income (the firesale window) — the BuildingClass::Sell hook calls this to reject
+	// the modpack AI's broke-window base-sell at the source (no Mission::Selling, no animation,
+	// no ping-pong). The human player is never blocked. (§10k)
+	bool ShouldBlockSell(BuildingClass* pBld);
 
 	// Air-defense (AA P1): keep own anti-air firepower >= enemy air DPS x ratio,
 	// building AntiAir arsenal units when short (scales as the enemy adds air), and

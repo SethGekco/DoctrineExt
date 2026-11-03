@@ -402,6 +402,20 @@ public:
 	bool HonorPrereqForEconomy() const
 		{ return EconomyHonorPrereq < 0 ? HonorPrerequisites : (EconomyHonorPrereq != 0); }
 
+	// ─── Counter-engineer rush ([Doctrine.CounterEngineer], §10l) ────────────────
+	// Deny enemy engineer rushes: send fast anti-infantry (attack dogs) at enemy engineers near
+	// the AI's base/buildings or a tech building the AI is contesting, killing them before they
+	// capture. Additive (builds dogs via the taskforce path + diverts spare armed infantry).
+	bool CounterEngEnable = false;   // Enable — opt-in master switch
+	std::vector<std::string> CounterEngUnits; // Units — interceptors; empty = auto (fastest buildable
+	                                 // armed infantry; attack dogs win on speed)
+	int CounterEngInterval = 30;     // Interval — frames between passes
+	int CounterEngRadius = 30;       // Radius — cells around base/buildings/contested tech to hunt engineers
+	int CounterEngMax = 3;           // Max — concurrent interceptors
+	int CounterEngHonorPrereq = -1;  // HonorPrereq — -1 inherit, 0 ignore, 1 obey
+	bool HonorPrereqForCounterEng() const
+		{ return CounterEngHonorPrereq < 0 ? HonorPrerequisites : (CounterEngHonorPrereq != 0); }
+
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;
 

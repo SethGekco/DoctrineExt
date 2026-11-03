@@ -3922,6 +3922,201 @@ void Teams::SteerCapture(HouseClass* pHouse)
 	}
 }
 
+// ─── Counter-engineer rush (§10l) ────────────────────────────────────────────
+namespace
+{
+	std::map<int, int> g_counterEngLastFire;                      // house -> last pass frame
+
+	// Fastest buildable, faction-correct armed infantry to hunt engineers with (attack dogs win
+	// on speed). Honors the modder list (CounterEngUnits) if set; else auto = any armed infantry.
+	// Prereq-aware; never an engineer itself.
+	TechnoTypeClass* BestAntiEngineer(HouseClass* const pHouse, bool const honorPrereq)
+	{
+		auto const& list = DoctrineConfig::Instance.CounterEngUnits;
+		TechnoTypeClass* best = nullptr; int bestSpeed = -1;
+		for (auto const pIt : InfantryTypeClass::Array)
+		{
+			if (!pIt || pIt->Engineer) continue;
+			if (!list.empty())
+			{
+				bool inList = false;
+				for (auto const& s : list) if (s == pIt->ID) { inList = true; break; }
+				if (!inList) continue;
+			}
+			else if (!HasOffensiveWeapon(pIt)) continue;         // auto: must be armed
+			if (!pHouse->InOwners(pIt)) continue;
+			if (!CanBuildStrict(pHouse, pIt, honorPrereq)) continue;
+			if (pIt->Speed > bestSpeed) { bestSpeed = pIt->Speed; best = pIt; }
+		}
+		return best;
+	}
+
+	// Enemy engineers within `radiusCells` of the AI's base, any of its buildings, or a capturable
+	// building it's contesting — the ones worth intercepting. Nearest-to-base first.
+	std::vector<FootClass*> ThreateningEngineers(HouseClass* const pHouse, int const radiusCells)
+	{
+		std::vector<CoordStruct> anchors;
+		anchors.push_back(CellClass::Cell2Coord(pHouse->GetBaseCenter()));
+		for (auto const pBld : pHouse->Buildings)
+			if (pBld && !pBld->InLimbo && pBld->Health > 0) anchors.push_back(pBld->GetCoords());
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0) continue;
+			if (!pB->Type->Capturable) continue;
+			auto const pO = pB->Owner;
+			if (pO == pHouse || (pO && pHouse->IsAlliedWith(pO))) continue;   // ours / an ally's
+			anchors.push_back(pB->GetCoords());
+		}
+		double const maxD = static_cast<double>(radiusCells > 0 ? radiusCells : 30) * 256.0;
+		auto const base = anchors[0];
+		std::vector<std::pair<FootClass*, double>> hits;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->InLimbo || pT->Health <= 0) continue;
+			if (pT->WhatAmI() != AbstractType::Infantry) continue;
+			auto const pO = pT->Owner;
+			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;    // enemy only
+			auto const pType = pT->GetTechnoType();
+			if (!pType || pType->WhatAmI() != AbstractType::InfantryType) continue;
+			if (!static_cast<InfantryTypeClass*>(pType)->Engineer) continue;  // engineers only
+			auto const c = pT->GetCoords();
+			double nearest = 1e18;
+			for (auto const& a : anchors)
+			{
+				double const d = std::sqrt(static_cast<double>(c.X - a.X) * (c.X - a.X)
+					+ static_cast<double>(c.Y - a.Y) * (c.Y - a.Y));
+				if (d < nearest) nearest = d;
+			}
+			if (nearest > maxD) continue;
+			double const toBase = std::sqrt(static_cast<double>(c.X - base.X) * (c.X - base.X)
+				+ static_cast<double>(c.Y - base.Y) * (c.Y - base.Y));
+			hits.push_back({ static_cast<FootClass*>(pT), toBase });
+		}
+		std::sort(hits.begin(), hits.end(),
+			[](std::pair<FootClass*, double> const& a, std::pair<FootClass*, double> const& b)
+			{ return a.second < b.second; });
+		std::vector<FootClass*> out;
+		for (auto const& h : hits) out.push_back(h.first);
+		return out;
+	}
+
+	TeamClass* FindCounterEngTeam(int const hIdx)
+	{
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DANT%dTM", hIdx);
+		auto const pTT = TeamTypeClass::Find(id);
+		return (pTT && pTT->cntInstances > 0) ? pTT->FindFirstInstance() : nullptr;
+	}
+
+	int DogsOnTeam(TeamClass* const pTeam)
+	{
+		int n = 0;
+		for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+			if (!pF->InLimbo && pF->Health > 0) ++n;
+		return n;
+	}
+}
+
+void Teams::CounterEngineers(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.CounterEngEnable) return;                                    // opt-in
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
+		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.CounterEngInterval > 0 ? cfg.CounterEngInterval : 30;
+	auto const it = g_counterEngLastFire.find(hIdx);
+	if (it != g_counterEngLastFire.end() && now - it->second < interval) return;
+	g_counterEngLastFire[hIdx] = now;
+
+	auto const threats = ThreateningEngineers(pHouse, cfg.CounterEngRadius);
+	auto const pPrev = FindCounterEngTeam(hIdx);
+	if (threats.empty())
+	{
+		// No engineer threat: release interceptors back to the general pool (don't hoard dogs).
+		if (pPrev)
+			for (auto pF = pPrev->FirstUnit; pF; )
+			{
+				auto const next = pF->NextTeamMember;
+				pPrev->LiberateMember(pF);
+				pF = next;
+			}
+		return;
+	}
+
+	int const cap = cfg.CounterEngMax > 0 ? cfg.CounterEngMax : 3;
+	int desired = static_cast<int>(threats.size());
+	if (desired > cap) desired = cap;
+
+	int const have = pPrev ? DogsOnTeam(pPrev) : 0;
+	TechnoTypeClass* const pDog = BestAntiEngineer(pHouse, cfg.HonorPrereqForCounterEng());
+	int want = desired - have; if (want < 0) want = 0;
+
+	// Build the shortfall via the taskforce (the proven AI build path), else recruit-only.
+	auto const pTeam = EnsureSquadTeam(pHouse, desired,
+		(pDog && want > 0) ? pDog : nullptr, "DANT", want);
+	if (!pTeam) return;
+
+	// Recruit owned fast armed non-engineer infantry (divert) so spares intercept immediately.
+	for (int i = 0; i < TechnoClass::Array.Count && DogsOnTeam(pTeam) < desired; ++i)
+	{
+		auto const pT = TechnoClass::Array.GetItem(i);
+		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+		if (pT->WhatAmI() != AbstractType::Infantry) continue;
+		auto const pType = pT->GetTechnoType();
+		if (!pType || pType->WhatAmI() != AbstractType::InfantryType) continue;
+		if (static_cast<InfantryTypeClass*>(pType)->Engineer || !HasOffensiveWeapon(pType)) continue;
+		auto const pFoot = static_cast<FootClass*>(pT);
+		if (pFoot->Team == pTeam) continue;
+		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot);
+		if (!pTeam->AddMember(pFoot, true)) break;
+		pFoot->ShouldGarrisonStructure = false;
+		pFoot->ShouldEnterOccupiable = false;
+	}
+
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] counter-eng: house=%s#%d threats=%d desired=%d have=%d dog=%s build=%d.\n",
+			pHouse->get_ID(), hIdx, static_cast<int>(threats.size()), desired, DogsOnTeam(pTeam),
+			pDog ? pDog->get_ID() : "(none)", want);
+}
+
+void Teams::SteerCounterEngineers(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.CounterEngEnable) return;
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
+		|| pHouse->IsControlledByHuman()) return;
+	auto const pTeam = FindCounterEngTeam(pHouse->ArrayIndex);
+	if (!pTeam || !pTeam->FirstUnit) return;
+	auto const threats = ThreateningEngineers(pHouse, cfg.CounterEngRadius);
+	if (threats.empty()) return;
+
+	// Each interceptor attacks its nearest live threatening engineer; re-issued every tick so the
+	// base AI can't countermand it and dogs keep chasing as the engineers move.
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+	{
+		if (pF->InLimbo || pF->Health <= 0) continue;
+		auto const fc = pF->GetCoords();
+		FootClass* best = nullptr; double bestD = 1e18;
+		for (auto const pE : threats)
+		{
+			if (!pE || pE->InLimbo || pE->Health <= 0) continue;
+			auto const c = pE->GetCoords();
+			double const d = std::sqrt(static_cast<double>(c.X - fc.X) * (c.X - fc.X)
+				+ static_cast<double>(c.Y - fc.Y) * (c.Y - fc.Y));
+			if (d < bestD) { bestD = d; best = pE; }
+		}
+		if (!best) break;
+		pF->SetTarget(best);
+		pF->QueueMission(Mission::Attack, false);
+	}
+}
+
+
 // ─── Economy opening (§10k) ──────────────────────────────────────────────────
 namespace
 {
@@ -4353,4 +4548,5 @@ void Teams::Reset()
 	g_captureBlacklist.clear();
 	g_economyLastFire.clear();
 	g_economyLocked.clear();
+	g_counterEngLastFire.clear();
 }

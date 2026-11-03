@@ -298,6 +298,18 @@ void DoctrineConfig::EnsureParsed()
 	cfg.EconomyPreventSelling = pINI->ReadBool("Doctrine.Economy", "PreventSelling", cfg.EconomyPreventSelling);
 	cfg.EconomyPreventSellingAlways = pINI->ReadBool("Doctrine.Economy", "PreventSellingAlways", cfg.EconomyPreventSellingAlways);
 	cfg.EconomyHonorPrereq = pINI->ReadInteger("Doctrine.Economy", "HonorPrereq", cfg.EconomyHonorPrereq);
+	// ─── [Doctrine.CounterEngineer] — attack dogs vs enemy engineer rushes ──
+	cfg.CounterEngEnable = pINI->ReadBool("Doctrine.CounterEngineer", "Enable", cfg.CounterEngEnable);
+	pINI->ReadString("Doctrine.CounterEngineer", "Units", "", buf, sizeof(buf));
+	cfg.CounterEngUnits = SplitList(buf);
+	cfg.CounterEngInterval = pINI->ReadInteger("Doctrine.CounterEngineer", "Interval", cfg.CounterEngInterval);
+	cfg.CounterEngRadius = pINI->ReadInteger("Doctrine.CounterEngineer", "Radius", cfg.CounterEngRadius);
+	cfg.CounterEngMax = pINI->ReadInteger("Doctrine.CounterEngineer", "Max", cfg.CounterEngMax);
+	cfg.CounterEngHonorPrereq = pINI->ReadInteger("Doctrine.CounterEngineer", "HonorPrereq", cfg.CounterEngHonorPrereq);
+	if (cfg.CounterEngEnable)
+		Debug::Log("[DoctrineExt] [Doctrine.CounterEngineer]: Enable=1 Units=%u (empty=auto) Interval=%d "
+			"Radius=%d Max=%d HonorPrereq=%d\n", static_cast<unsigned>(cfg.CounterEngUnits.size()),
+			cfg.CounterEngInterval, cfg.CounterEngRadius, cfg.CounterEngMax, cfg.CounterEngHonorPrereq);
 	if (cfg.EconomyEnable)
 		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

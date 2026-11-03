@@ -167,6 +167,11 @@ void Engine::TickHouse(HouseClass* pHouse)
 	Teams::CaptureDoctrine(pHouse);
 	Teams::SteerCapture(pHouse);
 
+	// Counter-engineer rush (§10l): attack dogs at enemy engineers threatening the base or
+	// contested tech. Pass throttled; steering every tick so the chase sticks. Opt-in.
+	Teams::CounterEngineers(pHouse);
+	Teams::SteerCounterEngineers(pHouse);
+
 	// Commander takeover: if the base AI sits idle (its own aimd/AITrigger teams
 	// never attack) for CommanderIdleTime, DoctrineExt seizes command and drives
 	// the idle army into an assault. Evaluation throttled; steering every tick so

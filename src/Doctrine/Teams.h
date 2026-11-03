@@ -118,6 +118,12 @@ namespace Teams
 	// Self-throttled; opt-in (EconomyEnable). AI houses only.
 	void EconomyOpening(HouseClass* pHouse);
 
+	// Counter-engineer rush (§10l): send fast anti-infantry (attack dogs) at enemy engineers near
+	// the AI's base/buildings or a tech building it's contesting, killing them before they capture.
+	// Pass throttled; steering every tick so the chase sticks. Self-throttled; opt-in. AI houses only.
+	void CounterEngineers(HouseClass* pHouse);
+	void SteerCounterEngineers(HouseClass* pHouse);
+
 	// Should this building's sale be blocked? True for an AI house's building while it is still
 	// securing income (the firesale window) — the BuildingClass::Sell hook calls this to reject
 	// the modpack AI's broke-window base-sell at the source (no Mission::Selling, no animation,

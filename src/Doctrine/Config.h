@@ -402,19 +402,56 @@ public:
 	bool HonorPrereqForEconomy() const
 		{ return EconomyHonorPrereq < 0 ? HonorPrerequisites : (EconomyHonorPrereq != 0); }
 
-	// ─── Counter-engineer rush ([Doctrine.CounterEngineer], §10l) ────────────────
-	// Deny enemy engineer rushes: send fast anti-infantry (attack dogs) at enemy engineers near
-	// the AI's base/buildings or a tech building the AI is contesting, killing them before they
-	// capture. Additive (builds dogs via the taskforce path + diverts spare armed infantry).
+	// ─── Counter-engineer / urgent response ([Doctrine.CounterEngineer], §10l) ───
+	// Deny enemy engineer rushes. Every base tick: find enemy engineers heading for the AI's
+	// buildings (or neutral tech it wants), estimate whether the firepower that can reach them
+	// kills them before they arrive, retask the fastest-engaging nearby armed units (any type)
+	// onto them and point in-range defenses at them; if nothing can kill one in time, sell the
+	// building first (an engineer bounces off a building that is mid-sale). Builds Units as
+	// standing interceptors while the house's own firepower falls short.
 	bool CounterEngEnable = false;   // Enable — opt-in master switch
-	std::vector<std::string> CounterEngUnits; // Units — interceptors; empty = auto (fastest buildable
-	                                 // armed infantry; attack dogs win on speed)
-	int CounterEngInterval = 30;     // Interval — frames between passes
-	int CounterEngRadius = 30;       // Radius — cells around base/buildings/contested tech to hunt engineers
-	int CounterEngMax = 3;           // Max — concurrent interceptors
+	std::vector<std::string> CounterEngUnits; // Units — interceptors to BUILD; empty = auto (fastest
+	                                 // buildable armed infantry; attack dogs win on speed)
+	int CounterEngInterval = 30;     // Interval — frames between production passes / debug lines
+	int CounterEngRadius = 12;       // Radius — cells from our building/contested tech an approaching
+	                                 // engineer becomes a threat (any range if it targets one)
+	int CounterEngMax = 3;           // Max — interceptors (Units) to own while firepower falls short
+	bool CounterEngBuild = true;     // Build — produce Units when firepower falls short
+	bool CounterEngRespond = true;   // Respond — retask nearby armed units onto threatening engineers
+	int CounterEngRespondRadius = 15;// RespondRadius — cells from the threatened building to pull responders
+	double CounterEngRespondMargin = 1.5; // RespondMargin — commit until expected damage >= HP x this
+	int CounterEngRespondMax = 4;    // RespondMax — responders per engineer
+	int CounterEngReaction = 15;     // ReactionFrames — a retasked unit's turn/acquire delay
+	bool CounterEngRetargetDefenses = true; // RetargetDefenses — point in-range defenses at the engineer
+	bool CounterEngDenySell = true;  // DenySell — sell a building an engineer reaches before it can die
+	std::vector<std::string> CounterEngDenySellExclude; // DenySell.Exclude — never deny-sell these
+	int CounterEngDenySellLead = 0;  // DenySell.Lead — sell when the engineer is this many frames out
+	                                 // (0 = auto: two base ticks)
+	double CounterEngDenySellMargin = 1.0; // DenySell.Margin — sell when ALL reachable firepower's
+	                                 // expected damage < HP x this
 	int CounterEngHonorPrereq = -1;  // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForCounterEng() const
 		{ return CounterEngHonorPrereq < 0 ? HonorPrerequisites : (CounterEngHonorPrereq != 0); }
+
+	// ─── Engineer rush ([Doctrine.EngineerRush], §10m) ───────────────────────────
+	// Capture ENEMY buildings near the AI's base with engineers. Each candidate is priced with the
+	// same damage model the counter-engineer uses, in reverse: rush only where the enemy's reachable
+	// firepower won't kill the engineer on its approach. Escorts attack the most dangerous defender.
+	bool EngRushEnable = false;      // Enable — opt-in master switch
+	int EngRushInterval = 60;        // Interval — frames between passes (steering is every tick)
+	int EngRushRadius = 30;          // Radius — cells from our base center an enemy building may be
+	std::vector<std::string> EngRushTargets;  // Targets — rushable buildings; empty = any Capturable
+	std::vector<std::string> EngRushExclude;  // Exclude — never rush these
+	std::vector<std::string> EngRushPriority; // Priority — rush these first, in list order; the
+	                                 // rest by value (Cost)
+	int EngRushMax = 2;              // Max — concurrent rush engineers
+	int EngRushEscorts = 2;          // Escorts — armed units per engineer (0 = none)
+	double EngRushSafety = 1.0;      // Safety — rush only if expected enemy damage x this < engineer HP
+	int EngRushMinCash = 0;          // MinCash — build new rush engineers only at or above this cash
+	int EngRushRetryDelay = 900;     // RetryDelay — frames before re-rushing a target that killed one
+	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
+	bool HonorPrereqForEngRush() const
+		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }
 
 	std::vector<DoctrineArsenalRole> Arsenal;
 	std::vector<DoctrineRule> Rules;

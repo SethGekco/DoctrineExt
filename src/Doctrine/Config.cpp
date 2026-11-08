@@ -306,10 +306,51 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CounterEngRadius = pINI->ReadInteger("Doctrine.CounterEngineer", "Radius", cfg.CounterEngRadius);
 	cfg.CounterEngMax = pINI->ReadInteger("Doctrine.CounterEngineer", "Max", cfg.CounterEngMax);
 	cfg.CounterEngHonorPrereq = pINI->ReadInteger("Doctrine.CounterEngineer", "HonorPrereq", cfg.CounterEngHonorPrereq);
+	cfg.CounterEngBuild = pINI->ReadBool("Doctrine.CounterEngineer", "Build", cfg.CounterEngBuild);
+	cfg.CounterEngRespond = pINI->ReadBool("Doctrine.CounterEngineer", "Respond", cfg.CounterEngRespond);
+	cfg.CounterEngRespondRadius = pINI->ReadInteger("Doctrine.CounterEngineer", "RespondRadius", cfg.CounterEngRespondRadius);
+	cfg.CounterEngRespondMargin = pINI->ReadDouble("Doctrine.CounterEngineer", "RespondMargin", cfg.CounterEngRespondMargin);
+	cfg.CounterEngRespondMax = pINI->ReadInteger("Doctrine.CounterEngineer", "RespondMax", cfg.CounterEngRespondMax);
+	cfg.CounterEngReaction = pINI->ReadInteger("Doctrine.CounterEngineer", "ReactionFrames", cfg.CounterEngReaction);
+	cfg.CounterEngRetargetDefenses = pINI->ReadBool("Doctrine.CounterEngineer", "RetargetDefenses", cfg.CounterEngRetargetDefenses);
+	cfg.CounterEngDenySell = pINI->ReadBool("Doctrine.CounterEngineer", "DenySell", cfg.CounterEngDenySell);
+	pINI->ReadString("Doctrine.CounterEngineer", "DenySell.Exclude", "", buf, sizeof(buf));
+	cfg.CounterEngDenySellExclude = SplitList(buf);
+	cfg.CounterEngDenySellLead = pINI->ReadInteger("Doctrine.CounterEngineer", "DenySell.Lead", cfg.CounterEngDenySellLead);
+	cfg.CounterEngDenySellMargin = pINI->ReadDouble("Doctrine.CounterEngineer", "DenySell.Margin", cfg.CounterEngDenySellMargin);
 	if (cfg.CounterEngEnable)
 		Debug::Log("[DoctrineExt] [Doctrine.CounterEngineer]: Enable=1 Units=%u (empty=auto) Interval=%d "
-			"Radius=%d Max=%d HonorPrereq=%d\n", static_cast<unsigned>(cfg.CounterEngUnits.size()),
-			cfg.CounterEngInterval, cfg.CounterEngRadius, cfg.CounterEngMax, cfg.CounterEngHonorPrereq);
+			"Radius=%d Max=%d Build=%d Respond=%d RespondRadius=%d RespondMargin=%.2f RespondMax=%d "
+			"ReactionFrames=%d RetargetDefenses=%d DenySell=%d DenySell.Exclude=%u DenySell.Lead=%d "
+			"DenySell.Margin=%.2f HonorPrereq=%d\n", static_cast<unsigned>(cfg.CounterEngUnits.size()),
+			cfg.CounterEngInterval, cfg.CounterEngRadius, cfg.CounterEngMax, cfg.CounterEngBuild,
+			cfg.CounterEngRespond, cfg.CounterEngRespondRadius, cfg.CounterEngRespondMargin,
+			cfg.CounterEngRespondMax, cfg.CounterEngReaction, cfg.CounterEngRetargetDefenses,
+			cfg.CounterEngDenySell, static_cast<unsigned>(cfg.CounterEngDenySellExclude.size()),
+			cfg.CounterEngDenySellLead, cfg.CounterEngDenySellMargin, cfg.CounterEngHonorPrereq);
+	// ─── [Doctrine.EngineerRush] — capture enemy buildings near base ──
+	cfg.EngRushEnable = pINI->ReadBool("Doctrine.EngineerRush", "Enable", cfg.EngRushEnable);
+	cfg.EngRushInterval = pINI->ReadInteger("Doctrine.EngineerRush", "Interval", cfg.EngRushInterval);
+	cfg.EngRushRadius = pINI->ReadInteger("Doctrine.EngineerRush", "Radius", cfg.EngRushRadius);
+	pINI->ReadString("Doctrine.EngineerRush", "Targets", "", buf, sizeof(buf));
+	cfg.EngRushTargets = SplitList(buf);
+	pINI->ReadString("Doctrine.EngineerRush", "Exclude", "", buf, sizeof(buf));
+	cfg.EngRushExclude = SplitList(buf);
+	pINI->ReadString("Doctrine.EngineerRush", "Priority", "", buf, sizeof(buf));
+	cfg.EngRushPriority = SplitList(buf);
+	cfg.EngRushMax = pINI->ReadInteger("Doctrine.EngineerRush", "Max", cfg.EngRushMax);
+	cfg.EngRushEscorts = pINI->ReadInteger("Doctrine.EngineerRush", "Escorts", cfg.EngRushEscorts);
+	cfg.EngRushSafety = pINI->ReadDouble("Doctrine.EngineerRush", "Safety", cfg.EngRushSafety);
+	cfg.EngRushMinCash = pINI->ReadInteger("Doctrine.EngineerRush", "MinCash", cfg.EngRushMinCash);
+	cfg.EngRushRetryDelay = pINI->ReadInteger("Doctrine.EngineerRush", "RetryDelay", cfg.EngRushRetryDelay);
+	cfg.EngRushHonorPrereq = pINI->ReadInteger("Doctrine.EngineerRush", "HonorPrereq", cfg.EngRushHonorPrereq);
+	if (cfg.EngRushEnable)
+		Debug::Log("[DoctrineExt] [Doctrine.EngineerRush]: Enable=1 Interval=%d Radius=%d Targets=%u "
+			"(empty=any) Exclude=%u Priority=%u Max=%d Escorts=%d Safety=%.2f MinCash=%d RetryDelay=%d "
+			"HonorPrereq=%d\n", cfg.EngRushInterval, cfg.EngRushRadius,
+			static_cast<unsigned>(cfg.EngRushTargets.size()), static_cast<unsigned>(cfg.EngRushExclude.size()),
+			static_cast<unsigned>(cfg.EngRushPriority.size()), cfg.EngRushMax, cfg.EngRushEscorts,
+			cfg.EngRushSafety, cfg.EngRushMinCash, cfg.EngRushRetryDelay, cfg.EngRushHonorPrereq);
 	if (cfg.EconomyEnable)
 		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

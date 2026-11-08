@@ -20,6 +20,7 @@
 #include <CellClass.h>
 #include <BuildingClass.h>
 #include <BuildingTypeClass.h>
+#include <MissionClass.h>
 #include <RulesClass.h>
 #include <OverlayTypeClass.h>
 #include <InfantryTypeClass.h>
@@ -39,8 +40,10 @@
 
 #include <algorithm>
 #include <iterator>
+#include <climits>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <set>
@@ -2112,6 +2115,91 @@ namespace
 		return pTT->cntInstances > 0 ? pTT->FindFirstInstance() : pTT->CreateTeam(pHouse);
 	}
 
+	// Priority for the DLL's hand-managed squads (capture, counter-engineer, rush). The engine's
+	// recruit gate refuses a unit whose current team's Priority >= the recruiting team's, so this
+	// lets AddMember take units off AI teams — and stops AI teams taking them back mid-task. Two of
+	// our own squads tie, so they never poach from each other.
+	constexpr int DoctrineSquadPriority = 1000000;
+
+	// Move pFoot onto pTeam if the engine's recruit gate (TeamClass::AddMember 0x6EA500 → 0x6EA610)
+	// will take it, checked FIRST so a refused unit stays on its old team instead of being stranded
+	// teamless. With force=true the gate still refuses: a unit on a non-recruitable mission
+	// ([MissionControl] Recruitable — Hunt, Sticky…), a non-recruitable unit (RecruitableA, cleared on
+	// some map-placed objects; our squads aren't Autocreate so that's the flag checked), and one
+	// inside a transport. AddMember itself liberates the unit from its old team once accepted.
+	bool TryAddToTeam(TeamClass* const pTeam, FootClass* const pFoot)
+	{
+		if (!pTeam || !pTeam->Type || !pFoot || pFoot->Team == pTeam) return false;
+		if (pFoot->InLimbo || pFoot->Health <= 0 || pFoot->Transporter) return false;
+		if (!pFoot->RecruitableA) return false;
+		auto const m = pFoot->GetCurrentMission();
+		if (m != Mission::None && !MissionClass::IsRecruitableMission(m)) return false;
+		pTeam->Type->Priority = DoctrineSquadPriority;
+		if (!pTeam->AddMember(pFoot, true)) return false;
+		pFoot->ShouldGarrisonStructure = false;                         // keep it on task
+		pFoot->ShouldEnterOccupiable = false;
+		return true;
+	}
+
+	// Is pFoot on one of the DLL's squads with this ID prefix ("DANT", "DRSH", …)?
+	bool OnSquad(FootClass* const pFoot, const char* const prefix)
+	{
+		return pFoot && pFoot->Team && pFoot->Team->Type
+			&& std::strncmp(pFoot->Team->Type->ID, prefix, std::strlen(prefix)) == 0;
+	}
+
+	double Dist2D(CoordStruct const& a, CoordStruct const& b)
+	{
+		return std::sqrt(static_cast<double>(a.X - b.X) * (a.X - b.X)
+			+ static_cast<double>(a.Y - b.Y) * (a.Y - b.Y));
+	}
+
+	// Leptons from c to the nearest edge of the building's foundation — an engineer captures on
+	// reaching the footprint, not the center. Built around GetCoords() (the foundation center).
+	double DistToFootprint(CoordStruct const& c, BuildingClass* const pB)
+	{
+		auto const ctr = pB->GetCoords();
+		double const hw = pB->Type->GetFoundationWidth() * 128.0;
+		double const hh = pB->Type->GetFoundationHeight(false) * 128.0;
+		double dx = std::fabs(static_cast<double>(c.X - ctr.X)) - hw;
+		double dy = std::fabs(static_cast<double>(c.Y - ctr.Y)) - hh;
+		if (dx < 0.0) dx = 0.0;
+		if (dy < 0.0) dy = 0.0;
+		return std::sqrt(dx * dx + dy * dy);
+	}
+
+	// Leptons per frame a unit moves (the locomotor's per-frame step), never below 1.
+	double StepSpeed(FootClass* const pFoot)
+	{
+		int const s = pFoot ? pFoot->GetCurrentSpeed() : 0;
+		return s > 1 ? static_cast<double>(s) : 1.0;
+	}
+
+	bool ListHas(std::vector<std::string> const& list, const char* const id)
+	{
+		for (auto const& s : list)
+			if (s == id) return true;
+		return false;
+	}
+
+	// Live members of a squad; engineersOnly counts just the engineers.
+	int SquadCount(TeamClass* const pTeam, bool const engineersOnly)
+	{
+		int n = 0;
+		for (auto pF = pTeam ? pTeam->FirstUnit : nullptr; pF; pF = pF->NextTeamMember)
+		{
+			if (pF->InLimbo || pF->Health <= 0) continue;
+			if (engineersOnly)
+			{
+				auto const pType = pF->GetTechnoType();
+				if (!pType || pType->WhatAmI() != AbstractType::InfantryType
+					|| !static_cast<InfantryTypeClass*>(pType)->Engineer) continue;
+			}
+			++n;
+		}
+		return n;
+	}
+
 	// Best fast armed non-gatherer unit NOT already on pExclude, for squad
 	// recruiting: prefers teamless (CrateChasers list, then fastest), falls back
 	// to a teamed unit (caller liberates it) since the AI teams ~everything.
@@ -3817,9 +3905,11 @@ void Teams::CaptureDoctrine(HouseClass* pHouse)
 	auto const pTeam = EnsureSquadTeam(pHouse, desired,
 		(pEng && want > 0) ? pEng : nullptr, "DCAP", want);
 	if (!pTeam) return;
+	pTeam->Type->Priority = DoctrineSquadPriority;                       // AI teams can't take them back
 
-	// Recruit any idle engineer the house already owns (diversion), so a spare engineer
-	// goes to work instead of sitting. Liberate teamed ones (AI teams own ~all infantry).
+	// Recruit any engineer the house already owns (diversion), so a spare engineer goes to work
+	// instead of sitting — off AI teams too (they own ~all infantry). One the recruit gate
+	// refuses is skipped, never pulled off its team and stranded.
 	for (int i = 0; i < TechnoClass::Array.Count && EngineersOnTeam(pTeam) < desired; ++i)
 	{
 		auto const pT = TechnoClass::Array.GetItem(i);
@@ -3828,12 +3918,7 @@ void Teams::CaptureDoctrine(HouseClass* pHouse)
 		auto const pType = pT->GetTechnoType();
 		if (!pType || pType->WhatAmI() != AbstractType::InfantryType) continue;
 		if (!static_cast<InfantryTypeClass*>(pType)->Engineer) continue;
-		auto const pFoot = static_cast<FootClass*>(pT);
-		if (pFoot->Team == pTeam) continue;                              // already ours
-		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot);
-		if (!pTeam->AddMember(pFoot, true)) break;
-		pFoot->ShouldGarrisonStructure = false;                         // keep it on task
-		pFoot->ShouldEnterOccupiable = false;
+		TryAddToTeam(pTeam, static_cast<FootClass*>(pT));
 	}
 
 	// Unreachable guard (once per pass): for each engineer, track progress toward its
@@ -3922,14 +4007,214 @@ void Teams::SteerCapture(HouseClass* pHouse)
 	}
 }
 
-// ─── Counter-engineer rush (§10l) ────────────────────────────────────────────
+// ─── Counter-engineer / urgent response (§10l) ──────────────────────────────
 namespace
 {
-	std::map<int, int> g_counterEngLastFire;                      // house -> last pass frame
+	std::map<int, int> g_counterEngLastFire;                      // house -> last production pass frame
+	// house -> responder UniqueID -> UniqueID of the engineer it was retasked onto. Squad members and
+	// loose responders alike: a unit the recruit gate refuses (e.g. one on Hunt) still gets the order.
+	std::map<int, std::map<DWORD, DWORD>> g_responders;
 
-	// Fastest buildable, faction-correct armed infantry to hunt engineers with (attack dogs win
-	// on speed). Honors the modder list (CounterEngUnits) if set; else auto = any armed infantry.
-	// Prereq-aware; never an engineer itself.
+	// True only while DoctrineExt itself sells a building to deny a capture, so the firesale block
+	// (ShouldBlockSell, reached from the BuildingClass::Sell hook inside that same call) lets it through.
+	bool g_denySelling = false;
+
+	// Every live engineer's last two position samples (>= 8 frames apart), so each has a MEASURED
+	// velocity from its second sighting on — the arrival estimate the deny-sell trusts. Sampled at
+	// most once per frame, by whichever house ticks.
+	struct EngTrack { int F0 = 0, F1 = 0; CoordStruct C0{}, C1{}; };
+	std::map<DWORD, EngTrack> g_engTracks;
+	int g_engTrackFrame = -1;
+
+	bool IsLiveEngineer(TechnoClass* const pT)
+	{
+		if (!pT || pT->InLimbo || pT->Health <= 0) return false;
+		if (pT->WhatAmI() != AbstractType::Infantry) return false;
+		auto const pType = pT->GetTechnoType();
+		return pType && pType->WhatAmI() == AbstractType::InfantryType
+			&& static_cast<InfantryTypeClass*>(pType)->Engineer;
+	}
+
+	void SampleEngineers(int const now)
+	{
+		if (g_engTrackFrame == now) return;
+		g_engTrackFrame = now;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!IsLiveEngineer(pT)) continue;
+			auto& t = g_engTracks[pT->UniqueID];
+			auto const c = pT->GetCoords();
+			if (t.F1 <= 0 || now - t.F1 > 60)                   // new, or back out of a transport
+				{ t.F0 = t.F1 = now; t.C0 = t.C1 = c; continue; }
+			if (now - t.F1 < 8) continue;
+			t.F0 = t.F1; t.C0 = t.C1; t.F1 = now; t.C1 = c;
+		}
+		for (auto it = g_engTracks.begin(); it != g_engTracks.end(); )
+			if (now - it->second.F1 > 300) it = g_engTracks.erase(it); else ++it;
+	}
+
+	struct EngThreat
+	{
+		FootClass* Eng = nullptr;
+		BuildingClass* Goal = nullptr;   // the building it is (most likely) going to enter
+		bool Ours = false;               // Goal is ours (sellable), not neutral tech we want
+		bool Intent = false;             // its own order (Target/Destination) names Goal
+		bool Measured = false;           // has a measured velocity
+		bool Approaching = false;        // measurably closing on Goal
+		double Dist = 0.0;               // leptons to Goal's footprint
+		double Speed = 1.0;              // leptons/frame: measured, else its locomotor step
+		double Eta = 0.0;                // frames until it reaches Goal
+		int Hp = 0;
+		int Armor = 0;
+		double Need = 0.0;               // expected damage wanted: HP x RespondMargin
+		double Exp = 0.0;                // from covering defenses + committed responders
+		double ExpMax = 0.0;             // ... + every responder that could still be committed
+		int Resp = 0;                    // responders committed
+		int Defs = 0;                    // defenses covering the door
+		bool Sold = false;               // Goal deny-sold this tick
+	};
+
+	// Buildings an enemy engineer could be coming for: ours, plus neutral capturables we want (when the
+	// capture doctrine is on). Never enemy-owned ones — an enemy engineer at home is not a threat.
+	std::vector<BuildingClass*> EngineerAnchors(HouseClass* const pHouse)
+	{
+		std::vector<BuildingClass*> out;
+		bool const contest = DoctrineConfig::Instance.CaptureEnable;
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0) continue;
+			if (!pB->Type->Capturable) continue;                     // an engineer can't take it anyway
+			if (pB->Owner == pHouse) out.push_back(pB);
+			else if (contest && pB->Owner && pB->Owner->IsNeutral() && WantsCapture(pB->Type))
+				out.push_back(pB);
+		}
+		return out;
+	}
+
+	// Enemy engineers coming for an anchor, soonest arrival first. One whose own order names an anchor
+	// is a threat at any range; otherwise it must be within Radius AND measurably closing in (or
+	// already at the door) — one idling by our wall or walking past is left alone.
+	std::vector<EngThreat> FindEngineerThreats(HouseClass* const pHouse)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		std::vector<EngThreat> out;
+		auto const anchors = EngineerAnchors(pHouse);
+		if (anchors.empty()) return out;
+		double const radius = (cfg.CounterEngRadius > 0 ? cfg.CounterEngRadius : 12) * 256.0;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!IsLiveEngineer(pT)) continue;
+			auto const pO = pT->Owner;
+			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;    // enemy only
+			auto const pE = static_cast<FootClass*>(pT);
+			auto const c = pE->GetCoords();
+
+			EngThreat t;
+			for (auto const pB : anchors)                         // pointer compare only, never dereferenced
+				if (pE->Target == pB || pE->Destination == pB) { t.Goal = pB; t.Intent = true; break; }
+			if (t.Goal) t.Dist = DistToFootprint(c, t.Goal);
+			else
+			{
+				t.Dist = 1e18;
+				for (auto const pB : anchors)
+				{
+					double const d = DistToFootprint(c, pB);
+					if (d < t.Dist) { t.Dist = d; t.Goal = pB; }
+				}
+				if (t.Dist > radius) continue;
+			}
+			t.Eng = pE;
+			t.Ours = t.Goal->Owner == pHouse;
+
+			auto const tit = g_engTracks.find(pE->UniqueID);
+			if (tit != g_engTracks.end() && tit->second.F1 > tit->second.F0)
+			{
+				auto const& tr = tit->second;
+				t.Measured = true;
+				t.Speed = Dist2D(tr.C0, tr.C1) / (tr.F1 - tr.F0);
+				t.Approaching = DistToFootprint(tr.C0, t.Goal) - DistToFootprint(tr.C1, t.Goal) > 16.0;
+			}
+			if (t.Speed < 1.0) t.Speed = StepSpeed(pE);      // standing or unmeasured: it can walk
+			if (!t.Intent && !t.Approaching && t.Dist > 2.0 * 256.0) continue;
+			t.Eta = t.Dist / t.Speed;
+			t.Hp = pE->Health;
+			t.Armor = static_cast<int>(pE->GetTechnoType()->Armor);
+			out.push_back(t);
+		}
+		std::sort(out.begin(), out.end(),
+			[](EngThreat const& a, EngThreat const& b) { return a.Eta < b.Eta; });
+		return out;
+	}
+
+	// Can this defense fire now? Not while being built, sold or EMP'd. BuildingClass::IsPowerOnline
+	// (0x4555D0) also gates on per-building power state, so it's only asked of Powered= types — a
+	// pillbox shoots in a blacked-out base.
+	bool DefenseOnline(BuildingClass* const pD)
+	{
+		auto const m = pD->GetCurrentMission();
+		if (m == Mission::Construction || m == Mission::Selling || pD->IsUnderEMP()) return false;
+		return !pD->Type->Powered || pD->IsPowerOnline();
+	}
+
+	// Expected damage a defense deals the engineer before it reaches the door: it fires only once the
+	// engineer walks into its range, and only if the door is inside that range. (EffDPSVs is per 10
+	// frames.)
+	double DefenseContribution(BuildingClass* const pD, EngThreat const& t, double& range)
+	{
+		double const dps = EffDPSVs(pD->Type, t.Armor, false) / 10.0;
+		if (dps <= 0.0) return 0.0;
+		range = BestRangeVs(pD->Type, false);
+		auto const dc = pD->GetCoords();
+		if (DistToFootprint(dc, t.Goal) > range) return 0.0;
+		double const enter = std::max(0.0, Dist2D(dc, t.Eng->GetCoords()) - range) / t.Speed;
+		double const window = t.Eta - enter;
+		return window > 0.0 ? dps * window : 0.0;
+	}
+
+	// Expected damage a responder deals before the engineer reaches the door: after turning onto it
+	// (ReactionFrames, waived if it's already on it) and closing to weapon range of the engineer or the
+	// door, whichever is nearer.
+	double ResponderContribution(FootClass* const pR, EngThreat const& t, bool const already)
+	{
+		auto const pType = pR->GetTechnoType();
+		double const dps = EffDPSVs(pType, t.Armor, false) / 10.0;
+		if (dps <= 0.0) return 0.0;
+		double const range = BestRangeVs(pType, false);
+		auto const rc = pR->GetCoords();
+		double const gap = std::min(Dist2D(rc, t.Eng->GetCoords()), DistToFootprint(rc, t.Goal)) - range;
+		double const react = already ? 0.0 : static_cast<double>(DoctrineConfig::Instance.CounterEngReaction);
+		double const window = t.Eta - (std::max(0.0, gap) / StepSpeed(pR) + react);
+		return window > 0.0 ? dps * window : 0.0;
+	}
+
+	// A unit that could be retasked onto an engineer: our armed ground/naval unit that isn't an
+	// engineer, miner or MCV, and isn't busy on a capture or rush squad.
+	bool IsResponderCandidate(TechnoClass* const pT, HouseClass* const pHouse)
+	{
+		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) return false;
+		auto const what = pT->WhatAmI();
+		if (what != AbstractType::Unit && what != AbstractType::Infantry) return false;
+		auto const pType = pT->GetTechnoType();
+		if (!pType || pType->ResourceGatherer || pType->DeploysInto) return false;
+		if (pType->WhatAmI() == AbstractType::InfantryType
+			&& static_cast<InfantryTypeClass*>(pType)->Engineer) return false;
+		if (!HasOffensiveWeapon(pType)) return false;
+		auto const pF = static_cast<FootClass*>(pT);
+		return !OnSquad(pF, "DCAP") && !OnSquad(pF, "DRSH");
+	}
+
+	bool CanDenySell(BuildingClass* const pB, HouseClass* const pHouse)
+	{
+		return pB->Owner == pHouse && !pB->Type->Unsellable
+			&& !ListHas(DoctrineConfig::Instance.CounterEngDenySellExclude, pB->Type->ID)
+			&& pB->GetCurrentMission() != Mission::Selling;
+	}
+
+	// Fastest buildable, faction-correct armed infantry to keep as a standing interceptor (attack dogs
+	// win on speed). Honors the modder list (Units) if set; else any armed infantry. Never an engineer.
 	TechnoTypeClass* BestAntiEngineer(HouseClass* const pHouse, bool const honorPrereq)
 	{
 		auto const& list = DoctrineConfig::Instance.CounterEngUnits;
@@ -3937,69 +4222,13 @@ namespace
 		for (auto const pIt : InfantryTypeClass::Array)
 		{
 			if (!pIt || pIt->Engineer) continue;
-			if (!list.empty())
-			{
-				bool inList = false;
-				for (auto const& s : list) if (s == pIt->ID) { inList = true; break; }
-				if (!inList) continue;
-			}
-			else if (!HasOffensiveWeapon(pIt)) continue;         // auto: must be armed
+			if (!list.empty()) { if (!ListHas(list, pIt->ID)) continue; }
+			else if (!HasOffensiveWeapon(pIt)) continue;          // auto: must be armed
 			if (!pHouse->InOwners(pIt)) continue;
 			if (!CanBuildStrict(pHouse, pIt, honorPrereq)) continue;
 			if (pIt->Speed > bestSpeed) { bestSpeed = pIt->Speed; best = pIt; }
 		}
 		return best;
-	}
-
-	// Enemy engineers within `radiusCells` of the AI's base, any of its buildings, or a capturable
-	// building it's contesting — the ones worth intercepting. Nearest-to-base first.
-	std::vector<FootClass*> ThreateningEngineers(HouseClass* const pHouse, int const radiusCells)
-	{
-		std::vector<CoordStruct> anchors;
-		anchors.push_back(CellClass::Cell2Coord(pHouse->GetBaseCenter()));
-		for (auto const pBld : pHouse->Buildings)
-			if (pBld && !pBld->InLimbo && pBld->Health > 0) anchors.push_back(pBld->GetCoords());
-		for (int i = 0; i < BuildingClass::Array.Count; ++i)
-		{
-			auto const pB = BuildingClass::Array.GetItem(i);
-			if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0) continue;
-			if (!pB->Type->Capturable) continue;
-			auto const pO = pB->Owner;
-			if (pO == pHouse || (pO && pHouse->IsAlliedWith(pO))) continue;   // ours / an ally's
-			anchors.push_back(pB->GetCoords());
-		}
-		double const maxD = static_cast<double>(radiusCells > 0 ? radiusCells : 30) * 256.0;
-		auto const base = anchors[0];
-		std::vector<std::pair<FootClass*, double>> hits;
-		for (int i = 0; i < TechnoClass::Array.Count; ++i)
-		{
-			auto const pT = TechnoClass::Array.GetItem(i);
-			if (!pT || pT->InLimbo || pT->Health <= 0) continue;
-			if (pT->WhatAmI() != AbstractType::Infantry) continue;
-			auto const pO = pT->Owner;
-			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;    // enemy only
-			auto const pType = pT->GetTechnoType();
-			if (!pType || pType->WhatAmI() != AbstractType::InfantryType) continue;
-			if (!static_cast<InfantryTypeClass*>(pType)->Engineer) continue;  // engineers only
-			auto const c = pT->GetCoords();
-			double nearest = 1e18;
-			for (auto const& a : anchors)
-			{
-				double const d = std::sqrt(static_cast<double>(c.X - a.X) * (c.X - a.X)
-					+ static_cast<double>(c.Y - a.Y) * (c.Y - a.Y));
-				if (d < nearest) nearest = d;
-			}
-			if (nearest > maxD) continue;
-			double const toBase = std::sqrt(static_cast<double>(c.X - base.X) * (c.X - base.X)
-				+ static_cast<double>(c.Y - base.Y) * (c.Y - base.Y));
-			hits.push_back({ static_cast<FootClass*>(pT), toBase });
-		}
-		std::sort(hits.begin(), hits.end(),
-			[](std::pair<FootClass*, double> const& a, std::pair<FootClass*, double> const& b)
-			{ return a.second < b.second; });
-		std::vector<FootClass*> out;
-		for (auto const& h : hits) out.push_back(h.first);
-		return out;
 	}
 
 	TeamClass* FindCounterEngTeam(int const hIdx)
@@ -4008,14 +4237,6 @@ namespace
 		std::snprintf(id, sizeof(id), "DANT%dTM", hIdx);
 		auto const pTT = TeamTypeClass::Find(id);
 		return (pTT && pTT->cntInstances > 0) ? pTT->FindFirstInstance() : nullptr;
-	}
-
-	int DogsOnTeam(TeamClass* const pTeam)
-	{
-		int n = 0;
-		for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
-			if (!pF->InLimbo && pF->Health > 0) ++n;
-		return n;
 	}
 }
 
@@ -4028,94 +4249,532 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 
 	int const now = Unsorted::CurrentFrame;
 	int const hIdx = pHouse->ArrayIndex;
+	SampleEngineers(now);
+	auto threats = FindEngineerThreats(pHouse);
+	auto& resp = g_responders[hIdx];
+
+	// Our side, in one scan: responder candidates, and the live units already committed.
+	std::vector<FootClass*> cands;
+	std::map<DWORD, FootClass*> committed;
+	if (!threats.empty() || !resp.empty())
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!IsResponderCandidate(pT, pHouse)) continue;
+			auto const pF = static_cast<FootClass*>(pT);
+			if (resp.count(pF->UniqueID)) committed[pF->UniqueID] = pF;
+			else cands.push_back(pF);
+		}
+
+	std::map<DWORD, FootClass*> threatEng;
+	for (auto const& t : threats) threatEng[t.Eng->UniqueID] = t.Eng;
+
+	// Stand down responders whose engineer is dead or no longer a threat (stop chasing it home).
+	auto pSquad = FindCounterEngTeam(hIdx);
+	for (auto it = resp.begin(); it != resp.end(); )
+	{
+		auto const cit = committed.find(it->first);
+		if (cit != committed.end() && threatEng.count(it->second)) { ++it; continue; }
+		if (cit != committed.end())
+		{
+			auto const pR = cit->second;
+			if (pSquad && pR->Team == pSquad) pSquad->LiberateMember(pR);
+			pR->SetTarget(nullptr);
+			pR->QueueMission(Mission::Guard, false);
+			committed.erase(cit);
+		}
+		it = resp.erase(it);
+	}
+
+	double const margin = cfg.CounterEngRespondMargin > 0.0 ? cfg.CounterEngRespondMargin : 1.5;
+	int const perEng = cfg.CounterEngRespondMax > 0 ? cfg.CounterEngRespondMax : 4;
+	double const respondR = (cfg.CounterEngRespondRadius > 0 ? cfg.CounterEngRespondRadius : 15) * 256.0;
+	int const sense = cfg.SenseInterval > 0 ? cfg.SenseInterval : 15;
+	int const lead = cfg.CounterEngDenySellLead > 0 ? cfg.CounterEngDenySellLead : 2 * sense;
+	double const sellMargin = cfg.CounterEngDenySellMargin > 0.0 ? cfg.CounterEngDenySellMargin : 1.0;
+	std::set<BuildingClass*> retargeted;                                  // soonest threat keeps a tower
+
+	for (auto& t : threats)
+	{
+		t.Need = t.Hp * margin;
+
+		// Defenses covering the door count for free; the ones that can already reach the engineer
+		// are pointed at it (it outranks whatever they were shooting).
+		for (auto const pD : pHouse->Buildings)
+		{
+			if (!pD || !pD->Type || pD->InLimbo || pD->Health <= 0) continue;
+			if (!HasOffensiveWeapon(pD->Type) || !DefenseOnline(pD)) continue;
+			double range = 0.0;
+			double const c = DefenseContribution(pD, t, range);
+			if (c <= 0.0) continue;
+			t.Exp += c; ++t.Defs;
+			if (cfg.CounterEngRetargetDefenses && !retargeted.count(pD)
+				&& Dist2D(pD->GetCoords(), t.Eng->GetCoords()) <= range)
+			{
+				retargeted.insert(pD);
+				if (pD->Target != t.Eng) pD->SetTarget(t.Eng);
+			}
+		}
+
+		for (auto const& kv : resp)
+		{
+			if (kv.second != t.Eng->UniqueID) continue;
+			auto const cit = committed.find(kv.first);
+			if (cit == committed.end()) continue;
+			t.Exp += ResponderContribution(cit->second, t, true);
+			++t.Resp;
+		}
+
+		// Units near the door or the engineer, best expected damage first.
+		std::vector<std::pair<double, FootClass*>> pool;
+		auto const ec = t.Eng->GetCoords();
+		for (auto const pR : cands)
+		{
+			if (resp.count(pR->UniqueID)) continue;              // taken by an earlier threat
+			auto const rc = pR->GetCoords();
+			if (DistToFootprint(rc, t.Goal) > respondR && Dist2D(rc, ec) > respondR) continue;
+			double const c = ResponderContribution(pR, t, false);
+			if (c > 0.0) pool.push_back({ c, pR });
+		}
+		std::sort(pool.begin(), pool.end(),
+			[](std::pair<double, FootClass*> const& a, std::pair<double, FootClass*> const& b)
+			{ return a.first > b.first; });
+		t.ExpMax = t.Exp;
+		for (auto const& p : pool) t.ExpMax += p.first;
+
+		// Retask until the engineer is expected to die with margin to spare.
+		if (cfg.CounterEngRespond)
+			for (auto const& p : pool)
+			{
+				if (t.Exp >= t.Need || t.Resp >= perEng) break;
+				auto const pR = p.second;
+				if (!pSquad) pSquad = EnsureSquadTeam(pHouse, 1, nullptr, "DANT", 0);
+				TryAddToTeam(pSquad, pR);             // refused (e.g. on Hunt): a loose responder, still ordered
+				resp[pR->UniqueID] = t.Eng->UniqueID;
+				committed[pR->UniqueID] = pR;
+				t.Exp += p.first; ++t.Resp;
+			}
+
+		// Even everything we could send won't kill it before it walks in: sell the building first —
+		// an engineer reaching a building that is mid-sale is turned away (0x519EB2). Needs evidence
+		// it's coming for THIS building: its own order, a measured approach, or it's at the door.
+		if (cfg.CounterEngDenySell && t.Ours && t.Eta <= lead && t.ExpMax < t.Hp * sellMargin
+			&& (t.Intent || t.Approaching || t.Dist <= 128.0) && CanDenySell(t.Goal, pHouse))
+		{
+			g_denySelling = true;
+			t.Goal->Sell(-1);
+			g_denySelling = false;
+			t.Sold = true;
+			if (cfg.DebugTicks)
+				Debug::Log("[DoctrineExt] counter-eng DENY-SELL: house=%s#%d sold %s — %s#%u %.1f cells out, "
+					"eta=%.0ff, best-case damage %.0f < hp %d.\n", pHouse->get_ID(), hIdx,
+					t.Goal->Type->ID, t.Eng->GetTechnoType()->ID, t.Eng->UniqueID, t.Dist / 256.0,
+					t.Eta, t.ExpMax, t.Hp);
+		}
+	}
+
+	// Steer every responder onto its engineer (re-issued only when it drifted, so the attack isn't
+	// restarted each tick; the base AI and old teams can't countermand it in between).
+	for (auto const& kv : resp)
+	{
+		auto const cit = committed.find(kv.first);
+		auto const eit = threatEng.find(kv.second);
+		if (cit == committed.end() || eit == threatEng.end()) continue;
+		auto const pR = cit->second;
+		if (pR->Target != eit->second || pR->GetCurrentMission() != Mission::Attack)
+		{
+			pR->SetTarget(eit->second);
+			pR->QueueMission(Mission::Attack, false);
+		}
+	}
+
+	// Standing interceptors (throttled): while some threat outruns everything we could send, keep
+	// up to Max of the fast interceptor around. Sized from what the house OWNS, not squad members —
+	// built units start teamless and are retasked as responders when needed.
 	int const interval = cfg.CounterEngInterval > 0 ? cfg.CounterEngInterval : 30;
-	auto const it = g_counterEngLastFire.find(hIdx);
-	if (it != g_counterEngLastFire.end() && now - it->second < interval) return;
+	auto const fit = g_counterEngLastFire.find(hIdx);
+	if (fit != g_counterEngLastFire.end() && now - fit->second < interval) return;
 	g_counterEngLastFire[hIdx] = now;
 
-	auto const threats = ThreateningEngineers(pHouse, cfg.CounterEngRadius);
-	auto const pPrev = FindCounterEngTeam(hIdx);
-	if (threats.empty())
+	int shortOf = 0;
+	for (auto const& t : threats)
+		if (t.ExpMax < t.Need) ++shortOf;
+	auto const pDog = cfg.CounterEngBuild ? BestAntiEngineer(pHouse, cfg.HonorPrereqForCounterEng()) : nullptr;
+	int owned = 0;
+	if (pDog)
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (pT && pT->Owner == pHouse && !pT->InLimbo && pT->Health > 0 && pT->GetTechnoType() == pDog)
+				++owned;
+		}
+	int const cap = cfg.CounterEngMax > 0 ? cfg.CounterEngMax : 3;
+	int want = (pDog ? std::min(shortOf, cap) : 0) - owned;
+	if (want < 0) want = 0;
+	if (want > 0) EnsureSquadTeam(pHouse, 1, pDog, "DANT", want);
+	else if (pSquad) EnsureSquadTeam(pHouse, 1, nullptr, "DANT", 0);   // stop asking
+
+	if (!cfg.DebugTicks || threats.empty()) return;
+	Debug::Log("[DoctrineExt] counter-eng: house=%s#%d threats=%d responders=%d dog=%s owned=%d build=%d.\n",
+		pHouse->get_ID(), hIdx, static_cast<int>(threats.size()), static_cast<int>(resp.size()),
+		pDog ? pDog->get_ID() : "(none)", owned, want);
+	int shown = 0;
+	for (auto const& t : threats)
 	{
-		// No engineer threat: release interceptors back to the general pool (don't hoard dogs).
-		if (pPrev)
-			for (auto pF = pPrev->FirstUnit; pF; )
+		if (++shown > 4) break;
+		Debug::Log("[DoctrineExt]   eng=%s#%u -> %s%s dist=%.1fc eta=%.0ff v=%.1f(%s step=%d) intent=%d "
+			"approach=%d hp=%d exp=%.0f max=%.0f need=%.0f resp=%d defs=%d%s.\n",
+			t.Eng->GetTechnoType()->ID, t.Eng->UniqueID, t.Goal->Type->ID, t.Ours ? "" : "(neutral)",
+			t.Dist / 256.0, t.Eta, t.Speed, t.Measured ? "measured" : "assumed", t.Eng->GetCurrentSpeed(),
+			t.Intent, t.Approaching, t.Hp, t.Exp, t.ExpMax, t.Need, t.Resp, t.Defs, t.Sold ? " SOLD" : "");
+	}
+}
+
+
+// ─── Engineer rush (§10m) ────────────────────────────────────────────────────
+namespace
+{
+	std::map<int, int> g_engRushLastFire;                         // house -> last pass frame
+	std::map<int, std::map<DWORD, DWORD>> g_engRushAssign;        // house -> engineer UID -> target UID
+	std::map<int, std::map<DWORD, int>> g_engRushCooldown;        // house -> target UID -> retry frame
+
+	TeamClass* FindRushTeam(int const hIdx)
+	{
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DRSH%dTM", hIdx);
+		auto const pTT = TeamTypeClass::Find(id);
+		return (pTT && pTT->cntInstances > 0) ? pTT->FindFirstInstance() : nullptr;
+	}
+
+	bool IsHostileTo(HouseClass* const pHouse, HouseClass* const pO)
+	{
+		return pO && pO != pHouse && !pHouse->IsAlliedWith(pO) && !pO->IsNeutral();
+	}
+
+	bool WantsRush(BuildingTypeClass* const pBt)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		if (!pBt || !pBt->Capturable || ListHas(cfg.EngRushExclude, pBt->ID)) return false;
+		return cfg.EngRushTargets.empty() || ListHas(cfg.EngRushTargets, pBt->ID);
+	}
+
+	int RushRank(BuildingTypeClass* const pBt)
+	{
+		auto const& list = DoctrineConfig::Instance.EngRushPriority;
+		for (size_t i = 0; i < list.size(); ++i)
+			if (list[i] == pBt->ID) return static_cast<int>(i);
+		return INT_MAX;
+	}
+
+	// A hostile armed object, as the rush's risk model sees it.
+	struct Shooter { TechnoClass* T; TechnoTypeClass* Type; bool Building; double Range; double Speed; };
+
+	std::vector<Shooter> HostileShooters(HouseClass* const pHouse)
+	{
+		std::vector<Shooter> out;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pX = TechnoClass::Array.GetItem(i);
+			if (!pX || pX->InLimbo || pX->Health <= 0 || !IsHostileTo(pHouse, pX->Owner)) continue;
+			auto const what = pX->WhatAmI();
+			bool const bld = what == AbstractType::Building;
+			if (!bld && what != AbstractType::Unit && what != AbstractType::Infantry) continue;
+			auto const pXT = pX->GetTechnoType();
+			if (!pXT || !HasOffensiveWeapon(pXT)) continue;
+			if (bld && !DefenseOnline(static_cast<BuildingClass*>(pX))) continue;
+			out.push_back({ pX, pXT, bld, static_cast<double>(BestRangeVs(pXT, false)),
+				bld ? 0.0 : StepSpeed(static_cast<FootClass*>(pX)) });
+		}
+		return out;
+	}
+
+	// Expected damage the enemy deals an engineer of type pEng walking into pB — the counter-engineer's
+	// model from the attacker's side. A defense whose range covers the door fires while it crosses that
+	// range (about one range-length of walking); an enemy unit within a few cells closes in and fires
+	// over the last stretch. A heuristic: it separates an open door from a covered one.
+	double RushRisk(std::vector<Shooter> const& shooters, BuildingClass* const pB, TechnoTypeClass* const pEng)
+	{
+		int const armor = static_cast<int>(pEng->Armor);
+		double const v = pEng->Speed > 1 ? static_cast<double>(pEng->Speed) : 1.0;   // leptons/frame
+		double const stretch = 4.0 * 256.0;
+		double dmg = 0.0;
+		for (auto const& s : shooters)
+		{
+			double const dps = EffDPSVs(s.Type, armor, false) / 10.0;
+			if (dps <= 0.0) continue;
+			double const d = DistToFootprint(s.T->GetCoords(), pB);
+			if (s.Building)
+			{
+				if (d <= s.Range) dmg += dps * s.Range / v;
+			}
+			else if (d <= s.Range + stretch)
+			{
+				double const window = (s.Range + stretch) / v - std::max(0.0, d - s.Range) / s.Speed;
+				if (window > 0.0) dmg += dps * window;
+			}
+		}
+		return dmg;
+	}
+}
+
+void Teams::EngineerRush(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Instance;
+	if (!cfg.EngRushEnable) return;                                       // opt-in
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
+		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
+
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	int const interval = cfg.EngRushInterval > 0 ? cfg.EngRushInterval : 60;
+	auto const lit = g_engRushLastFire.find(hIdx);
+	if (lit != g_engRushLastFire.end() && now - lit->second < interval) return;
+	g_engRushLastFire[hIdx] = now;
+
+	auto& assign = g_engRushAssign[hIdx];
+	auto& cool = g_engRushCooldown[hIdx];
+	for (auto it = cool.begin(); it != cool.end(); )
+		if (it->second <= now) it = cool.erase(it); else ++it;
+
+	auto pTeam = FindRushTeam(hIdx);
+	auto const pEng = BestEngineer(pHouse, cfg.HonorPrereqForEngRush());
+	TechnoTypeClass* pEngType = pEng;                                     // risk is priced for this engineer
+	std::map<DWORD, FootClass*> onTeam;                                   // squad engineers by UID
+	for (auto pF = pTeam ? pTeam->FirstUnit : nullptr; pF; pF = pF->NextTeamMember)
+		if (IsLiveEngineer(pF))
+		{
+			onTeam[pF->UniqueID] = pF;
+			if (!pEngType) pEngType = pF->GetTechnoType();
+		}
+
+	// Hostile buildings by UID, and the rushable ones near base whose door the enemy can't cover.
+	struct Cand { BuildingClass* B; int Rank; int Value; double Dist; double Risk; };
+	std::vector<Cand> cands;
+	std::map<DWORD, BuildingClass*> hostile;
+	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	double const maxD = (cfg.EngRushRadius > 0 ? cfg.EngRushRadius : 30) * 256.0;
+	double const safety = cfg.EngRushSafety > 0.0 ? cfg.EngRushSafety : 1.0;
+	auto const shooters = pEngType ? HostileShooters(pHouse) : std::vector<Shooter>();
+	for (int i = 0; i < BuildingClass::Array.Count; ++i)
+	{
+		auto const pB = BuildingClass::Array.GetItem(i);
+		if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0) continue;
+		if (!IsHostileTo(pHouse, pB->Owner) || !WantsRush(pB->Type)) continue;
+		hostile[pB->UniqueID] = pB;
+		if (!pEngType) continue;
+		double const d = Dist2D(base, pB->GetCoords());
+		if (d > maxD || cool.count(pB->UniqueID)) continue;
+		double const risk = RushRisk(shooters, pB, pEngType);
+		if (risk * safety >= pEngType->Strength) continue;               // its door is covered
+		cands.push_back({ pB, RushRank(pB->Type), pB->Type->Cost, d, risk });
+	}
+	std::sort(cands.begin(), cands.end(), [](Cand const& a, Cand const& b)
+	{
+		if (a.Rank != b.Rank) return a.Rank < b.Rank;
+		if (a.Value != b.Value) return a.Value > b.Value;
+		return a.Dist < b.Dist;
+	});
+
+	// An engineer that left the squad while its target is still hostile didn't make it (one that
+	// captured is consumed, and the building is no longer hostile): rest that target before retrying.
+	for (auto it = assign.begin(); it != assign.end(); )
+	{
+		if (onTeam.count(it->first)) { ++it; continue; }
+		if (hostile.count(it->second))
+			cool[it->second] = now + (cfg.EngRushRetryDelay > 0 ? cfg.EngRushRetryDelay : 900);
+		it = assign.erase(it);
+	}
+
+	int const cap = cfg.EngRushMax > 0 ? cfg.EngRushMax : 2;
+	int const desired = std::min(static_cast<int>(cands.size()), cap);
+	int const have = static_cast<int>(onTeam.size());
+	if (desired == 0)
+	{
+		// Nothing safe to rush: stand the squad down (escorts and any engineer back to the pool).
+		if (pTeam)
+			for (auto pF = pTeam->FirstUnit; pF; )
 			{
 				auto const next = pF->NextTeamMember;
-				pPrev->LiberateMember(pF);
+				pTeam->LiberateMember(pF);
 				pF = next;
 			}
+		assign.clear();
 		return;
 	}
 
-	int const cap = cfg.CounterEngMax > 0 ? cfg.CounterEngMax : 3;
-	int desired = static_cast<int>(threats.size());
-	if (desired > cap) desired = cap;
-
-	int const have = pPrev ? DogsOnTeam(pPrev) : 0;
-	TechnoTypeClass* const pDog = BestAntiEngineer(pHouse, cfg.HonorPrereqForCounterEng());
-	int want = desired - have; if (want < 0) want = 0;
-
-	// Build the shortfall via the taskforce (the proven AI build path), else recruit-only.
-	auto const pTeam = EnsureSquadTeam(pHouse, desired,
-		(pDog && want > 0) ? pDog : nullptr, "DANT", want);
+	bool const flush = pHouse->Available_Money() >= cfg.EngRushMinCash;
+	int want = flush ? desired - have : 0;
+	if (want < 0) want = 0;
+	pTeam = EnsureSquadTeam(pHouse, desired, (pEng && want > 0) ? pEng : nullptr, "DRSH", want);
 	if (!pTeam) return;
+	pTeam->Type->Priority = DoctrineSquadPriority;
 
-	// Recruit owned fast armed non-engineer infantry (divert) so spares intercept immediately.
-	for (int i = 0; i < TechnoClass::Array.Count && DogsOnTeam(pTeam) < desired; ++i)
+	// Spare engineers first (a capture-squad engineer ties on priority, so it's never poached).
+	for (int i = 0; i < TechnoClass::Array.Count && static_cast<int>(onTeam.size()) < desired; ++i)
 	{
 		auto const pT = TechnoClass::Array.GetItem(i);
-		if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
-		if (pT->WhatAmI() != AbstractType::Infantry) continue;
-		auto const pType = pT->GetTechnoType();
-		if (!pType || pType->WhatAmI() != AbstractType::InfantryType) continue;
-		if (static_cast<InfantryTypeClass*>(pType)->Engineer || !HasOffensiveWeapon(pType)) continue;
-		auto const pFoot = static_cast<FootClass*>(pT);
-		if (pFoot->Team == pTeam) continue;
-		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot);
-		if (!pTeam->AddMember(pFoot, true)) break;
-		pFoot->ShouldGarrisonStructure = false;
-		pFoot->ShouldEnterOccupiable = false;
+		if (!IsLiveEngineer(pT) || pT->Owner != pHouse) continue;
+		auto const pF = static_cast<FootClass*>(pT);
+		if (TryAddToTeam(pTeam, pF)) onTeam[pF->UniqueID] = pF;
+	}
+
+	// Escorts: armed units nearest the base, up to Escorts per engineer; extras (an engineer died) go home.
+	int const escortCap = cfg.EngRushEscorts > 0 ? cfg.EngRushEscorts * static_cast<int>(onTeam.size()) : 0;
+	int escorts = SquadCount(pTeam, false) - SquadCount(pTeam, true);
+	if (escorts < escortCap)
+	{
+		auto const& resp = g_responders[hIdx];
+		std::vector<std::pair<double, FootClass*>> pool;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!IsResponderCandidate(pT, pHouse)) continue;
+			auto const pF = static_cast<FootClass*>(pT);
+			if (OnSquad(pF, "DANT") || resp.count(pF->UniqueID)) continue;   // busy defending
+			pool.push_back({ Dist2D(base, pF->GetCoords()), pF });
+		}
+		std::sort(pool.begin(), pool.end(),
+			[](std::pair<double, FootClass*> const& a, std::pair<double, FootClass*> const& b)
+			{ return a.first < b.first; });
+		for (auto const& p : pool)
+		{
+			if (escorts >= escortCap) break;
+			if (TryAddToTeam(pTeam, p.second)) ++escorts;
+		}
+	}
+	for (auto pF = pTeam->FirstUnit; pF && escorts > escortCap; )
+	{
+		auto const next = pF->NextTeamMember;
+		if (!IsLiveEngineer(pF)) { pTeam->LiberateMember(pF); --escorts; }
+		pF = next;
+	}
+
+	// Assignments: keep the ones still worth it; give each free engineer the best untaken target,
+	// nearest engineer per target.
+	std::set<DWORD> candIds, taken;
+	for (auto const& c : cands) candIds.insert(c.B->UniqueID);
+	for (auto it = assign.begin(); it != assign.end(); )
+		if (!candIds.count(it->second)) it = assign.erase(it);
+		else { taken.insert(it->second); ++it; }
+	std::vector<FootClass*> freeEng;
+	for (auto const& kv : onTeam)
+		if (!assign.count(kv.first)) freeEng.push_back(kv.second);
+	for (auto const& c : cands)
+	{
+		if (freeEng.empty()) break;
+		if (taken.count(c.B->UniqueID)) continue;
+		auto const bc = c.B->GetCoords();
+		size_t bestI = 0; double bestD = 1e18;
+		for (size_t k = 0; k < freeEng.size(); ++k)
+		{
+			double const d = Dist2D(bc, freeEng[k]->GetCoords());
+			if (d < bestD) { bestD = d; bestI = k; }
+		}
+		assign[freeEng[bestI]->UniqueID] = c.B->UniqueID;
+		taken.insert(c.B->UniqueID);
+		freeEng.erase(freeEng.begin() + static_cast<std::ptrdiff_t>(bestI));
 	}
 
 	if (cfg.DebugTicks)
-		Debug::Log("[DoctrineExt] counter-eng: house=%s#%d threats=%d desired=%d have=%d dog=%s build=%d.\n",
-			pHouse->get_ID(), hIdx, static_cast<int>(threats.size()), desired, DogsOnTeam(pTeam),
-			pDog ? pDog->get_ID() : "(none)", want);
+		Debug::Log("[DoctrineExt] eng-rush: house=%s#%d targets=%d desired=%d eng=%d escorts=%d/%d "
+			"build=%d%s best=%s@%.1fc risk=%.0f/%d.\n", pHouse->get_ID(), hIdx,
+			static_cast<int>(cands.size()), desired, static_cast<int>(onTeam.size()), escorts, escortCap,
+			want, flush ? "" : " (below MinCash)", cands[0].B->Type->ID, cands[0].Dist / 256.0,
+			cands[0].Risk, pEngType->Strength);
 }
 
-void Teams::SteerCounterEngineers(HouseClass* pHouse)
+void Teams::SteerEngineerRush(HouseClass* pHouse)
 {
 	auto const& cfg = DoctrineConfig::Instance;
-	if (!cfg.CounterEngEnable) return;
+	if (!cfg.EngRushEnable) return;
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
 		|| pHouse->IsControlledByHuman()) return;
-	auto const pTeam = FindCounterEngTeam(pHouse->ArrayIndex);
+	int const hIdx = pHouse->ArrayIndex;
+	auto const pTeam = FindRushTeam(hIdx);
 	if (!pTeam || !pTeam->FirstUnit) return;
-	auto const threats = ThreateningEngineers(pHouse, cfg.CounterEngRadius);
-	if (threats.empty()) return;
+	auto const ait = g_engRushAssign.find(hIdx);
+	if (ait == g_engRushAssign.end() || ait->second.empty()) return;
+	auto const& assign = ait->second;
 
-	// Each interceptor attacks its nearest live threatening engineer; re-issued every tick so the
-	// base AI can't countermand it and dogs keep chasing as the engineers move.
+	std::set<DWORD> wanted;
+	for (auto const& kv : assign) wanted.insert(kv.second);
+	std::map<DWORD, BuildingClass*> targets;
+	for (int i = 0; i < BuildingClass::Array.Count; ++i)
+	{
+		auto const pB = BuildingClass::Array.GetItem(i);
+		if (pB && wanted.count(pB->UniqueID) && !pB->InLimbo && pB->Health > 0
+			&& IsHostileTo(pHouse, pB->Owner))
+			targets[pB->UniqueID] = pB;
+	}
+
+	// Engineers: capture order onto the assigned building (re-issued only when it drifted).
+	std::vector<std::pair<FootClass*, BuildingClass*>> engs;
 	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
 	{
-		if (pF->InLimbo || pF->Health <= 0) continue;
-		auto const fc = pF->GetCoords();
-		FootClass* best = nullptr; double bestD = 1e18;
-		for (auto const pE : threats)
+		if (!IsLiveEngineer(pF)) continue;
+		auto const a = assign.find(pF->UniqueID);
+		if (a == assign.end()) continue;
+		auto const t = targets.find(a->second);
+		if (t == targets.end()) continue;                               // captured/lost: next pass reassigns
+		if (pF->Target != t->second || pF->GetCurrentMission() != Mission::Capture)
 		{
-			if (!pE || pE->InLimbo || pE->Health <= 0) continue;
-			auto const c = pE->GetCoords();
-			double const d = std::sqrt(static_cast<double>(c.X - fc.X) * (c.X - fc.X)
-				+ static_cast<double>(c.Y - fc.Y) * (c.Y - fc.Y));
-			if (d < bestD) { bestD = d; best = pE; }
+			pF->SetTarget(t->second);
+			pF->QueueMission(Mission::Capture, false);
 		}
-		if (!best) break;
-		pF->SetTarget(best);
-		pF->QueueMission(Mission::Attack, false);
+		engs.push_back({ pF, t->second });
+	}
+	if (engs.empty()) return;
+
+	// Per engineer, the most dangerous hostile it's walking into: the biggest damage-dealer to an
+	// engineer within reach of it now, or covering its door.
+	std::vector<TechnoClass*> danger(engs.size(), nullptr);
+	for (size_t k = 0; k < engs.size(); ++k)
+	{
+		auto const pE = engs[k].first;
+		int const armor = static_cast<int>(pE->GetTechnoType()->Armor);
+		auto const ec = pE->GetCoords();
+		double bestDps = 0.0;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pX = TechnoClass::Array.GetItem(i);
+			if (!pX || pX->InLimbo || pX->Health <= 0 || !IsHostileTo(pHouse, pX->Owner)) continue;
+			auto const what = pX->WhatAmI();
+			if (what != AbstractType::Building && what != AbstractType::Unit
+				&& what != AbstractType::Infantry) continue;
+			auto const pXT = pX->GetTechnoType();
+			if (!pXT) continue;
+			double const dps = EffDPSVs(pXT, armor, false);
+			if (dps <= bestDps) continue;
+			double const range = BestRangeVs(pXT, false);
+			auto const xc = pX->GetCoords();
+			if (Dist2D(xc, ec) <= range + 2.0 * 256.0 || DistToFootprint(xc, engs[k].second) <= range)
+				{ bestDps = dps; danger[k] = pX; }
+		}
+	}
+
+	// Escorts, shared round-robin: hit the engineer's danger, else shadow the engineer.
+	size_t k = 0;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+	{
+		if (pF->InLimbo || pF->Health <= 0 || IsLiveEngineer(pF)) continue;
+		size_t const e = k++ % engs.size();
+		auto const pX = danger[e];
+		if (pX && EffDPSVs(pF->GetTechnoType(), static_cast<int>(pX->GetTechnoType()->Armor), false) > 0.0)
+		{
+			if (pF->Target != pX || pF->GetCurrentMission() != Mission::Attack)
+			{
+				pF->SetTarget(pX);
+				pF->QueueMission(Mission::Attack, false);
+			}
+		}
+		else if (Dist2D(pF->GetCoords(), engs[e].first->GetCoords()) > 3.0 * 256.0
+			&& (pF->Destination != engs[e].first || pF->GetCurrentMission() != Mission::Move))
+		{
+			pF->SetDestination(engs[e].first, true);
+			pF->QueueMission(Mission::Move, false);
+		}
 	}
 }
-
 
 // ─── Economy opening (§10k) ──────────────────────────────────────────────────
 namespace
@@ -4483,6 +5142,7 @@ bool Teams::ShouldBlockSell(BuildingClass* pBld)
 {
 	auto const& cfg = DoctrineConfig::Instance;
 	if (!cfg.EconomyEnable || !cfg.EconomyPreventSelling) return false;
+	if (g_denySelling) return false;                      // our own capture-denial sale (§10l)
 	if (!pBld || !pBld->Type) return false;
 	auto const pH = pBld->Owner;
 	if (!pH || pH->Defeated || pH->IsNeutral() || pH->IsControlledByHuman())
@@ -4549,4 +5209,11 @@ void Teams::Reset()
 	g_economyLastFire.clear();
 	g_economyLocked.clear();
 	g_counterEngLastFire.clear();
+	g_responders.clear();
+	g_denySelling = false;
+	g_engTracks.clear();
+	g_engTrackFrame = -1;
+	g_engRushLastFire.clear();
+	g_engRushAssign.clear();
+	g_engRushCooldown.clear();
 }

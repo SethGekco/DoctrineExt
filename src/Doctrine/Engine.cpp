@@ -161,16 +161,21 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// (The broke-window firesale is blocked at its source by the BuildingClass::Sell hook
 	// 0x44717D -> Teams::ShouldBlockSell, not here — no per-tick pass needed.)
 
+	// Counter-engineer / urgent response (§10l): retask units onto enemy engineers coming for
+	// our buildings, deny-sell what can't be saved. Every tick, and FIRST, so urgent defense
+	// claims units before capture and rush squads do. Opt-in.
+	Teams::CounterEngineers(pHouse);
+
 	// Capture doctrine (§10j): grab neutral/enemy tech buildings (oil derricks etc.)
 	// with engineers, nearest-first. Additive production only — can't destabilise the
 	// base. Pass throttled; steering every tick so the capture order sticks. Opt-in.
 	Teams::CaptureDoctrine(pHouse);
 	Teams::SteerCapture(pHouse);
 
-	// Counter-engineer rush (§10l): attack dogs at enemy engineers threatening the base or
-	// contested tech. Pass throttled; steering every tick so the chase sticks. Opt-in.
-	Teams::CounterEngineers(pHouse);
-	Teams::SteerCounterEngineers(pHouse);
+	// Engineer rush (§10m): escorted engineers at enemy buildings near base whose door the
+	// enemy can't cover. Pass throttled; steering every tick. Opt-in.
+	Teams::EngineerRush(pHouse);
+	Teams::SteerEngineerRush(pHouse);
 
 	// Commander takeover: if the base AI sits idle (its own aimd/AITrigger teams
 	// never attack) for CommanderIdleTime, DoctrineExt seizes command and drives

@@ -435,6 +435,15 @@ public:
 	                                 // there before it goes in (0 = none); they don't count for DenySell
 	int CounterEngReaction = 15;     // ReactionFrames — a retasked unit's turn/acquire delay
 	bool CounterEngRetargetDefenses = true; // RetargetDefenses — point in-range defenses at the engineer
+	bool CounterEngPredictGoal = true; // Predict.Goal — when its order doesn't name one of our buildings, read
+	                                 // the one it's going for from its move order (a destination cell by the
+	                                 // building) and then its heading, instead of assuming the nearest
+	int CounterEngPredictWidth = 3;  // Predict.Width — cells either side of its heading a building may be and
+	                                 // still count as the one it's walking at
+	bool CounterEngPredictIntercept = true; // Predict.Intercept — responders cut it off where their path meets
+	                                 // its predicted path to the building, instead of chasing it from behind
+	bool CounterEngShareDefenses = true; // ShareDefenses — a defense shoots one engineer at a time: engineers
+	                                 // arriving together share its fire, soonest first
 	bool CounterEngDenySell = true;  // DenySell — sell a building an engineer reaches before it can die
 	std::vector<std::string> CounterEngDenySellExclude; // DenySell.Exclude — never deny-sell these
 	int CounterEngDenySellLead = 0;  // DenySell.Lead — sell when the engineer is this many frames out

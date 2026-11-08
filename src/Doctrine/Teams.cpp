@@ -4044,6 +4044,9 @@ namespace
 	// house -> responder UniqueID -> UniqueID of the engineer it was retasked onto. Squad members and
 	// loose responders alike: a unit the recruit gate refuses (e.g. one on Hunt) still gets the order.
 	std::map<int, std::map<DWORD, DWORD>> g_responders;
+	// house -> responder UniqueID -> the cell it was sent to cut its engineer off (Predict.Intercept); our
+	// own record, since the engine rewrites FootClass::Destination mid-route.
+	std::map<int, std::map<DWORD, CellClass*>> g_interceptCells;
 
 	// True only while DoctrineExt itself sells a building to deny a capture, so the firesale block
 	// (ShouldBlockSell, reached from the BuildingClass::Sell hook inside that same call) lets it through.
@@ -4119,6 +4122,8 @@ namespace
 		BuildingClass* Goal = nullptr;   // the building it is (most likely) going to enter
 		bool Ours = false;               // Goal is ours (sellable), not neutral tech we want
 		bool Intent = false;             // its own order (Target/Destination) names Goal
+		const char* Guess = "";          // how Goal was picked when its order doesn't name it (Predict.Goal):
+		                                 // "order" (its move order's cell), "heading" or "nearest"
 		bool Measured = false;           // has a measured velocity
 		bool Approaching = false;        // measurably closing on Goal
 		double Dist = 0.0;               // leptons to Goal's footprint
@@ -4152,9 +4157,58 @@ namespace
 		return out;
 	}
 
+	// The anchor an engineer's move order leads to (Predict.Goal): its destination or attack-move cell
+	// within two cells of an anchor's footprint, the nearest such. A human player often walks engineers
+	// to a cell by the door and only orders the capture there, so its order never names the building.
+	// Destination is the engine's own live pointer (it paths to it every frame); Target is never touched.
+	BuildingClass* OrderedGoal(FootClass* const pE, std::vector<BuildingClass*> const& anchors)
+	{
+		AbstractClass* const dests[2] = { pE->Destination, pE->MegaDestination };
+		for (auto const pD : dests)
+		{
+			if (!pD || pD->WhatAmI() != AbstractType::Cell) continue;
+			auto const dc = pD->GetCoords();
+			BuildingClass* best = nullptr;
+			double bestD = 2.0 * 256.0;
+			for (auto const pB : anchors)
+			{
+				double const d = DistToFootprint(dc, pB);
+				if (d <= bestD) { bestD = d; best = pB; }
+			}
+			if (best) return best;
+		}
+		return nullptr;
+	}
+
+	// The anchor an engineer is walking at (Predict.Goal): ahead of it along its measured heading, within
+	// Predict.Width cells of that line (past the building's own half-size), the first it would reach.
+	BuildingClass* HeadingGoal(CoordStruct const& c, EngTrack const& tr, std::vector<BuildingClass*> const& anchors)
+	{
+		double const vx = tr.C1.X - tr.C0.X, vy = tr.C1.Y - tr.C0.Y;
+		double const len = std::sqrt(vx * vx + vy * vy);
+		if (len < 32.0) return nullptr;                               // standing: no heading
+		double const ux = vx / len, uy = vy / len;
+		int const w = DoctrineConfig::Get().CounterEngPredictWidth;
+		double const width = (w > 0 ? w : 3) * 256.0;
+		BuildingClass* best = nullptr;
+		double bestAlong = 1e18;
+		for (auto const pB : anchors)
+		{
+			auto const bc = pB->GetCoords();
+			double const rx = bc.X - c.X, ry = bc.Y - c.Y;
+			double const along = rx * ux + ry * uy;
+			if (along <= 0.0) continue;                               // behind it
+			double const half = std::max(pB->Type->GetFoundationWidth(), pB->Type->GetFoundationHeight(false)) * 128.0;
+			if (std::fabs(rx * uy - ry * ux) - half > width) continue;  // off its line
+			if (along < bestAlong) { bestAlong = along; best = pB; }
+		}
+		return best;
+	}
+
 	// Enemy engineers coming for an anchor, soonest arrival first. One whose own order names an anchor
-	// is a threat at any range; otherwise it must be within Radius AND measurably closing in (or
-	// already at the door) — one idling by our wall or walking past is left alone.
+	// (or, with Predict.Goal, whose move order ends at one) is a threat at any range; otherwise it must be
+	// within Radius AND measurably closing in (or already at the door) — one idling by our wall or walking
+	// past is left alone. Its goal is then the anchor it's walking at (Predict.Goal), else the nearest.
 	std::vector<EngThreat> FindEngineerThreats(HouseClass* const pHouse)
 	{
 		auto const& cfg = DoctrineConfig::Get();
@@ -4170,10 +4224,17 @@ namespace
 			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;    // enemy only
 			auto const pE = static_cast<FootClass*>(pT);
 			auto const c = pE->GetCoords();
+			auto const tit = g_engTracks.find(pE->UniqueID);
+			bool const moved = tit != g_engTracks.end() && tit->second.F1 > tit->second.F0;
 
 			EngThreat t;
 			for (auto const pB : anchors)                         // pointer compare only, never dereferenced
 				if (pE->Target == pB || pE->Destination == pB) { t.Goal = pB; t.Intent = true; break; }
+			if (!t.Goal && cfg.CounterEngPredictGoal && (t.Goal = OrderedGoal(pE, anchors)) != nullptr)
+				{ t.Intent = true; t.Guess = "order"; }
+			if (!t.Goal && cfg.CounterEngPredictGoal && moved
+				&& (t.Goal = HeadingGoal(c, tit->second, anchors)) != nullptr)
+				t.Guess = "heading";
 			if (t.Goal) t.Dist = DistToFootprint(c, t.Goal);
 			else
 			{
@@ -4183,13 +4244,13 @@ namespace
 					double const d = DistToFootprint(c, pB);
 					if (d < t.Dist) { t.Dist = d; t.Goal = pB; }
 				}
-				if (t.Dist > radius) continue;
+				t.Guess = "nearest";
 			}
+			if (!t.Intent && t.Dist > radius) continue;
 			t.Eng = pE;
 			t.Ours = t.Goal->Owner == pHouse;
 
-			auto const tit = g_engTracks.find(pE->UniqueID);
-			if (tit != g_engTracks.end() && tit->second.F1 > tit->second.F0)
+			if (moved)
 			{
 				auto const& tr = tit->second;
 				t.Measured = true;
@@ -4220,17 +4281,22 @@ namespace
 
 	// Expected damage a defense deals the engineer before it reaches the door: it fires only once the
 	// engineer walks into its range, and only if the door is inside that range. (EffDPSVs is per 10
-	// frames.)
-	double DefenseContribution(BuildingClass* const pD, EngThreat const& t, double& range)
+	// frames.) With freeAt (ShareDefenses) it shoots one engineer at a time: it starts on this one no
+	// sooner than freeAt frames from now (busy with engineers arriving sooner), and freeAt moves on to
+	// when it has killed this one or the engineer is in.
+	double DefenseContribution(BuildingClass* const pD, EngThreat const& t, double& range, double* const freeAt = nullptr)
 	{
 		double const dps = EffDPSVs(pD->Type, t.Armor, false) / 10.0;
 		if (dps <= 0.0) return 0.0;
 		range = BestRangeVs(pD->Type, false);
 		auto const dc = pD->GetCoords();
 		if (DistToFootprint(dc, t.Goal) > range) return 0.0;
-		double const enter = std::max(0.0, Dist2D(dc, t.Eng->GetCoords()) - range) / t.Speed;
-		double const window = t.Eta - enter;
-		return window > 0.0 ? dps * window : 0.0;
+		double start = std::max(0.0, Dist2D(dc, t.Eng->GetCoords()) - range) / t.Speed;
+		if (freeAt) start = std::max(start, *freeAt);
+		double const window = t.Eta - start;
+		if (window <= 0.0) return 0.0;
+		if (freeAt) *freeAt = start + std::min(window, t.Hp / dps);
+		return dps * window;
 	}
 
 	// Expected damage a responder deals before the engineer reaches the door: after turning onto it
@@ -4247,6 +4313,32 @@ namespace
 		double const react = already ? 0.0 : static_cast<double>(DoctrineConfig::Get().CounterEngReaction);
 		double const window = t.Eta - (std::max(0.0, gap) / StepSpeed(pR) + react);
 		return window > 0.0 ? dps * window : 0.0;
+	}
+
+	// Where a responder cuts the engineer off (Predict.Intercept), as AA screens the bearing incoming air
+	// comes in on: the first point on the engineer's straight path to its building that the responder
+	// gets within weapon range of no later than the engineer gets there; the door if there's none. Null
+	// when the engineer is already in range (attack it) or the path is degenerate.
+	CellClass* InterceptCell(FootClass* const pR, EngThreat const& t)
+	{
+		auto const rc = pR->GetCoords();
+		auto const ec = t.Eng->GetCoords();
+		double const range = BestRangeVs(pR->GetTechnoType(), false);
+		if (Dist2D(rc, ec) <= range + 128.0) return nullptr;
+		auto const gc = t.Goal->GetCoords();
+		double const len = Dist2D(ec, gc);
+		if (len < 1.0) return nullptr;
+		double const ux = (gc.X - ec.X) / len, uy = (gc.Y - ec.Y) / len;
+		double const speed = StepSpeed(pR);
+		double s = 0.0;
+		for (; s < t.Dist; s += 128.0)
+		{
+			CoordStruct const p { ec.X + static_cast<int>(ux * s), ec.Y + static_cast<int>(uy * s), ec.Z };
+			if (std::max(0.0, Dist2D(rc, p) - range) / speed <= s / t.Speed) break;
+		}
+		s = std::min(s, t.Dist);
+		return MapClass::Instance.TryGetCellAt(
+			CoordStruct { ec.X + static_cast<int>(ux * s), ec.Y + static_cast<int>(uy * s), ec.Z });
 	}
 
 	// A unit that could be retasked onto an engineer: our armed ground/naval unit that isn't an
@@ -4567,6 +4659,7 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 	int const sacDelay = cfg.CounterEngSacrificeDelay > 0 ? cfg.CounterEngSacrificeDelay : 60;
 	double const sacRadius = (cfg.CounterEngSacrificeRadius > 0 ? cfg.CounterEngSacrificeRadius : 6) * 256.0;
 	std::set<BuildingClass*> retargeted;                                  // soonest threat keeps a tower
+	std::map<BuildingClass*, double> defFree;                             // ShareDefenses: busy until (frames)
 
 	// Forget engineers no longer tracked (dead, or out of sight 300+ frames), and sales out of the window.
 	auto& sells = g_denySells[hIdx];
@@ -4592,7 +4685,8 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 			if (!pD || !pD->Type || pD->InLimbo || pD->Health <= 0) continue;
 			if (!HasOffensiveWeapon(pD->Type) || !DefenseOnline(pD)) continue;
 			double range = 0.0;
-			double const c = DefenseContribution(pD, t, range);
+			double const c = DefenseContribution(pD, t, range,
+				cfg.CounterEngShareDefenses ? &defFree[pD] : nullptr);
 			if (c <= 0.0) continue;
 			t.Exp += c; ++t.Defs;
 			if (cfg.CounterEngRetargetDefenses && !retargeted.count(pD)
@@ -4783,13 +4877,37 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 	}
 
 	// Steer every responder onto its engineer (re-issued only when it drifted, so the attack isn't
-	// restarted each tick; the base AI and old teams can't countermand it in between).
+	// restarted each tick; the base AI and old teams can't countermand it in between). Out of range, with
+	// Predict.Intercept, it heads for where it cuts the engineer off instead, and waits there.
+	std::map<DWORD, EngThreat const*> threatOf;
+	for (auto const& t : threats) threatOf[t.Eng->UniqueID] = &t;
+	auto& cut = g_interceptCells[hIdx];
+	for (auto it = cut.begin(); it != cut.end(); )
+		if (!resp.count(it->first)) it = cut.erase(it); else ++it;
 	for (auto const& kv : resp)
 	{
 		auto const cit = committed.find(kv.first);
 		auto const eit = threatEng.find(kv.second);
 		if (cit == committed.end() || eit == threatEng.end()) continue;
 		auto const pR = cit->second;
+		auto const pCut = cfg.CounterEngPredictIntercept ? InterceptCell(pR, *threatOf[kv.second]) : nullptr;
+		if (pCut)
+		{
+			auto& prev = cut[pR->UniqueID];
+			auto const cc = pCut->GetCellCoords();
+			bool const shifted = !prev || Dist2D(prev->GetCellCoords(), cc) > 256.0;   // cut-off point moved
+			bool const strayed = pR->GetCurrentMission() != Mission::Move               // countermanded short
+				&& Dist2D(pR->GetCoords(), prev ? prev->GetCellCoords() : cc) > 384.0;  // of it
+			if (shifted || strayed)
+			{
+				pR->SetTarget(nullptr);
+				pR->SetDestination(pCut, true);
+				pR->QueueMission(Mission::Move, false);
+				prev = pCut;
+			}
+			continue;
+		}
+		cut.erase(pR->UniqueID);
 		if (pR->Target != eit->second || pR->GetCurrentMission() != Mission::Attack)
 		{
 			pR->SetTarget(eit->second);
@@ -4833,17 +4951,18 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		pDog && shortOf > 0 && cfg.CounterEngBuildIgnorePause ? pDog : nullptr, now + 2 * interval);
 
 	if (!cfg.DebugTicks || threats.empty()) return;
-	Debug::Log("[DoctrineExt] counter-eng: house=%s#%d threats=%d responders=%d dog=%s owned=%d building=%d "
-		"build=%d sold=%d/%d.\n", pHouse->get_ID(), hIdx, static_cast<int>(threats.size()),
-		static_cast<int>(resp.size()), pDog ? pDog->get_ID() : "(none)", owned, building, want,
-		static_cast<int>(sellFrames.size()), cfg.CounterEngDenySellMax);
+	Debug::Log("[DoctrineExt] counter-eng: house=%s#%d threats=%d responders=%d cutting-off=%d dog=%s owned=%d "
+		"building=%d build=%d sold=%d/%d.\n", pHouse->get_ID(), hIdx, static_cast<int>(threats.size()),
+		static_cast<int>(resp.size()), static_cast<int>(cut.size()), pDog ? pDog->get_ID() : "(none)", owned,
+		building, want, static_cast<int>(sellFrames.size()), cfg.CounterEngDenySellMax);
 	int shown = 0;
 	for (auto const& t : threats)
 	{
 		if (++shown > 4) break;
-		Debug::Log("[DoctrineExt]   eng=%s#%u -> %s%s dist=%.1fc eta=%.0ff v=%.1f(%s step=%d) intent=%d "
+		Debug::Log("[DoctrineExt]   eng=%s#%u -> %s%s%s%s dist=%.1fc eta=%.0ff v=%.1f(%s step=%d) intent=%d "
 			"approach=%d hp=%d exp=%.0f max=%.0f need=%.0f resp=%d defs=%d%s.\n",
 			t.Eng->GetTechnoType()->ID, t.Eng->UniqueID, t.Goal->Type->ID, t.Ours ? "" : "(neutral)",
+			*t.Guess ? " by " : "", t.Guess,
 			t.Dist / 256.0, t.Eta, t.Speed, t.Measured ? "measured" : "assumed", t.Eng->GetCurrentSpeed(),
 			t.Intent, t.Approaching, t.Hp, t.Exp, t.ExpMax, t.Need, t.Resp, t.Defs, t.Sold ? " SOLD" : "");
 	}
@@ -5990,6 +6109,7 @@ void Teams::Reset()
 	g_economyLocked.clear();
 	g_counterEngLastFire.clear();
 	g_responders.clear();
+	g_interceptCells.clear();
 	g_denySelling = false;
 	g_engTracks.clear();
 	g_engTrackFrame = -1;

@@ -428,6 +428,11 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CounterEngRespondLate = pINI->ReadInteger("Doctrine.CounterEngineer", "Respond.Late", cfg.CounterEngRespondLate);
 	cfg.CounterEngReaction = pINI->ReadInteger("Doctrine.CounterEngineer", "ReactionFrames", cfg.CounterEngReaction);
 	cfg.CounterEngRetargetDefenses = pINI->ReadBool("Doctrine.CounterEngineer", "RetargetDefenses", cfg.CounterEngRetargetDefenses);
+	cfg.CounterEngPredictGoal = pINI->ReadBool("Doctrine.CounterEngineer", "Predict.Goal", cfg.CounterEngPredictGoal);
+	cfg.CounterEngPredictWidth = pINI->ReadInteger("Doctrine.CounterEngineer", "Predict.Width", cfg.CounterEngPredictWidth);
+	cfg.CounterEngPredictIntercept = pINI->ReadBool("Doctrine.CounterEngineer", "Predict.Intercept",
+		cfg.CounterEngPredictIntercept);
+	cfg.CounterEngShareDefenses = pINI->ReadBool("Doctrine.CounterEngineer", "ShareDefenses", cfg.CounterEngShareDefenses);
 	cfg.CounterEngDenySell = pINI->ReadBool("Doctrine.CounterEngineer", "DenySell", cfg.CounterEngDenySell);
 	pINI->ReadString("Doctrine.CounterEngineer", "DenySell.Exclude", "", buf, sizeof(buf));
 	cfg.CounterEngDenySellExclude = SplitList(buf);
@@ -485,6 +490,10 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			static_cast<unsigned>(cfg.CounterEngSacrificeTypes.size()), cfg.CounterEngSacrificeNone ? " NONE" : "",
 			cfg.CounterEngSacrificeMax, cfg.CounterEngSacrificeRadius, cfg.CounterEngSacrificeDelay,
 			cfg.CounterEngHonorPrereq);
+	if (cfg.CounterEngEnable)
+		Echo("[DoctrineExt] [Doctrine.CounterEngineer]: Predict.Goal=%d Predict.Width=%d Predict.Intercept=%d "
+			"ShareDefenses=%d\n", cfg.CounterEngPredictGoal, cfg.CounterEngPredictWidth,
+			cfg.CounterEngPredictIntercept, cfg.CounterEngShareDefenses);
 	// ─── [Doctrine.EngineerRush] — capture enemy buildings near base ──
 	cfg.EngRushEnable = pINI->ReadBool("Doctrine.EngineerRush", "Enable", cfg.EngRushEnable);
 	cfg.EngRushInterval = pINI->ReadInteger("Doctrine.EngineerRush", "Interval", cfg.EngRushInterval);

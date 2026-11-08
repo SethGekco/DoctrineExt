@@ -322,7 +322,11 @@ public:
 	int CaptureEngineerMax = 2;      // engineers queued per pass toward targets
 	bool CaptureEnemyOwned = false;  // also capture ENEMY-owned capturables (not just
 	                                 // neutral tech) when an engineer can reach them
-	int CaptureHonorPrereq = -1;     // -1 inherit HonorPrerequisites, 0 ignore, 1 obey
+	bool CaptureBuildUrgent = true;  // Build.Urgent — capture engineers jump the AI's own infantry
+	                                 // pick (else they wait for the AI to fill the squad's taskforce)
+	bool CaptureBuildIgnorePause = false; // Build.IgnorePause — capture engineers are exempt from
+	                                 // [Doctrine.Economy] PauseProduction (BreakProductionRules still applies)
+	int CaptureHonorPrereq = -1;    // -1 inherit HonorPrerequisites, 0 ignore, 1 obey
 	bool HonorPrereqForCapture() const
 		{ return CaptureHonorPrereq < 0 ? HonorPrerequisites : (CaptureHonorPrereq != 0); }
 
@@ -478,6 +482,8 @@ public:
 	int EngRushMinCash = 0;          // MinCash — build new rush engineers only at or above this cash
 	int EngRushRetryDelay = 900;     // RetryDelay — frames before re-rushing a target that killed one
 	bool EngRushBuildUrgent = true;  // Build.Urgent — rush engineers jump the AI's own infantry pick
+	bool EngRushBuildIgnorePause = false; // Build.IgnorePause — rush engineers are exempt from
+	                                 // [Doctrine.Economy] PauseProduction (MinCash still applies)
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

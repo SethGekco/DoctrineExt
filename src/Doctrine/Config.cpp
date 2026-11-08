@@ -353,12 +353,16 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CaptureRadius = pINI->ReadInteger("Doctrine.Capture", "Radius", cfg.CaptureRadius);
 	cfg.CaptureEngineerMax = pINI->ReadInteger("Doctrine.Capture", "EngineerMax", cfg.CaptureEngineerMax);
 	cfg.CaptureEnemyOwned = pINI->ReadBool("Doctrine.Capture", "EnemyOwned", cfg.CaptureEnemyOwned);
+	cfg.CaptureBuildUrgent = pINI->ReadBool("Doctrine.Capture", "Build.Urgent", cfg.CaptureBuildUrgent);
+	cfg.CaptureBuildIgnorePause = pINI->ReadBool("Doctrine.Capture", "Build.IgnorePause", cfg.CaptureBuildIgnorePause);
 	cfg.CaptureHonorPrereq = pINI->ReadInteger("Doctrine.Capture", "HonorPrereq", cfg.CaptureHonorPrereq);
 	if (cfg.CaptureEnable)
 		Echo("[DoctrineExt] [Doctrine.Capture]: Enable=1 Targets=%u (empty=any) Interval=%d "
-			"MaxTeams=%d Radius=%d EngineerMax=%d EnemyOwned=%d HonorPrereq=%d\n",
+			"MaxTeams=%d Radius=%d EngineerMax=%d EnemyOwned=%d Build.Urgent=%d Build.IgnorePause=%d "
+			"HonorPrereq=%d\n",
 			static_cast<unsigned>(cfg.CaptureTargets.size()), cfg.CaptureInterval, cfg.CaptureMaxTeams,
-			cfg.CaptureRadius, cfg.CaptureEngineerMax, cfg.CaptureEnemyOwned, cfg.CaptureHonorPrereq);
+			cfg.CaptureRadius, cfg.CaptureEngineerMax, cfg.CaptureEnemyOwned, cfg.CaptureBuildUrgent,
+			cfg.CaptureBuildIgnorePause, cfg.CaptureHonorPrereq);
 	// ─── [Doctrine.Economy] — broke-proof opening (fully tag-driven budget) ──
 	cfg.EconomyEnable = pINI->ReadBool("Doctrine.Economy", "Enable", cfg.EconomyEnable);
 	cfg.EconomyInterval = pINI->ReadInteger("Doctrine.Economy", "Interval", cfg.EconomyInterval);
@@ -482,15 +486,16 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.EngRushMinCash = pINI->ReadInteger("Doctrine.EngineerRush", "MinCash", cfg.EngRushMinCash);
 	cfg.EngRushRetryDelay = pINI->ReadInteger("Doctrine.EngineerRush", "RetryDelay", cfg.EngRushRetryDelay);
 	cfg.EngRushBuildUrgent = pINI->ReadBool("Doctrine.EngineerRush", "Build.Urgent", cfg.EngRushBuildUrgent);
+	cfg.EngRushBuildIgnorePause = pINI->ReadBool("Doctrine.EngineerRush", "Build.IgnorePause", cfg.EngRushBuildIgnorePause);
 	cfg.EngRushHonorPrereq = pINI->ReadInteger("Doctrine.EngineerRush", "HonorPrereq", cfg.EngRushHonorPrereq);
 	if (cfg.EngRushEnable)
 		Echo("[DoctrineExt] [Doctrine.EngineerRush]: Enable=1 Interval=%d Radius=%d Targets=%u "
 			"(empty=any) Exclude=%u Priority=%u Max=%d Escorts=%d Safety=%.2f MinCash=%d RetryDelay=%d "
-			"Build.Urgent=%d HonorPrereq=%d\n", cfg.EngRushInterval, cfg.EngRushRadius,
+			"Build.Urgent=%d Build.IgnorePause=%d HonorPrereq=%d\n", cfg.EngRushInterval, cfg.EngRushRadius,
 			static_cast<unsigned>(cfg.EngRushTargets.size()), static_cast<unsigned>(cfg.EngRushExclude.size()),
 			static_cast<unsigned>(cfg.EngRushPriority.size()), cfg.EngRushMax, cfg.EngRushEscorts,
 			cfg.EngRushSafety, cfg.EngRushMinCash, cfg.EngRushRetryDelay, cfg.EngRushBuildUrgent,
-			cfg.EngRushHonorPrereq);
+			cfg.EngRushBuildIgnorePause, cfg.EngRushHonorPrereq);
 	if (cfg.EconomyEnable)
 		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

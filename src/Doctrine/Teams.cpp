@@ -3782,6 +3782,27 @@ namespace
 	std::map<int, std::map<int, std::pair<int, int>>> g_captureProgress; // cellKey -> {lastDist, stuck}
 	std::map<int, std::map<int, int>> g_captureBlacklist;                // cellKey -> expire frame
 
+	// House -> who needs a type built now (counter-engineer, rush, capture) -> that type and the frame
+	// the need lapses: the economy pause lets those types through until then (each Build.IgnorePause).
+	enum PauseExemptFor { ExemptCounterEng, ExemptEngRush, ExemptCapture };
+	std::map<int, std::map<int, std::pair<TechnoTypeClass*, int>>> g_pauseExempt;
+
+	void ClearPauseExempt(int const hIdx, PauseExemptFor const who)
+	{
+		auto const it = g_pauseExempt.find(hIdx);
+		if (it != g_pauseExempt.end()) it->second.erase(who);
+	}
+
+	void SetPauseExempt(int const hIdx, PauseExemptFor const who, TechnoTypeClass* const pType, int const until)
+	{
+		if (pType) g_pauseExempt[hIdx][who] = { pType, until };
+		else ClearPauseExempt(hIdx, who);
+	}
+
+	int InProduction(HouseClass* pHouse, TechnoTypeClass* pType);   // urgent response, below
+	void BuildUrgently(HouseClass* pHouse, TechnoTypeClass* pType);
+	void ClearStaleUrgentPick(HouseClass* pHouse, int now);
+
 	int CaptureCellKey(CellStruct const& c)
 		{ return (static_cast<int>(c.X) << 16) | (static_cast<int>(c.Y) & 0xFFFF); }
 
@@ -3878,9 +3899,10 @@ void Teams::CaptureDoctrine(HouseClass* pHouse)
 	auto const it = g_captureLastFire.find(hIdx);
 	if (it != g_captureLastFire.end() && now - it->second < interval) return;
 	g_captureLastFire[hIdx] = now;
+	ClearStaleUrgentPick(pHouse, now);
 
 	auto const targets = FindCaptureTargets(pHouse);
-	if (targets.empty()) return;                                          // nothing to grab
+	if (targets.empty()) { ClearPauseExempt(hIdx, ExemptCapture); return; }   // nothing to grab
 
 	// One engineer per target, capped by MaxTeams.
 	int const cap = cfg.CaptureMaxTeams > 0 ? cfg.CaptureMaxTeams : 2;
@@ -3920,6 +3942,14 @@ void Teams::CaptureDoctrine(HouseClass* pHouse)
 		if (!static_cast<InfantryTypeClass*>(pType)->Engineer) continue;
 		TryAddToTeam(pTeam, static_cast<FootClass*>(pT));
 	}
+	// Still short after taking the spares: make the engineer the barracks' next build (Build.Urgent),
+	// unless one is already in production, and let it (in production too) past the economy pause
+	// (Build.IgnorePause).
+	bool const shortOf = pEng && want > 0 && EngineersOnTeam(pTeam) < desired;
+	if (shortOf && cfg.CaptureBuildUrgent && EngineersOnTeam(pTeam) + InProduction(pHouse, pEng) < desired)
+		BuildUrgently(pHouse, pEng);
+	SetPauseExempt(hIdx, ExemptCapture, shortOf && cfg.CaptureBuildIgnorePause ? pEng : nullptr,
+		now + 2 * interval);
 
 	// Unreachable guard (once per pass): for each engineer, track progress toward its
 	// nearest target; if it hasn't closed the gap over several passes, blacklist that
@@ -4036,10 +4066,6 @@ namespace
 	std::map<int, std::deque<int>> g_denySellFrames;
 	std::map<int, std::map<DWORD, SacrificeSale>> g_sacrifices;
 	std::map<int, std::set<std::pair<DWORD, DWORD>>> g_letGo;
-
-	// House -> the interceptor type it needs urgently, and the frame that need lapses: the economy
-	// pause lets that type through until then (Build.IgnorePause).
-	std::map<int, std::pair<TechnoTypeClass*, int>> g_interceptorNeed;
 
 	int IncomeKindOf(BuildingTypeClass* pBt);                        // economy section, below
 
@@ -4704,10 +4730,8 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		if (cfg.CounterEngBuildUrgent) BuildUrgently(pHouse, pDog);
 	}
 	else if (pSquad) EnsureSquadTeam(pHouse, 1, nullptr, "DANT", 0);   // stop asking
-	if (pDog && shortOf > 0 && cfg.CounterEngBuildIgnorePause)
-		g_interceptorNeed[hIdx] = { pDog, now + 2 * interval };       // lapses two passes after the last need
-	else
-		g_interceptorNeed.erase(hIdx);
+	SetPauseExempt(hIdx, ExemptCounterEng,                           // lapses two passes after the last need
+		pDog && shortOf > 0 && cfg.CounterEngBuildIgnorePause ? pDog : nullptr, now + 2 * interval);
 
 	if (!cfg.DebugTicks || threats.empty()) return;
 	Debug::Log("[DoctrineExt] counter-eng: house=%s#%d threats=%d responders=%d dog=%s owned=%d building=%d "
@@ -4896,6 +4920,7 @@ void Teams::EngineerRush(HouseClass* pHouse)
 				pF = next;
 			}
 		assign.clear();
+		ClearPauseExempt(hIdx, ExemptEngRush);
 		return;
 	}
 
@@ -4915,10 +4940,14 @@ void Teams::EngineerRush(HouseClass* pHouse)
 		if (TryAddToTeam(pTeam, pF)) onTeam[pF->UniqueID] = pF;
 	}
 	// Still short after taking the spares: make the engineer the barracks' next build (Build.Urgent),
-	// unless one is already in production.
-	if (flush && pEng && cfg.EngRushBuildUrgent
+	// unless one is already in production, and let it (in production too) past the economy pause
+	// (Build.IgnorePause).
+	bool const shortOf = flush && pEng && static_cast<int>(onTeam.size()) < desired;
+	if (shortOf && cfg.EngRushBuildUrgent
 		&& static_cast<int>(onTeam.size()) + InProduction(pHouse, pEng) < desired)
 		BuildUrgently(pHouse, pEng);
+	SetPauseExempt(hIdx, ExemptEngRush, shortOf && cfg.EngRushBuildIgnorePause ? pEng : nullptr,
+		now + 2 * interval);
 
 	// Escorts: armed units nearest the base, up to Escorts per engineer; extras (an engineer died) go home.
 	int const escortCap = cfg.EngRushEscorts > 0 ? cfg.EngRushEscorts * static_cast<int>(onTeam.size()) : 0;
@@ -5324,11 +5353,13 @@ namespace
 					if (!exempt) pause = true;
 				}
 			}
-			if (pause)                                        // an interceptor a threat needs now goes through
+			if (pause)                                        // a type an urgent need wants now goes through
 			{
-				auto const nit = g_interceptorNeed.find(pHouse->ArrayIndex);
-				if (nit != g_interceptorNeed.end() && Unsorted::CurrentFrame <= nit->second.second
-					&& pObj->GetTechnoType() == nit->second.first) pause = false;
+				auto const nit = g_pauseExempt.find(pHouse->ArrayIndex);
+				if (nit != g_pauseExempt.end())
+					for (auto const& kv : nit->second)
+						if (Unsorted::CurrentFrame <= kv.second.second && pObj->GetTechnoType() == kv.second.first)
+							pause = false;
 			}
 			if (pause) { pFact->Suspend(true); anyPaused = true; }
 			else pFact->Unsuspend(true);
@@ -5526,7 +5557,7 @@ void Teams::Reset()
 	g_denySellFrames.clear();
 	g_sacrifices.clear();
 	g_letGo.clear();
-	g_interceptorNeed.clear();
+	g_pauseExempt.clear();
 	g_urgentPicks.clear();
 	g_engRushLastFire.clear();
 	g_engRushAssign.clear();

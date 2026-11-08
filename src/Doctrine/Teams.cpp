@@ -1713,7 +1713,8 @@ namespace
 		return id[0] == 'D' &&
 			((id[1] == 'C' && (id[2] == 'T' || id[2] == 'R' || id[2] == 'M')) // DCTR/DCRG/DCRS/DCMD
 			|| (id[1] == 'G' && id[2] == 'A')                   // DGAR
-			|| (id[1] == 'A' && id[2] == 'A'));                 // DAA (air-defense screen)
+			|| (id[1] == 'A' && id[2] == 'A')                   // DAA (air-defense screen)
+			|| (id[1] == 'P' && id[2] == 'K'));                 // DPKT (engineer pickets)
 	}
 }
 
@@ -4097,6 +4098,42 @@ namespace
 		return pType && ListHas(cfg.CounterEngThreatTypes, pType->ID);
 	}
 
+	// A passenger that ThreatTypes would count on foot (it rides in limbo, so IsThreatType says no).
+	bool IsThreatAboard(FootClass* const p)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (cfg.CounterEngThreatNone || !p || p->Health <= 0) return false;
+		auto const pType = p->GetTechnoType();
+		if (!pType) return false;
+		if (cfg.CounterEngThreatTypes.empty())
+			return pType->WhatAmI() == AbstractType::InfantryType && static_cast<InfantryTypeClass*>(pType)->Engineer;
+		return ListHas(cfg.CounterEngThreatTypes, pType->ID);
+	}
+
+	// A transport type Transports watches: listed, else (auto) any type that carries passengers.
+	bool IsWatchedTransport(TechnoClass* const pT)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (cfg.CounterEngTransportsNone || !pT || pT->InLimbo || pT->Health <= 0) return false;
+		auto const what = pT->WhatAmI();
+		if (what != AbstractType::Unit && what != AbstractType::Aircraft && what != AbstractType::Infantry) return false;
+		auto const pType = pT->GetTechnoType();
+		if (!pType) return false;
+		return cfg.CounterEngTransports.empty() ? pType->Passengers > 0 : ListHas(cfg.CounterEngTransports, pType->ID);
+	}
+
+	// An enemy transport treated as an engineer threat (Transports.Cargo): with assume, every watched
+	// transport, its cargo unseen; with know, one an engineer (ThreatTypes) rides in.
+	bool IsThreatCarrier(TechnoClass* const pT)
+	{
+		int const cargo = DoctrineConfig::Get().CounterEngTransportCargo;
+		if (cargo <= 0 || !IsWatchedTransport(pT)) return false;
+		if (cargo == 1) return true;
+		for (auto p = pT->Passengers.FirstPassenger; p; p = static_cast<FootClass*>(p->NextObject))
+			if (IsThreatAboard(p)) return true;
+		return false;
+	}
+
 	void SampleEngineers(int const now)
 	{
 		if (g_engTrackFrame == now) return;
@@ -4104,7 +4141,9 @@ namespace
 		for (int i = 0; i < TechnoClass::Array.Count; ++i)
 		{
 			auto const pT = TechnoClass::Array.GetItem(i);
-			if (!IsThreatType(pT)) continue;
+			// Transports are sampled whatever this house's Transports.Cargo, so a house of another
+			// difficulty sampling this frame doesn't leave them unmeasured.
+			if (!IsThreatType(pT) && !IsWatchedTransport(pT)) continue;
 			auto& t = g_engTracks[pT->UniqueID];
 			auto const c = pT->GetCoords();
 			if (t.F1 <= 0 || now - t.F1 > 60)                   // new, or back out of a transport
@@ -4137,6 +4176,8 @@ namespace
 		int Resp = 0;                    // responders committed
 		int Defs = 0;                    // defenses covering the door
 		bool Sold = false;               // Goal deny-sold this tick
+		bool Carrier = false;            // Eng is a transport with (or assumed to have) engineers aboard
+		bool Air = false;                // ... an aircraft: only anti-air can shoot it
 	};
 
 	// Buildings an enemy engineer could be coming for: ours, plus neutral capturables we want (when the
@@ -4160,7 +4201,7 @@ namespace
 	// The anchor an engineer's move order leads to (Predict.Goal): its destination or attack-move cell
 	// within two cells of an anchor's footprint, the nearest such. A human player often walks engineers
 	// to a cell by the door and only orders the capture there, so its order never names the building.
-	// Destination is the engine's own live pointer (it paths to it every frame); Target is never touched.
+	// Destination is the engine's own live pointer (it paths to it every frame).
 	BuildingClass* OrderedGoal(FootClass* const pE, std::vector<BuildingClass*> const& anchors)
 	{
 		AbstractClass* const dests[2] = { pE->Destination, pE->MegaDestination };
@@ -4245,7 +4286,8 @@ namespace
 		for (int i = 0; i < TechnoClass::Array.Count; ++i)
 		{
 			auto const pT = TechnoClass::Array.GetItem(i);
-			if (!IsThreatType(pT)) continue;
+			bool const carrier = !IsThreatType(pT) && IsThreatCarrier(pT);
+			if (!carrier && !IsThreatType(pT)) continue;
 			auto const pO = pT->Owner;
 			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;    // enemy only
 			auto const pE = static_cast<FootClass*>(pT);
@@ -4287,9 +4329,11 @@ namespace
 			}
 			if (t.Speed < 1.0) t.Speed = StepSpeed(pE);      // standing or unmeasured: it can walk
 			if (!t.Intent && !t.Approaching && t.Dist > 2.0 * 256.0) continue;
-			t.Eta = t.Dist / t.Speed;
+			t.Eta = t.Dist / t.Speed;                         // a carrier: until it's at the door to unload
 			t.Hp = pE->Health;
 			t.Armor = static_cast<int>(pE->GetTechnoType()->Armor);
+			t.Carrier = carrier;
+			t.Air = pE->WhatAmI() == AbstractType::Aircraft;
 			out.push_back(t);
 		}
 		std::sort(out.begin(), out.end(),
@@ -4314,9 +4358,9 @@ namespace
 	// when it has killed this one or the engineer is in.
 	double DefenseContribution(BuildingClass* const pD, EngThreat const& t, double& range, double* const freeAt = nullptr)
 	{
-		double const dps = EffDPSVs(pD->Type, t.Armor, false) / 10.0;
+		double const dps = EffDPSVs(pD->Type, t.Armor, t.Air) / 10.0;
 		if (dps <= 0.0) return 0.0;
-		range = BestRangeVs(pD->Type, false);
+		range = BestRangeVs(pD->Type, t.Air);
 		auto const dc = pD->GetCoords();
 		if (DistToFootprint(dc, t.Goal) > range) return 0.0;
 		double start = std::max(0.0, Dist2D(dc, t.Eng->GetCoords()) - range) / t.Speed;
@@ -4333,9 +4377,9 @@ namespace
 	double ResponderContribution(FootClass* const pR, EngThreat const& t, bool const already)
 	{
 		auto const pType = pR->GetTechnoType();
-		double const dps = EffDPSVs(pType, t.Armor, false) / 10.0;
+		double const dps = EffDPSVs(pType, t.Armor, t.Air) / 10.0;
 		if (dps <= 0.0) return 0.0;
-		double const range = BestRangeVs(pType, false);
+		double const range = BestRangeVs(pType, t.Air);
 		auto const rc = pR->GetCoords();
 		double const gap = std::min(Dist2D(rc, t.Eng->GetCoords()), DistToFootprint(rc, t.Goal)) - range;
 		double const react = already ? 0.0 : static_cast<double>(DoctrineConfig::Get().CounterEngReaction);
@@ -4351,7 +4395,7 @@ namespace
 	{
 		auto const rc = pR->GetCoords();
 		auto const ec = t.Eng->GetCoords();
-		double const range = BestRangeVs(pR->GetTechnoType(), false);
+		double const range = BestRangeVs(pR->GetTechnoType(), t.Air);
 		if (Dist2D(rc, ec) <= range + 128.0) return nullptr;
 		auto const gc = t.Goal->GetCoords();
 		double const len = Dist2D(ec, gc);
@@ -4523,9 +4567,9 @@ namespace
 		window = 0.0;
 		auto const pCrew = CrewTypeOf(pHouse);
 		if (count <= 0 || !pCrew) return 0.0;
-		double const dps = EffDPSVs(pCrew, t.Armor, false) / 10.0;
+		double const dps = EffDPSVs(pCrew, t.Armor, t.Air) / 10.0;
 		if (dps <= 0.0) return 0.0;
-		double const range = BestRangeVs(pCrew, false);
+		double const range = BestRangeVs(pCrew, t.Air);
 		double const gap = std::min(DistToFootprint(t.Eng->GetCoords(), pB),
 			DistToFootprint(pB->GetCoords(), t.Goal)) - range;
 		double const speed = pCrew->Speed > 1 ? static_cast<double>(pCrew->Speed) : 1.0;
@@ -4629,6 +4673,90 @@ namespace
 		auto const pTT = TeamTypeClass::Find(id);
 		return (pTT && pTT->cntInstances > 0) ? pTT->FindFirstInstance() : nullptr;
 	}
+
+	// Pickets (Picket), per house: the bearing from the base center each enemy engineer coming for us was
+	// first seen on, and when; the engineers already counted; the posts of the last placement pass; and
+	// which picket (UniqueID) holds which post.
+	struct PicketSighting { int Frame = 0; double Bearing = 0.0; };
+	std::map<int, std::vector<PicketSighting>> g_picketSightings;
+	std::map<int, std::set<DWORD>> g_picketSeen;
+	std::map<int, std::vector<CellClass*>> g_picketPosts;
+	std::map<int, std::map<DWORD, int>> g_picketAssign;
+	std::map<int, int> g_picketLastFire;
+	constexpr int PicketSectors = 16;
+
+	int PicketSector(double const bearing)
+	{
+		double const step = 2.0 * 3.14159265358979 / PicketSectors;
+		return static_cast<int>(std::floor((bearing + 3.14159265358979) / step)) & (PicketSectors - 1);
+	}
+
+	// Learn where engineers come from: every enemy engineer (or carrier) that comes for one of OUR
+	// buildings counts once, on the bearing it was first seen on. Learned whether or not this house
+	// pickets, so turning Picket on for a difficulty later in a game still has the history.
+	void RecordPicketSightings(HouseClass* const pHouse, std::vector<EngThreat> const& threats, int const now)
+	{
+		auto const center = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+		if (center.X == 0 && center.Y == 0) return;
+		auto& seen = g_picketSeen[pHouse->ArrayIndex];
+		if (seen.size() > 1024) seen.clear();
+		auto& sights = g_picketSightings[pHouse->ArrayIndex];
+		for (auto const& t : threats)
+		{
+			if (!t.Ours || !(t.Intent || t.Approaching) || !seen.insert(t.Eng->UniqueID).second) continue;
+			auto const c = t.Eng->GetCoords();
+			if (c.X == center.X && c.Y == center.Y) continue;
+			sights.push_back({ now, std::atan2(static_cast<double>(c.Y - center.Y), static_cast<double>(c.X - center.X)) });
+		}
+	}
+
+	TeamClass* FindPicketTeam(int const hIdx)
+	{
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DPKT%dTM", hIdx);
+		auto const pTT = TeamTypeClass::Find(id);
+		return (pTT && pTT->cntInstances > 0) ? pTT->FindFirstInstance() : nullptr;
+	}
+
+	// Send every picket back to the AI: the team goes, its members go back on guard.
+	void ReleasePickets(int const hIdx)
+	{
+		g_picketPosts.erase(hIdx);
+		g_picketAssign.erase(hIdx);
+		char id[0x18];
+		std::snprintf(id, sizeof(id), "DPKT%dTM", hIdx);
+		if (auto const pTT = TeamTypeClass::Find(id))
+			if (pTT->cntInstances > 0) pTT->DestroyAllInstances();
+	}
+
+	// May this unit picket (Picket.Units)? Listed, else (auto) any armed ground unit that hurts an
+	// engineer ([General] Engineer's armor) — the responder rules, minus our other squads' members.
+	bool IsPicketCandidate(TechnoClass* const pT, HouseClass* const pHouse, TeamClass* const pTeam)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (cfg.CounterEngPicketUnitsNone || !IsResponderCandidate(pT, pHouse)) return false;
+		auto const pF = static_cast<FootClass*>(pT);
+		if (pF->Team && pF->Team != pTeam && (IsDoctrineTeam(pF->Team) || OnSquad(pF, "DANT"))) return false;
+		auto const pType = pT->GetTechnoType();
+		if (!cfg.CounterEngPicketUnits.empty()) return ListHas(cfg.CounterEngPicketUnits, pType->ID);
+		auto const pEng = RulesClass::Instance->Engineer;
+		int const armor = pEng ? static_cast<int>(pEng->Armor) : 0;
+		return EffDPSVs(pType, armor, false) > 0.0;
+	}
+
+	// What Picket.Build builds: the first buildable of Picket.Units, else the interceptor (Units).
+	TechnoTypeClass* PicketBuildType(HouseClass* const pHouse)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		bool const honor = cfg.HonorPrereqForCounterEng();
+		for (auto const& id : cfg.CounterEngPicketUnits)
+		{
+			TechnoTypeClass* pType = InfantryTypeClass::Find(id.c_str());
+			if (!pType) pType = UnitTypeClass::Find(id.c_str());
+			if (pType && pHouse->InOwners(pType) && CanBuildStrict(pHouse, pType, honor)) return pType;
+		}
+		return cfg.CounterEngPicketUnits.empty() ? BestAntiEngineer(pHouse, honor) : nullptr;
+	}
 }
 
 void Teams::CounterEngineers(HouseClass* pHouse)
@@ -4643,6 +4771,7 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 	ClearStaleUrgentPick(pHouse, now);
 	SampleEngineers(now);
 	auto threats = FindEngineerThreats(pHouse);
+	RecordPicketSightings(pHouse, threats, now);
 	auto& resp = g_responders[hIdx];
 
 	// Our side, in one scan: responder candidates, and the live units already committed.
@@ -4776,7 +4905,7 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 				if (resp.count(pR->UniqueID)) continue;
 				auto const rc = pR->GetCoords();
 				if (DistToFootprint(rc, t.Goal) > respondR && Dist2D(rc, ec) > respondR) continue;
-				if (EffDPSVs(pR->GetTechnoType(), t.Armor, false) <= 0.0) continue;
+				if (EffDPSVs(pR->GetTechnoType(), t.Armor, t.Air) <= 0.0) continue;
 				late.push_back({ Dist2D(rc, ec) / StepSpeed(pR), pR });
 			}
 			std::sort(late.begin(), late.end(),
@@ -4801,8 +4930,9 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 			t.ExpMax += sit->second.Damage;
 
 		// Everything below needs evidence it's coming for THIS building of ours: its own order, a
-		// measured approach, or it's at the door.
+		// measured approach, or it's at the door. A carrier is only shot at unless Transports.DenySell.
 		if (!t.Ours || !(t.Intent || t.Approaching || t.Dist <= 128.0)) continue;
+		if (t.Carrier && !cfg.CounterEngTransportDenySell) continue;
 
 		// Short of firepower: first a sacrifice — sell a cheap building by the engineer's path so its
 		// survivors finish the job. Only a building whose survivors alone cover the shortfall (the
@@ -4953,7 +5083,7 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 
 	int shortOf = 0;
 	for (auto const& t : threats)
-		if (t.ExpMax < t.Need) ++shortOf;
+		if (!t.Carrier && t.ExpMax < t.Need) ++shortOf;                 // a dog can't catch a transport
 	auto const pDog = cfg.CounterEngBuild ? BestAntiEngineer(pHouse, cfg.HonorPrereqForCounterEng()) : nullptr;
 	int owned = 0, building = 0;
 	if (pDog)
@@ -4988,14 +5118,218 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 	{
 		if (++shown > 4) break;
 		Debug::Log("[DoctrineExt]   eng=%s#%u -> %s%s%s%s dist=%.1fc eta=%.0ff v=%.1f(%s step=%d) intent=%d "
-			"approach=%d hp=%d exp=%.0f max=%.0f need=%.0f resp=%d defs=%d%s.\n",
+			"approach=%d hp=%d exp=%.0f max=%.0f need=%.0f resp=%d defs=%d%s%s.\n",
 			t.Eng->GetTechnoType()->ID, t.Eng->UniqueID, t.Goal->Type->ID, t.Ours ? "" : "(neutral)",
 			*t.Guess ? " by " : "", t.Guess,
 			t.Dist / 256.0, t.Eta, t.Speed, t.Measured ? "measured" : "assumed", t.Eng->GetCurrentSpeed(),
-			t.Intent, t.Approaching, t.Hp, t.Exp, t.ExpMax, t.Need, t.Resp, t.Defs, t.Sold ? " SOLD" : "");
+			t.Intent, t.Approaching, t.Hp, t.Exp, t.ExpMax, t.Need, t.Resp, t.Defs, t.Sold ? " SOLD" : "",
+			!t.Carrier ? "" : cfg.CounterEngTransportCargo == 2 ? " CARRIER(engineer aboard)"
+				: " CARRIER(cargo assumed)");
 	}
 }
 
+
+void Teams::EngineerPickets(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Get();
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral() || pHouse->IsControlledByHuman()) return;
+	int const hIdx = pHouse->ArrayIndex;
+	if (!cfg.CounterEngEnable || !cfg.CounterEngPicket || cfg.CounterEngPicketUnitsNone)
+	{
+		if (g_picketPosts.count(hIdx)) ReleasePickets(hIdx);
+		return;
+	}
+	int const now = Unsorted::CurrentFrame;
+	int const interval = cfg.CounterEngPicketInterval > 0 ? cfg.CounterEngPicketInterval : 150;
+	auto const fit = g_picketLastFire.find(hIdx);
+	if (fit != g_picketLastFire.end() && now - fit->second < interval) return;
+	g_picketLastFire[hIdx] = now;
+
+	auto const center = CellClass::Cell2Coord(pHouse->GetBaseCenter());
+	if (center.X == 0 && center.Y == 0) return;
+
+	// The posts ring the base just past its outermost building, like the defenders' perimeter.
+	double radius = 0.0;
+	for (auto const pBld : pHouse->Buildings)
+		if (pBld && !pBld->InLimbo)
+			radius = std::max(radius, Dist2D(pBld->GetCoords(), center));
+	radius += std::max(0, cfg.CounterEngPicketDistance) * 256.0;
+	radius = std::max(radius, 5.0 * 256.0);
+
+	// Bearings: the sectors engineers have come from most (Picket.MinSightings or more), never two side
+	// by side; then, with Picket.TowardEnemy, the nearest enemy bases' bearings for the posts left.
+	auto& sights = g_picketSightings[hIdx];
+	if (cfg.CounterEngPicketMemory > 0)
+		sights.erase(std::remove_if(sights.begin(), sights.end(),
+			[&](PicketSighting const& s) { return now - s.Frame > cfg.CounterEngPicketMemory; }), sights.end());
+	int count[PicketSectors] = {};
+	double sx[PicketSectors] = {}, sy[PicketSectors] = {};
+	for (auto const& s : sights)
+	{
+		int const k = PicketSector(s.Bearing);
+		++count[k]; sx[k] += std::cos(s.Bearing); sy[k] += std::sin(s.Bearing);
+	}
+	int const maxPosts = std::max(1, cfg.CounterEngPicketPosts);
+	int const minSight = std::max(1, cfg.CounterEngPicketMinSightings);
+	bool used[PicketSectors] = {};
+	auto const taken = [&](int const k)
+		{ return used[k] || used[(k + 1) % PicketSectors] || used[(k + PicketSectors - 1) % PicketSectors]; };
+	std::vector<double> bearings;
+	int learned = 0;
+	while (static_cast<int>(bearings.size()) < maxPosts)
+	{
+		int best = -1;
+		for (int k = 0; k < PicketSectors; ++k)
+			if (count[k] >= minSight && !taken(k) && (best < 0 || count[k] > count[best])) best = k;
+		if (best < 0) break;
+		used[best] = true;
+		bearings.push_back(std::atan2(sy[best], sx[best]));
+		++learned;
+	}
+	if (cfg.CounterEngPicketTowardEnemy && static_cast<int>(bearings.size()) < maxPosts)
+	{
+		std::vector<std::pair<double, double>> enemies;                 // distance, bearing
+		for (int i = 0; i < HouseClass::Array.Count; ++i)
+		{
+			auto const pO = HouseClass::Array.GetItem(i);
+			if (!pO || pO == pHouse || pO->Defeated || pO->IsObserver() || pO->IsNeutral()) continue;
+			if (pHouse->IsAlliedWith(pO)) continue;
+			auto const ec = CellClass::Cell2Coord(pO->GetBaseCenter());
+			if (ec.X == 0 && ec.Y == 0) continue;
+			enemies.push_back({ Dist2D(ec, center),
+				std::atan2(static_cast<double>(ec.Y - center.Y), static_cast<double>(ec.X - center.X)) });
+		}
+		std::sort(enemies.begin(), enemies.end());
+		for (auto const& e : enemies)
+		{
+			if (static_cast<int>(bearings.size()) >= maxPosts) break;
+			int const k = PicketSector(e.second);
+			if (taken(k)) continue;
+			used[k] = true;
+			bearings.push_back(e.second);
+		}
+	}
+
+	// A post is the ring cell on its bearing, stepped inward off water and cliffs (up to half way in).
+	std::vector<CellClass*> posts;
+	for (double const b : bearings)
+		for (double r = radius; r >= radius * 0.5; r -= 256.0)
+		{
+			CoordStruct const pt { center.X + static_cast<int>(std::cos(b) * r),
+				center.Y + static_cast<int>(std::sin(b) * r), center.Z };
+			auto const pCell = MapClass::Instance.TryGetCellAt(pt);
+			if (pCell && pCell->LandType != LandType::Water && pCell->LandType != LandType::Rock)
+				{ posts.push_back(pCell); break; }
+		}
+	if (posts.empty()) { ReleasePickets(hIdx); return; }
+	g_picketPosts[hIdx] = posts;
+
+	// Keep each picket on its post; fill the empty places from the cheapest willing units, teamless
+	// first, nearest the post; units the counter-engineer has retasked are left to it.
+	int const perPost = std::max(1, cfg.CounterEngPicketPerPost);
+	int const want = static_cast<int>(posts.size()) * perPost;
+	auto const pTeam = EnsureSquadTeam(pHouse, want, nullptr, "DPKT", 0);
+	if (!pTeam) return;
+	auto& assign = g_picketAssign[hIdx];
+	auto const& resp = g_responders[hIdx];
+	std::vector<int> filled(posts.size(), 0);
+	std::map<DWORD, int> kept;
+	std::vector<FootClass*> loose;
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+	{
+		if (pF->InLimbo || pF->Health <= 0) continue;
+		auto const a = assign.find(pF->UniqueID);
+		if (a != assign.end() && a->second < static_cast<int>(posts.size()) && filled[a->second] < perPost)
+			{ ++filled[a->second]; kept[pF->UniqueID] = a->second; }
+		else loose.push_back(pF);
+	}
+	auto const vacancy = [&]() { for (size_t k = 0; k < posts.size(); ++k) if (filled[k] < perPost) return static_cast<int>(k); return -1; };
+	for (auto const pF : loose)
+	{
+		int const k = vacancy();
+		if (k < 0) { pTeam->LiberateMember(pF); pF->QueueMission(Mission::Guard, false); continue; }
+		++filled[k]; kept[pF->UniqueID] = k;
+	}
+	int recruited = 0;
+	if (vacancy() >= 0)
+	{
+		struct Cand { bool OnTeam; int Cost; FootClass* Unit; };
+		std::vector<Cand> cands;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!IsPicketCandidate(pT, pHouse, pTeam)) continue;
+			auto const pF = static_cast<FootClass*>(pT);
+			if (pF->Team == pTeam || resp.count(pF->UniqueID)) continue;
+			cands.push_back({ pF->Team != nullptr, pT->GetTechnoType()->GetActualCost(pHouse), pF });
+		}
+		std::sort(cands.begin(), cands.end(), [](Cand const& a, Cand const& b)
+			{ return a.OnTeam != b.OnTeam ? !a.OnTeam : a.Cost < b.Cost; });
+		for (int k; (k = vacancy()) >= 0; )
+		{
+			auto const pc = posts[k]->GetCellCoords();
+			auto best = cands.end();
+			for (auto it = cands.begin(); it != cands.end(); ++it)
+			{
+				if (!it->Unit) continue;
+				if (best == cands.end()) { best = it; continue; }
+				if (it->OnTeam != best->OnTeam || it->Cost != best->Cost) continue;   // sorted: first tier only
+				if (Dist2D(it->Unit->GetCoords(), pc) < Dist2D(best->Unit->GetCoords(), pc)) best = it;
+			}
+			if (best == cands.end()) break;
+			auto const pF = best->Unit;
+			best->Unit = nullptr;
+			if (!TryAddToTeam(pTeam, pF)) continue;
+			++filled[k]; kept[pF->UniqueID] = k; ++recruited;
+		}
+	}
+	assign = kept;
+
+	// Short of pickets: build them (Picket.Build), as the interceptor squad does.
+	int const have = static_cast<int>(kept.size());
+	auto const pBuild = cfg.CounterEngPicketBuild && have < want ? PicketBuildType(pHouse) : nullptr;
+	EnsureSquadTeam(pHouse, want, pBuild, "DPKT", pBuild ? want - have : 0);
+
+	if (cfg.DebugTicks)
+	{
+		char where[160] = { 0 };
+		size_t n = 0;
+		for (size_t k = 0; k < posts.size() && n < sizeof(where) - 16; ++k)
+		{
+			auto const pc = posts[k]->MapCoords;
+			n += std::snprintf(where + n, sizeof(where) - n, "%s(%d,%d)x%d", k ? " " : "", pc.X, pc.Y, filled[k]);
+		}
+		Debug::Log("[DoctrineExt] pickets: house=%s#%d posts=%d (learned %d, toward enemy %d) sightings=%d "
+			"edge=%.1fc units=%d/%d recruited=%d build=%s: %s.\n", pHouse->get_ID(), hIdx,
+			static_cast<int>(posts.size()), learned, static_cast<int>(bearings.size()) - learned,
+			static_cast<int>(sights.size()), radius / 256.0, have, want, recruited,
+			pBuild ? pBuild->get_ID() : "(none)", where);
+	}
+}
+
+void Teams::SteerPickets(HouseClass* pHouse)
+{
+	int const hIdx = pHouse->ArrayIndex;
+	auto const pit = g_picketPosts.find(hIdx);
+	auto const ait = g_picketAssign.find(hIdx);
+	if (pit == g_picketPosts.end() || ait == g_picketAssign.end()) return;
+	auto const pTeam = FindPicketTeam(hIdx);
+	if (!pTeam) return;
+	auto const& resp = g_responders[hIdx];
+	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+	{
+		if (pF->InLimbo || pF->Health <= 0 || resp.count(pF->UniqueID) || pF->Target) continue;   // busy
+		auto const a = ait->second.find(pF->UniqueID);
+		if (a == ait->second.end() || a->second >= static_cast<int>(pit->second.size())) continue;
+		auto const pCell = pit->second[a->second];
+		// Back to its post only once it has drifted off it; there, it stands guard and shoots.
+		if (Dist2D(pF->GetCoords(), pCell->GetCellCoords()) > 2.0 * 256.0)
+		{
+			pF->SetDestination(pCell, true);
+			pF->QueueMission(Mission::Move, false);
+		}
+	}
+}
 
 // ─── Engineer rush (§10m) ────────────────────────────────────────────────────
 namespace
@@ -6138,6 +6472,11 @@ void Teams::Reset()
 	g_counterEngLastFire.clear();
 	g_responders.clear();
 	g_interceptCells.clear();
+	g_picketSightings.clear();
+	g_picketSeen.clear();
+	g_picketPosts.clear();
+	g_picketAssign.clear();
+	g_picketLastFire.clear();
 	g_denySelling = false;
 	g_engTracks.clear();
 	g_engTrackFrame = -1;

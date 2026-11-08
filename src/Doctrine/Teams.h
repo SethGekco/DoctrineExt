@@ -125,6 +125,13 @@ namespace Teams
 	// interceptors (dogs) while firepower falls short (throttled). Opt-in. AI houses only.
 	void CounterEngineers(HouseClass* pHouse);
 
+	// Engineer pickets ([Doctrine.CounterEngineer] Picket): post a few units just past the base's edge on
+	// the bearings enemy engineers have come from (learned per game), else toward the nearest enemy bases
+	// — as the AA screen covers incoming-air bearings. Pass throttled (Picket.Interval); SteerPickets
+	// walks drifted pickets back every tick. Opt-in. AI houses only.
+	void EngineerPickets(HouseClass* pHouse);
+	void SteerPickets(HouseClass* pHouse);
+
 	// Engineer rush (§10m): capture enemy buildings near the base with escorted engineers, only where
 	// the enemy's reachable firepower won't kill the engineer on its approach (the counter-engineer's
 	// damage model in reverse). Pass throttled; steering every tick. Opt-in. AI houses only.

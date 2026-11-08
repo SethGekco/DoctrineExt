@@ -446,6 +446,29 @@ public:
 	                                 // its predicted path to the building, instead of chasing it from behind
 	bool CounterEngShareDefenses = true; // ShareDefenses — a defense shoots one engineer at a time: engineers
 	                                 // arriving together share its fire, soonest first
+	bool CounterEngPicket = false;   // Picket — post units on the bearings enemy engineers come from
+	std::vector<std::string> CounterEngPicketUnits; // Picket.Units — units that may picket; empty = auto
+	                                 // (armed ground units that hurt engineers, cheapest first); a list =
+	                                 // exactly these
+	bool CounterEngPicketUnitsNone = false; // Picket.Units=none (or null): nothing pickets
+	int CounterEngPicketPosts = 2;   // Picket.Posts — bearings picketed at once
+	int CounterEngPicketPerPost = 2; // Picket.PerPost — units per post
+	int CounterEngPicketDistance = 4; // Picket.Distance — cells beyond the base's outermost building
+	int CounterEngPicketMinSightings = 1; // Picket.MinSightings — engineers seen coming from a bearing
+	                                 // before it's picketed
+	int CounterEngPicketMemory = 0;  // Picket.Memory — frames a sighting counts for; 0 = the whole game
+	bool CounterEngPicketTowardEnemy = true; // Picket.TowardEnemy — posts no sighting has claimed face the
+	                                 // nearest enemy bases
+	bool CounterEngPicketBuild = false; // Picket.Build — build pickets (the interceptor) when short
+	int CounterEngPicketInterval = 150; // Picket.Interval — frames between placement passes
+	std::vector<std::string> CounterEngTransports; // Transports — enemy carriers watched; empty = auto
+	                                 // (any type with Passengers); a list = exactly these
+	bool CounterEngTransportsNone = false; // Transports=none (or null): none
+	int CounterEngTransportCargo = 0; // Transports.Cargo — 0 no: transports aren't threats; 1 assume: every
+	                                 // enemy transport may carry engineers (cargo unseen); 2 know: one with
+	                                 // an engineer (ThreatTypes) aboard is a threat
+	bool CounterEngTransportDenySell = false; // Transports.DenySell — DenySell / Sacrifice against carriers
+	                                 // too (else they're only shot at)
 	bool CounterEngDenySell = true;  // DenySell — sell a building an engineer reaches before it can die
 	std::vector<std::string> CounterEngDenySellExclude; // DenySell.Exclude — never deny-sell these
 	int CounterEngDenySellLead = 0;  // DenySell.Lead — sell when the engineer is this many frames out

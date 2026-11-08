@@ -435,6 +435,33 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CounterEngPredictIntercept = pINI->ReadBool("Doctrine.CounterEngineer", "Predict.Intercept",
 		cfg.CounterEngPredictIntercept);
 	cfg.CounterEngShareDefenses = pINI->ReadBool("Doctrine.CounterEngineer", "ShareDefenses", cfg.CounterEngShareDefenses);
+	cfg.CounterEngPicket = pINI->ReadBool("Doctrine.CounterEngineer", "Picket", cfg.CounterEngPicket);
+	pINI->ReadString("Doctrine.CounterEngineer", "Picket.Units", "", buf, sizeof(buf));
+	cfg.CounterEngPicketUnits = SplitList(buf);
+	cfg.CounterEngPicketUnitsNone = IsNoneList(cfg.CounterEngPicketUnits);
+	if (cfg.CounterEngPicketUnitsNone) cfg.CounterEngPicketUnits.clear();
+	cfg.CounterEngPicketPosts = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.Posts", cfg.CounterEngPicketPosts);
+	cfg.CounterEngPicketPerPost = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.PerPost", cfg.CounterEngPicketPerPost);
+	cfg.CounterEngPicketDistance = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.Distance",
+		cfg.CounterEngPicketDistance);
+	cfg.CounterEngPicketMinSightings = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.MinSightings",
+		cfg.CounterEngPicketMinSightings);
+	cfg.CounterEngPicketMemory = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.Memory", cfg.CounterEngPicketMemory);
+	cfg.CounterEngPicketTowardEnemy = pINI->ReadBool("Doctrine.CounterEngineer", "Picket.TowardEnemy",
+		cfg.CounterEngPicketTowardEnemy);
+	cfg.CounterEngPicketBuild = pINI->ReadBool("Doctrine.CounterEngineer", "Picket.Build", cfg.CounterEngPicketBuild);
+	cfg.CounterEngPicketInterval = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.Interval",
+		cfg.CounterEngPicketInterval);
+	pINI->ReadString("Doctrine.CounterEngineer", "Transports", "", buf, sizeof(buf));
+	cfg.CounterEngTransports = SplitList(buf);
+	cfg.CounterEngTransportsNone = IsNoneList(cfg.CounterEngTransports);
+	if (cfg.CounterEngTransportsNone) cfg.CounterEngTransports.clear();
+	pINI->ReadString("Doctrine.CounterEngineer", "Transports.Cargo", "", buf, sizeof(buf));
+	if (auto const cargo = SplitList(buf); !cargo.empty())
+		cfg.CounterEngTransportCargo = SameWord(cargo[0].c_str(), "know") ? 2
+			: SameWord(cargo[0].c_str(), "assume") ? 1 : 0;                // no / none / anything else
+	cfg.CounterEngTransportDenySell = pINI->ReadBool("Doctrine.CounterEngineer", "Transports.DenySell",
+		cfg.CounterEngTransportDenySell);
 	cfg.CounterEngDenySell = pINI->ReadBool("Doctrine.CounterEngineer", "DenySell", cfg.CounterEngDenySell);
 	pINI->ReadString("Doctrine.CounterEngineer", "DenySell.Exclude", "", buf, sizeof(buf));
 	cfg.CounterEngDenySellExclude = SplitList(buf);
@@ -494,8 +521,18 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			cfg.CounterEngHonorPrereq);
 	if (cfg.CounterEngEnable)
 		Echo("[DoctrineExt] [Doctrine.CounterEngineer]: Predict.Goal=%d Predict.Width=%d Predict.Elsewhere=%d "
-			"Predict.Intercept=%d ShareDefenses=%d\n", cfg.CounterEngPredictGoal, cfg.CounterEngPredictWidth,
-			cfg.CounterEngPredictElsewhere, cfg.CounterEngPredictIntercept, cfg.CounterEngShareDefenses);
+			"Predict.Intercept=%d ShareDefenses=%d Picket=%d Picket.Units=%u (empty=auto)%s Picket.Posts=%d "
+			"Picket.PerPost=%d Picket.Distance=%d Picket.MinSightings=%d Picket.Memory=%d Picket.TowardEnemy=%d "
+			"Picket.Build=%d Picket.Interval=%d Transports=%u (empty=auto)%s Transports.Cargo=%s "
+			"Transports.DenySell=%d\n", cfg.CounterEngPredictGoal, cfg.CounterEngPredictWidth,
+			cfg.CounterEngPredictElsewhere, cfg.CounterEngPredictIntercept, cfg.CounterEngShareDefenses,
+			cfg.CounterEngPicket, static_cast<unsigned>(cfg.CounterEngPicketUnits.size()),
+			cfg.CounterEngPicketUnitsNone ? " NONE" : "", cfg.CounterEngPicketPosts, cfg.CounterEngPicketPerPost,
+			cfg.CounterEngPicketDistance, cfg.CounterEngPicketMinSightings, cfg.CounterEngPicketMemory,
+			cfg.CounterEngPicketTowardEnemy, cfg.CounterEngPicketBuild, cfg.CounterEngPicketInterval,
+			static_cast<unsigned>(cfg.CounterEngTransports.size()), cfg.CounterEngTransportsNone ? " NONE" : "",
+			cfg.CounterEngTransportCargo == 2 ? "know" : cfg.CounterEngTransportCargo == 1 ? "assume" : "no",
+			cfg.CounterEngTransportDenySell);
 	// ─── [Doctrine.EngineerRush] — capture enemy buildings near base ──
 	cfg.EngRushEnable = pINI->ReadBool("Doctrine.EngineerRush", "Enable", cfg.EngRushEnable);
 	cfg.EngRushInterval = pINI->ReadInteger("Doctrine.EngineerRush", "Interval", cfg.EngRushInterval);

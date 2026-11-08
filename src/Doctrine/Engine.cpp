@@ -168,6 +168,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// our buildings, deny-sell what can't be saved. Every tick, and FIRST, so urgent defense
 	// claims units before capture and rush squads do. Opt-in.
 	Teams::CounterEngineers(pHouse);
+	// Engineer pickets: units posted on the bearings engineers come from (after the counter-engineer,
+	// so a picket it has just retasked is left to it). Pass throttled; steering every tick. Opt-in.
+	Teams::EngineerPickets(pHouse);
+	Teams::SteerPickets(pHouse);
 
 	// Capture doctrine (§10j): grab neutral/enemy tech buildings (oil derricks etc.)
 	// with engineers, nearest-first. Additive production only — can't destabilise the

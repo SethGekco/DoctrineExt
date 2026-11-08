@@ -546,6 +546,9 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.EngRushExclude = SplitList(buf);
 	pINI->ReadString("Doctrine.EngineerRush", "Priority", "", buf, sizeof(buf));
 	cfg.EngRushPriority = SplitList(buf);
+	cfg.EngRushPriorityRadius = pINI->ReadInteger("Doctrine.EngineerRush", "Priority.Radius", cfg.EngRushPriorityRadius);
+	cfg.EngRushPriorityBackup = pINI->ReadInteger("Doctrine.EngineerRush", "Priority.Backup", cfg.EngRushPriorityBackup);
+	cfg.EngRushCripple = pINI->ReadBool("Doctrine.EngineerRush", "Cripple", cfg.EngRushCripple);
 	cfg.EngRushMax = pINI->ReadInteger("Doctrine.EngineerRush", "Max", cfg.EngRushMax);
 	cfg.EngRushEscorts = pINI->ReadInteger("Doctrine.EngineerRush", "Escorts", cfg.EngRushEscorts);
 	cfg.EngRushSafety = pINI->ReadDouble("Doctrine.EngineerRush", "Safety", cfg.EngRushSafety);
@@ -560,13 +563,14 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	if (cfg.EngRushEnable)
 		Echo("[DoctrineExt] [Doctrine.EngineerRush]: Enable=1 Interval=%d Radius=%d Targets=%u "
 			"(empty=any) Exclude=%u Priority=%u Max=%d Escorts=%d Safety=%.2f MinCash=%d RetryDelay=%d "
-			"Build.Urgent=%d Build.IgnorePause=%d Recapture=%d Recapture.UseCaptureSquad=%d HonorPrereq=%d\n",
+			"Build.Urgent=%d Build.IgnorePause=%d Recapture=%d Recapture.UseCaptureSquad=%d HonorPrereq=%d "
+			"Priority.Radius=%d Priority.Backup=%d Cripple=%d\n",
 			cfg.EngRushInterval, cfg.EngRushRadius,
 			static_cast<unsigned>(cfg.EngRushTargets.size()), static_cast<unsigned>(cfg.EngRushExclude.size()),
 			static_cast<unsigned>(cfg.EngRushPriority.size()), cfg.EngRushMax, cfg.EngRushEscorts,
 			cfg.EngRushSafety, cfg.EngRushMinCash, cfg.EngRushRetryDelay, cfg.EngRushBuildUrgent,
 			cfg.EngRushBuildIgnorePause, cfg.EngRushRecapture, cfg.EngRushRecaptureUseCapture,
-			cfg.EngRushHonorPrereq);
+			cfg.EngRushHonorPrereq, cfg.EngRushPriorityRadius, cfg.EngRushPriorityBackup, cfg.EngRushCripple);
 	// ─── [Doctrine.Salvage] — decide before the engine's raise-money base sale ──
 	cfg.SalvageEnable = pINI->ReadBool("Doctrine.Salvage", "Enable", cfg.SalvageEnable);
 	cfg.SalvageBlockWithIncome = pINI->ReadBool("Doctrine.Salvage", "BlockWithIncome", cfg.SalvageBlockWithIncome);

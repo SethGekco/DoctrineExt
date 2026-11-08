@@ -525,6 +525,12 @@ public:
 	std::vector<std::string> EngRushExclude;  // Exclude — never rush these
 	std::vector<std::string> EngRushPriority; // Priority — rush these first, in list order; the
 	                                 // rest by value (Cost)
+	int EngRushPriorityRadius = -1;  // Priority.Radius — cells from our base a Priority or Cripple target may
+	                                 // be; 0 = anywhere on the map; -1 = Radius
+	int EngRushPriorityBackup = 0;   // Priority.Backup — extra engineers sent at a Priority target (a second
+	                                 // gets in if the first is shot)
+	bool EngRushCripple = false;     // Cripple — a building whose capture leaves its owner without a yard, a
+	                                 // kind of factory, income or enough power ranks right after Priority
 	int EngRushMax = 2;              // Max — concurrent rush engineers
 	int EngRushEscorts = 2;          // Escorts — armed units per engineer (0 = none)
 	double EngRushSafety = 1.0;      // Safety — rush only if expected enemy damage x this < engineer HP

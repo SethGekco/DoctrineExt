@@ -5380,6 +5380,36 @@ namespace
 		return INT_MAX;
 	}
 
+	// Would taking pB cripple its owner (Cripple)? Its last construction yard (and no MCV), its last factory
+	// of a kind, its last income building, or a power plant it can't run its base without.
+	bool Cripples(BuildingClass* const pB)
+	{
+		auto const pO = pB->Owner;
+		auto const pBt = pB->Type;
+		if (!pO) return false;
+		bool const yard = pBt->ConstructionYard;
+		bool const factory = !yard && pBt->Factory != AbstractType::None;
+		bool const income = IncomeKindOf(pBt) > 0;
+		bool const power = pBt->PowerBonus > 0 && pO->PowerOutput - pBt->PowerBonus < pO->PowerDrain;
+		if (power) return true;
+		if (!yard && !factory && !income) return false;
+		bool spareYard = false, spareFactory = false, spareIncome = false;
+		for (auto const pX : pO->Buildings)
+		{
+			if (!pX || pX == pB || !pX->Type || pX->InLimbo || pX->Health <= 0) continue;
+			if (pX->GetCurrentMission() == Mission::Selling) continue;
+			if (pX->Type->ConstructionYard) spareYard = true;
+			if (pX->Type->Factory == pBt->Factory && pX->Type->Naval == pBt->Naval) spareFactory = true;
+			if (IncomeKindOf(pX->Type) > 0) spareIncome = true;
+		}
+		if (yard && !spareYard)
+			for (auto const pU : UnitClass::Array)
+				if (pU && pU->Owner == pO && !pU->InLimbo && pU->Health > 0 && pU->Type->DeploysInto
+					&& pU->Type->DeploysInto->ConstructionYard)
+					{ spareYard = true; break; }
+		return (yard && !spareYard) || (factory && !spareFactory) || (income && !spareIncome);
+	}
+
 	// A hostile armed object, as the rush's risk model sees it.
 	struct Shooter { TechnoClass* T; TechnoTypeClass* Type; bool Building; double Range; double Speed; };
 
@@ -5478,6 +5508,11 @@ void Teams::EngineerRush(HouseClass* pHouse)
 	auto& lost = g_engRushLost[hIdx];
 	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
 	double const maxD = (cfg.EngRushRadius > 0 ? cfg.EngRushRadius : 30) * 256.0;
+	// Priority and Cripple targets may be farther (Priority.Radius; 0 = anywhere) — a yard across the map
+	// beats a power plant next door (11-08: Rex's yard was out of Radius, his forward plant wasn't).
+	double const maxPriD = std::max(maxD, cfg.EngRushPriorityRadius < 0 ? maxD
+		: cfg.EngRushPriorityRadius == 0 ? 1e18 : cfg.EngRushPriorityRadius * 256.0);
+	int const nPri = static_cast<int>(cfg.EngRushPriority.size());
 	double const safety = cfg.EngRushSafety > 0.0 ? cfg.EngRushSafety : 1.0;
 	auto const shooters = pEngType ? HostileShooters(pHouse) : std::vector<Shooter>();
 	for (int i = 0; i < BuildingClass::Array.Count; ++i)
@@ -5493,10 +5528,13 @@ void Teams::EngineerRush(HouseClass* pHouse)
 		hostile[uid] = pB;
 		if (!pEngType) continue;
 		double const d = Dist2D(base, pB->GetCoords());
-		if (d > maxD || cool.count(uid)) continue;
+		if (d > maxPriD || cool.count(uid)) continue;
+		int rank = ours ? -1 : RushRank(pB->Type);
+		if (rank == INT_MAX && cfg.EngRushCripple && Cripples(pB)) rank = nPri;   // right after Priority
+		if (rank == INT_MAX && d > maxD) continue;
 		double const risk = RushRisk(shooters, pB, pEngType);
 		if (risk * safety >= pEngType->Strength) continue;               // its door is covered
-		cands.push_back({ pB, ours ? -1 : RushRank(pB->Type), pB->Type->Cost, d, risk });
+		cands.push_back({ pB, rank, pB->Type->Cost, d, risk });
 	}
 	mine.clear();
 	for (auto const pB : pHouse->Buildings)
@@ -5520,8 +5558,13 @@ void Teams::EngineerRush(HouseClass* pHouse)
 		it = assign.erase(it);
 	}
 
+	// Engineers each target takes: one, plus Priority.Backup for a Priority target.
+	auto const slotsFor = [&](Cand const& c)
+		{ return c.Rank >= 0 && c.Rank < nPri ? 1 + std::max(0, cfg.EngRushPriorityBackup) : 1; };
+	int slots = 0;
+	for (auto const& c : cands) slots += slotsFor(c);
 	int const cap = cfg.EngRushMax > 0 ? cfg.EngRushMax : 2;
-	int const desired = std::min(static_cast<int>(cands.size()), cap);
+	int const desired = std::min(slots, cap);
 	int const have = static_cast<int>(onTeam.size());
 	if (desired == 0)
 	{
@@ -5622,38 +5665,54 @@ void Teams::EngineerRush(HouseClass* pHouse)
 		pF = next;
 	}
 
-	// Assignments: keep the ones still worth it; give each free engineer the best untaken target,
-	// nearest engineer per target.
-	std::set<DWORD> candIds, taken;
-	for (auto const& c : cands) candIds.insert(c.B->UniqueID);
-	for (auto it = assign.begin(); it != assign.end(); )
-		if (!candIds.count(it->second)) it = assign.erase(it);
-		else { taken.insert(it->second); ++it; }
-	std::vector<FootClass*> freeEng;
+	// Assignments, best target first: an engineer within 3 cells of its target keeps it (it's about to go
+	// in); then each target, in rank order, keeps the engineers already on it and takes the nearest others
+	// up to its slots — so a better target that turns up (the yard, once its door is open) pulls an
+	// engineer off a lesser one.
+	std::map<DWORD, BuildingClass*> candById;
+	for (auto const& c : cands) candById[c.B->UniqueID] = c.B;
+	std::map<DWORD, DWORD> next;
+	std::map<DWORD, int> filled;
 	for (auto const& kv : onTeam)
-		if (!assign.count(kv.first)) freeEng.push_back(kv.second);
+	{
+		auto const a = assign.find(kv.first);
+		if (a == assign.end()) continue;
+		auto const t = candById.find(a->second);
+		if (t != candById.end() && DistToFootprint(kv.second->GetCoords(), t->second) <= 3.0 * 256.0)
+			{ next[kv.first] = a->second; ++filled[a->second]; }
+	}
 	for (auto const& c : cands)
 	{
-		if (freeEng.empty()) break;
-		if (taken.count(c.B->UniqueID)) continue;
-		auto const bc = c.B->GetCoords();
-		size_t bestI = 0; double bestD = 1e18;
-		for (size_t k = 0; k < freeEng.size(); ++k)
+		DWORD const tid = c.B->UniqueID;
+		int const room = slotsFor(c);
+		for (auto const& kv : onTeam)
 		{
-			double const d = Dist2D(bc, freeEng[k]->GetCoords());
-			if (d < bestD) { bestD = d; bestI = k; }
+			if (filled[tid] >= room) break;
+			auto const a = assign.find(kv.first);
+			if (!next.count(kv.first) && a != assign.end() && a->second == tid) { next[kv.first] = tid; ++filled[tid]; }
 		}
-		assign[freeEng[bestI]->UniqueID] = c.B->UniqueID;
-		taken.insert(c.B->UniqueID);
-		freeEng.erase(freeEng.begin() + static_cast<std::ptrdiff_t>(bestI));
+		auto const bc = c.B->GetCoords();
+		while (filled[tid] < room)
+		{
+			FootClass* best = nullptr;
+			double bestD = 1e18;
+			for (auto const& kv : onTeam)
+				if (!next.count(kv.first) && Dist2D(bc, kv.second->GetCoords()) < bestD)
+					{ bestD = Dist2D(bc, kv.second->GetCoords()); best = kv.second; }
+			if (!best) break;
+			next[best->UniqueID] = tid;
+			++filled[tid];
+		}
 	}
+	assign = next;
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] eng-rush: house=%s#%d targets=%d desired=%d eng=%d escorts=%d/%d "
 			"build=%d%s best=%s@%.1fc%s risk=%.0f/%d.\n", pHouse->get_ID(), hIdx,
 			static_cast<int>(cands.size()), desired, static_cast<int>(onTeam.size()), escorts, escortCap,
 			want, flush ? "" : " (below MinCash)", cands[0].B->Type->ID, cands[0].Dist / 256.0,
-			cands[0].Rank < 0 ? " (recapture)" : "", cands[0].Risk, pEngType->Strength);
+			cands[0].Rank < 0 ? " (recapture)" : cands[0].Rank < nPri ? " (priority)"
+				: cands[0].Rank == nPri ? " (cripple)" : "", cands[0].Risk, pEngType->Strength);
 }
 
 void Teams::SteerEngineerRush(HouseClass* pHouse)

@@ -530,6 +530,27 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			"BlockWhilePlan=%d Keep=%u (empty=auto)%s\n", cfg.SalvageBlockWithIncome, cfg.SalvageBlockWithoutYard,
 			cfg.SalvageBlockWhilePlan, static_cast<unsigned>(cfg.SalvageKeep.size()),
 			cfg.SalvageKeepNone ? " NONE" : "");
+	// ─── [Doctrine.Captured] — keep or sell a building captured from another player ──
+	cfg.CapturedEnable = pINI->ReadBool("Doctrine.Captured", "Enable", cfg.CapturedEnable);
+	pINI->ReadString("Doctrine.Captured", "Keep", "", buf, sizeof(buf));
+	cfg.CapturedKeep = SplitList(buf);
+	cfg.CapturedKeepNone = IsNoneList(cfg.CapturedKeep);
+	if (cfg.CapturedKeepNone) cfg.CapturedKeep.clear();
+	pINI->ReadString("Doctrine.Captured", "Sell", "", buf, sizeof(buf));
+	cfg.CapturedSell = SplitList(buf);
+	if (IsNoneList(cfg.CapturedSell)) cfg.CapturedSell.clear();
+	cfg.CapturedKeepOnlyYard = pINI->ReadBool("Doctrine.Captured", "KeepOnlyYard", cfg.CapturedKeepOnlyYard);
+	cfg.CapturedDenyLastYard = pINI->ReadBool("Doctrine.Captured", "DenyLastYard", cfg.CapturedDenyLastYard);
+	cfg.CapturedKeepIfNeeded = pINI->ReadBool("Doctrine.Captured", "KeepIfNeeded", cfg.CapturedKeepIfNeeded);
+	cfg.CapturedKeepNewTech = pINI->ReadBool("Doctrine.Captured", "KeepNewTech", cfg.CapturedKeepNewTech);
+	cfg.CapturedHoldRadius = pINI->ReadInteger("Doctrine.Captured", "Hold.Radius", cfg.CapturedHoldRadius);
+	cfg.CapturedHoldRatio = pINI->ReadDouble("Doctrine.Captured", "Hold.Ratio", cfg.CapturedHoldRatio);
+	if (cfg.CapturedEnable)
+		Echo("[DoctrineExt] [Doctrine.Captured]: Enable=1 Keep=%u (empty=auto)%s Sell=%u KeepOnlyYard=%d "
+			"DenyLastYard=%d KeepIfNeeded=%d KeepNewTech=%d Hold.Radius=%d Hold.Ratio=%.2f\n",
+			static_cast<unsigned>(cfg.CapturedKeep.size()), cfg.CapturedKeepNone ? " NONE" : "",
+			static_cast<unsigned>(cfg.CapturedSell.size()), cfg.CapturedKeepOnlyYard, cfg.CapturedDenyLastYard,
+			cfg.CapturedKeepIfNeeded, cfg.CapturedKeepNewTech, cfg.CapturedHoldRadius, cfg.CapturedHoldRatio);
 	if (cfg.EconomyEnable)
 		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

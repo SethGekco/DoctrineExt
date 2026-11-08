@@ -5724,9 +5724,152 @@ bool Teams::SalvageBlocksRaiseMoney(HouseClass* pHouse)
 	return s.Block;
 }
 
+// ─── Captured buildings (§10o) ──────────────────────────────────────────────────
+// The engine sells every building an AI captures from another player, the same frame (6 of the 7 yards
+// captured in the 11-08 30-player run). The capturer of the 7th had no income and kept it only because
+// [Doctrine.Economy] PreventSelling blocked that sale too. Captured decides on purpose: keep what we lack and can hold (our
+// only yard always), sell the rest for the refund, and sell the enemy's last yard so they can't rebuild.
+namespace
+{
+	BuildingClass* g_captureSell = nullptr;               // the sale Captured chose, let past ShouldBlockSell
+	int g_captureSellFrame = -1;
+
+	bool OwnsOtherYard(HouseClass* const pHouse, BuildingClass* const pExcept)
+	{
+		for (auto const pB : pHouse->Buildings)
+			if (pB && pB != pExcept && pB->Type && !pB->InLimbo && pB->Health > 0 && pB->Type->ConstructionYard
+				&& pB->GetCurrentMission() != Mission::Selling)
+				return true;
+		return false;
+	}
+
+	// Was it the previous owner's last way to build: no other yard, no MCV (DenyLastYard)?
+	bool LastYardOf(BuildingClass* const pB, HouseClass* const pPrev)
+	{
+		if (!pB->Type->ConstructionYard || !pPrev || pPrev->Defeated || OwnsOtherYard(pPrev, pB)) return false;
+		for (auto const pU : UnitClass::Array)
+			if (pU && pU->Owner == pPrev && !pU->InLimbo && pU->Health > 0 && pU->Type->DeploysInto
+				&& pU->Type->DeploysInto->ConstructionYard)
+				return false;
+		return true;
+	}
+
+	// The gap a captured building fills for the house (KeepIfNeeded), or null.
+	const char* CapturedGap(BuildingClass* const pB, HouseClass* const pHouse)
+	{
+		auto const pBt = pB->Type;
+		bool const factory = pBt->Factory != AbstractType::None;
+		bool sameFactory = false, income = false;
+		int power = 0, drain = 0;
+		for (auto const pO : pHouse->Buildings)
+		{
+			if (!pO || pO == pB || !pO->Type || pO->InLimbo || pO->Health <= 0) continue;
+			if (pO->GetCurrentMission() == Mission::Selling) continue;
+			auto const pOt = pO->Type;
+			if (factory && pOt->Factory == pBt->Factory && pOt->Naval == pBt->Naval) sameFactory = true;
+			if (IncomeKindOf(pOt) > 0) income = true;
+			power += pOt->PowerBonus;
+			drain += pOt->PowerDrain;
+		}
+		if (factory && !sameFactory) return "our only factory of its kind";
+		if (IncomeKindOf(pBt) > 0 && !income) return "our only income building";
+		if (pBt->PowerBonus > 0 && power < drain) return "we're short of power without it";
+		return nullptr;
+	}
+
+	// Can our side build this at all (KeepNewTech)? Owner= and TechLevel, not today's prerequisites.
+	bool NewTech(BuildingTypeClass* const pBt, HouseClass* const pHouse)
+	{
+		int const maxTL = (pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10) ? pHouse->TechLevel : 10;
+		return pBt->TechLevel < 0 || pBt->TechLevel > maxTL || !pHouse->InOwners(pBt);
+	}
+
+	// Armed value within range of a point (Hold.Radius): ours and our allies', or everyone hostile to us.
+	// Units and defenses at cost; miners, MCVs and engineers don't count.
+	int ArmedValueNear(HouseClass* const pHouse, CoordStruct const& at, double const range, bool const hostile)
+	{
+		int v = 0;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || !pT->Owner || pT->InLimbo || pT->Health <= 0) continue;
+			bool const side = hostile ? IsHostileTo(pHouse, pT->Owner)
+				: (pT->Owner == pHouse || pHouse->IsAlliedWith(pT->Owner));
+			if (!side || Dist2D(at, pT->GetCoords()) > range) continue;
+			auto const pType = pT->GetTechnoType();
+			if (!pType || pType->ResourceGatherer || pType->DeploysInto || !HasOffensiveWeapon(pType)) continue;
+			if (pType->WhatAmI() == AbstractType::InfantryType && static_cast<InfantryTypeClass*>(pType)->Engineer) continue;
+			v += pType->GetActualCost(pT->Owner);
+		}
+		return v;
+	}
+}
+
+bool Teams::KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew)
+{
+	if (!pBld || !pBld->Type || !pNew || pBld->Owner != pNew || pOld == pNew || pNew->IsControlledByHuman())
+		return false;
+	DoctrineConfig::HouseScope const scope(pNew);         // called from the engine's ownership change
+	auto const& cfg = DoctrineConfig::Get();
+	if (!cfg.CapturedEnable) return false;                // the engine's sale, as before
+	auto const pBt = pBld->Type;
+	bool keep = false;
+	const char* why = nullptr;
+	static char whyBuf[192];
+	int ours = -1, theirs = -1;
+	if (cfg.CapturedKeepNone) why = "Keep=none: every capture is sold";
+	else if (!cfg.CapturedKeep.empty())
+	{
+		keep = ListHas(cfg.CapturedKeep, pBt->ID);
+		why = keep ? "on the Keep list" : "not on the Keep list";
+	}
+	else if (ListHas(cfg.CapturedSell, pBt->ID)) why = "on the Sell list";
+	else if (cfg.CapturedKeepOnlyYard && pBt->ConstructionYard && !OwnsOtherYard(pNew, pBld))
+	{
+		keep = true;
+		why = "our only construction yard: the only way we can build (KeepOnlyYard)";
+	}
+	else if (cfg.CapturedDenyLastYard && LastYardOf(pBld, pOld))
+		why = "their last construction yard: sold, they can't rebuild (DenyLastYard)";
+	else
+	{
+		const char* const gap = cfg.CapturedKeepIfNeeded ? CapturedGap(pBld, pNew) : nullptr;
+		bool const tech = cfg.CapturedKeepNewTech && NewTech(pBt, pNew);
+		if (!gap && !tech) why = "nothing we lack: take the refund";
+		else
+		{
+			auto const at = pBld->GetCoords();
+			double const range = (cfg.CapturedHoldRadius > 0 ? cfg.CapturedHoldRadius : 10) * 256.0;
+			ours = ArmedValueNear(pNew, at, range, false);
+			theirs = ArmedValueNear(pNew, at, range, true);
+			keep = cfg.CapturedHoldRatio <= 0.0 || ours >= theirs * cfg.CapturedHoldRatio;
+			std::snprintf(whyBuf, sizeof(whyBuf), "%s, and we %s hold it (%s)", gap ? gap : "our side can't build it",
+				keep ? "can" : "can't", keep ? "KeepIfNeeded/KeepNewTech" : "take the refund before it's retaken");
+			why = whyBuf;
+		}
+	}
+	if (!keep)
+	{
+		g_captureSell = pBld;                             // past [Doctrine.Economy] PreventSelling
+		g_captureSellFrame = Unsorted::CurrentFrame;
+	}
+	if (cfg.DebugTicks)
+		Debug::Log("[DoctrineExt] captured: house=%s#%d %s %s taken from %s#%d: %s. refund=%d cash=%d "
+			"armed near (Hold.Radius): ours=%d theirs=%d.\n", pNew->get_ID(), pNew->ArrayIndex,
+			keep ? "keeps" : "sells", pBt->ID, pOld ? pOld->get_ID() : "?", pOld ? pOld->ArrayIndex : -1, why,
+			static_cast<int>(pBt->GetActualCost(pNew) * RulesClass::Instance->RefundPercent),
+			static_cast<int>(pNew->Available_Money()), ours, theirs);
+	return keep;
+}
+
 bool Teams::ShouldBlockSell(BuildingClass* pBld)
 {
 	if (g_denySelling) return false;                      // our own capture-denial sale (§10l)
+	if (pBld && pBld == g_captureSell && g_captureSellFrame == Unsorted::CurrentFrame)
+	{
+		g_captureSell = nullptr;                          // the sale [Doctrine.Captured] chose (§10o)
+		return false;
+	}
 	if (!pBld || !pBld->Type) return false;
 	DoctrineConfig::HouseScope const scope(pBld->Owner);  // called from the Sell hook, outside any tick
 	auto const& cfg = DoctrineConfig::Get();
@@ -5774,6 +5917,20 @@ DEFINE_HOOK(0x4FD9A0, HouseClass_RaiseMoneyUrgency_Salvage, 0x8)
 {
 	GET(HouseClass* const, pThis, ECX);
 	return Teams::SalvageBlocksRaiseMoney(pThis) ? 0x4104B0 : 0;
+}
+
+// BuildingClass::ChangeOwnership (0x448260): once an AI house has taken a building from another player
+// (not in a campaign, not neutral tech, not its own retaken; checked at 0x4492D7..0x449304), the engine
+// ejects any occupants and sells it (0x449306..0x449368). Keep jumps to 0x44936E, past the sale; sell
+// falls through. ESI = the building, EBX = the old owner (read at 0x448713), EBP = the new owner (the
+// argument). 6 stolen bytes = one instruction (mov al,[esi+702h]); no other loaded DLL hooks
+// 0x4492D7..0x44936E.
+DEFINE_HOOK(0x449306, BuildingClass_ChangeOwnership_Captured, 0x6)
+{
+	GET(BuildingClass* const, pThis, ESI);
+	GET(HouseClass* const, pOld, EBX);
+	GET(HouseClass* const, pNew, EBP);
+	return Teams::KeepCaptured(pThis, pOld, pNew) ? 0x44936E : 0;
 }
 
 int Teams::ChaserGateMax() { return g_chaserGateMax; }
@@ -5837,4 +5994,6 @@ void Teams::Reset()
 	g_recaptureSeen.clear();
 	g_salvage.clear();
 	g_raiseMoneyFrame.clear();
+	g_captureSell = nullptr;
+	g_captureSellFrame = -1;
 }

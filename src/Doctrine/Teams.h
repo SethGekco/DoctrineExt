@@ -143,6 +143,12 @@ namespace Teams
 	// Called from the hook on its urgency check (0x4FD9A0).
 	bool SalvageBlocksRaiseMoney(HouseClass* pHouse);
 
+	// Captured (§10o): AI house pNew has just captured pBld from pOld, and the engine is about to sell it
+	// (it sells every building an AI takes from another player). True = keep it instead; false = let the
+	// sale run, past [Doctrine.Economy] PreventSelling ([Doctrine.Captured]). Called from the hook in
+	// BuildingClass::ChangeOwnership (0x449306).
+	bool KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew);
+
 	// Air-defense (AA P1): keep own anti-air firepower >= enemy air DPS x ratio,
 	// building AntiAir arsenal units when short (scales as the enemy adds air), and
 	// screen AA forward of base split across incoming-air bearings.

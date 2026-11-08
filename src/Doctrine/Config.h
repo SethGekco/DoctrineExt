@@ -518,6 +518,30 @@ public:
 	                                 // yards and the house's last factory of each kind), a list = exactly
 	                                 // these, none/null = nothing kept
 	bool SalvageKeepNone = false;    // Keep=none (or null)
+
+	// ─── Captured buildings ([Doctrine.Captured], §10o) ─────────────────────────
+	// When an AI house captures a building from another player, the engine sells it on the spot
+	// (BuildingClass::ChangeOwnership 0x448260 -> Sell at 0x449368; neutral tech and its own buildings
+	// retaken are kept). Captured decides keep or sell instead.
+	bool CapturedEnable = false;     // Enable — opt-in master switch (off = the engine's always-sell)
+	std::vector<std::string> CapturedKeep; // Keep — empty = auto (judged by the tags below), a list =
+	                                 // exactly these are kept and the rest sold, none/null = every capture
+	                                 // is sold (the engine's rule)
+	bool CapturedKeepNone = false;   // Keep=none (or null)
+	std::vector<std::string> CapturedSell; // Sell — always sold whatever the judgement says (auto only)
+	bool CapturedKeepOnlyYard = true; // KeepOnlyYard — keep a construction yard when we have no other, even
+	                                 // where we can't hold it: it's the only way we can build
+	bool CapturedDenyLastYard = true; // DenyLastYard — sell the previous owner's last construction yard
+	                                 // (no other yard, no MCV) when we have our own: they can't rebuild
+	bool CapturedKeepIfNeeded = true; // KeepIfNeeded — keep what fills a gap where we can hold it: our only
+	                                 // factory of its kind, an income building when we have none, a power
+	                                 // plant when we're short of power
+	bool CapturedKeepNewTech = true; // KeepNewTech — keep a building our side can't build (Owner= or
+	                                 // TechLevel), such as another side's yard, factory or lab, where we
+	                                 // can hold it
+	int CapturedHoldRadius = 10;     // Hold.Radius — cells around it where the forces are compared
+	double CapturedHoldRatio = 1.0;  // Hold.Ratio — we can hold it when our armed value within Hold.Radius
+	                                 // is at least this times the enemies' (0 = always)
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

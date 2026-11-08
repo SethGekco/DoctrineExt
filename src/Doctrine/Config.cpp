@@ -540,6 +540,9 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CapturedSell = SplitList(buf);
 	if (IsNoneList(cfg.CapturedSell)) cfg.CapturedSell.clear();
 	cfg.CapturedKeepOnlyYard = pINI->ReadBool("Doctrine.Captured", "KeepOnlyYard", cfg.CapturedKeepOnlyYard);
+	cfg.CapturedKeepYard = pINI->ReadBool("Doctrine.Captured", "KeepYard", cfg.CapturedKeepYard);
+	cfg.CapturedKeepYardMustHold = pINI->ReadBool("Doctrine.Captured", "KeepYard.MustHold",
+		cfg.CapturedKeepYardMustHold);
 	cfg.CapturedDenyLastYard = pINI->ReadBool("Doctrine.Captured", "DenyLastYard", cfg.CapturedDenyLastYard);
 	cfg.CapturedKeepIfNeeded = pINI->ReadBool("Doctrine.Captured", "KeepIfNeeded", cfg.CapturedKeepIfNeeded);
 	cfg.CapturedKeepNewTech = pINI->ReadBool("Doctrine.Captured", "KeepNewTech", cfg.CapturedKeepNewTech);
@@ -547,9 +550,11 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CapturedHoldRatio = pINI->ReadDouble("Doctrine.Captured", "Hold.Ratio", cfg.CapturedHoldRatio);
 	if (cfg.CapturedEnable)
 		Echo("[DoctrineExt] [Doctrine.Captured]: Enable=1 Keep=%u (empty=auto)%s Sell=%u KeepOnlyYard=%d "
-			"DenyLastYard=%d KeepIfNeeded=%d KeepNewTech=%d Hold.Radius=%d Hold.Ratio=%.2f\n",
+			"KeepYard=%d KeepYard.MustHold=%d DenyLastYard=%d KeepIfNeeded=%d KeepNewTech=%d Hold.Radius=%d "
+			"Hold.Ratio=%.2f\n",
 			static_cast<unsigned>(cfg.CapturedKeep.size()), cfg.CapturedKeepNone ? " NONE" : "",
-			static_cast<unsigned>(cfg.CapturedSell.size()), cfg.CapturedKeepOnlyYard, cfg.CapturedDenyLastYard,
+			static_cast<unsigned>(cfg.CapturedSell.size()), cfg.CapturedKeepOnlyYard, cfg.CapturedKeepYard,
+			cfg.CapturedKeepYardMustHold, cfg.CapturedDenyLastYard,
 			cfg.CapturedKeepIfNeeded, cfg.CapturedKeepNewTech, cfg.CapturedHoldRadius, cfg.CapturedHoldRatio);
 	if (cfg.EconomyEnable)
 		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "

@@ -531,6 +531,10 @@ public:
 	std::vector<std::string> CapturedSell; // Sell — always sold whatever the judgement says (auto only)
 	bool CapturedKeepOnlyYard = true; // KeepOnlyYard — keep a construction yard when we have no other, even
 	                                 // where we can't hold it: it's the only way we can build
+	bool CapturedKeepYard = false;   // KeepYard — keep a captured construction yard as a forward base even
+	                                 // when we have our own (checked before DenyLastYard)
+	bool CapturedKeepYardMustHold = true; // KeepYard.MustHold — only where we can hold it (Hold.Radius /
+	                                 // Hold.Ratio); no = always
 	bool CapturedDenyLastYard = true; // DenyLastYard — sell the previous owner's last construction yard
 	                                 // (no other yard, no MCV) when we have our own: they can't rebuild
 	bool CapturedKeepIfNeeded = true; // KeepIfNeeded — keep what fills a gap where we can hold it: our only

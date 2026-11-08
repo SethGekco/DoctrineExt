@@ -5817,6 +5817,17 @@ bool Teams::KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew
 	const char* why = nullptr;
 	static char whyBuf[192];
 	int ours = -1, theirs = -1;
+	auto const holds = [&]()                              // Hold.Radius / Hold.Ratio, measured once
+	{
+		if (ours < 0)
+		{
+			auto const at = pBld->GetCoords();
+			double const range = (cfg.CapturedHoldRadius > 0 ? cfg.CapturedHoldRadius : 10) * 256.0;
+			ours = ArmedValueNear(pNew, at, range, false);
+			theirs = ArmedValueNear(pNew, at, range, true);
+		}
+		return cfg.CapturedHoldRatio <= 0.0 || ours >= theirs * cfg.CapturedHoldRatio;
+	};
 	if (cfg.CapturedKeepNone) why = "Keep=none: every capture is sold";
 	else if (!cfg.CapturedKeep.empty())
 	{
@@ -5829,6 +5840,12 @@ bool Teams::KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew
 		keep = true;
 		why = "our only construction yard: the only way we can build (KeepOnlyYard)";
 	}
+	else if (cfg.CapturedKeepYard && pBt->ConstructionYard && (!cfg.CapturedKeepYardMustHold || holds()))
+	{
+		keep = true;
+		why = cfg.CapturedKeepYardMustHold ? "a forward construction yard we can hold (KeepYard)"
+			: "a forward construction yard (KeepYard, MustHold=no)";
+	}
 	else if (cfg.CapturedDenyLastYard && LastYardOf(pBld, pOld))
 		why = "their last construction yard: sold, they can't rebuild (DenyLastYard)";
 	else
@@ -5838,11 +5855,7 @@ bool Teams::KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew
 		if (!gap && !tech) why = "nothing we lack: take the refund";
 		else
 		{
-			auto const at = pBld->GetCoords();
-			double const range = (cfg.CapturedHoldRadius > 0 ? cfg.CapturedHoldRadius : 10) * 256.0;
-			ours = ArmedValueNear(pNew, at, range, false);
-			theirs = ArmedValueNear(pNew, at, range, true);
-			keep = cfg.CapturedHoldRatio <= 0.0 || ours >= theirs * cfg.CapturedHoldRatio;
+			keep = holds();
 			std::snprintf(whyBuf, sizeof(whyBuf), "%s, and we %s hold it (%s)", gap ? gap : "our side can't build it",
 				keep ? "can" : "can't", keep ? "KeepIfNeeded/KeepNewTech" : "take the refund before it's retaken");
 			why = whyBuf;

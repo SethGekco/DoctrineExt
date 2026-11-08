@@ -4026,6 +4026,23 @@ namespace
 	std::map<DWORD, EngTrack> g_engTracks;
 	int g_engTrackFrame = -1;
 
+	// Capture-denial judgement, per house: the sales each engineer has caused (DenySell.PerEngineer)
+	// and recent sale frames (DenySell.Max per DenySell.Window), so one engineer bouncing from building
+	// to building can't walk the AI into selling its whole base; the last sacrifice made against each
+	// engineer (its survivors' expected damage is credited until they're on foot and counted as
+	// responders); and the (engineer, building) pairs already logged as let go.
+	struct SacrificeSale { int Frame = 0; int Count = 0; double Damage = 0.0; };
+	std::map<int, std::map<DWORD, int>> g_denySells;
+	std::map<int, std::deque<int>> g_denySellFrames;
+	std::map<int, std::map<DWORD, SacrificeSale>> g_sacrifices;
+	std::map<int, std::set<std::pair<DWORD, DWORD>>> g_letGo;
+
+	// House -> the interceptor type it needs urgently, and the frame that need lapses: the economy
+	// pause lets that type through until then (Build.IgnorePause).
+	std::map<int, std::pair<TechnoTypeClass*, int>> g_interceptorNeed;
+
+	int IncomeKindOf(BuildingTypeClass* pBt);                        // economy section, below
+
 	bool IsLiveEngineer(TechnoClass* const pT)
 	{
 		if (!pT || pT->InLimbo || pT->Health <= 0) return false;
@@ -4229,6 +4246,152 @@ namespace
 			&& pB->GetCurrentMission() != Mission::Selling;
 	}
 
+	// Is losing this building to a capture worse than selling it (DenySell.Types)? Auto: a
+	// construction yard or superweapon always; a factory or income building only when it's the
+	// house's last of that kind — a spare barracks, a power plant or a lab can go, since losing it
+	// doesn't cost the house its production.
+	bool WorthDenying(BuildingClass* const pB, HouseClass* const pHouse)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		if (cfg.CounterEngDenySellNone) return false;
+		auto const pBt = pB->Type;
+		if (!cfg.CounterEngDenySellTypes.empty()) return ListHas(cfg.CounterEngDenySellTypes, pBt->ID);
+		if (pBt->ConstructionYard || pBt->HasSuperWeapon()) return true;
+		bool const factory = pBt->Factory != AbstractType::None;
+		bool const income = IncomeKindOf(pBt) > 0;
+		if (!factory && !income) return false;
+		bool spareFactory = false, spareIncome = false;
+		for (auto const pO : pHouse->Buildings)
+		{
+			if (!pO || pO == pB || !pO->Type || pO->InLimbo || pO->Health <= 0) continue;
+			if (pO->GetCurrentMission() == Mission::Selling) continue;
+			if (factory && pO->Type->Factory == pBt->Factory && pO->Type->Naval == pBt->Naval) spareFactory = true;
+			if (income && IncomeKindOf(pO->Type) > 0) spareIncome = true;
+		}
+		return (factory && !spareFactory) || (income && !spareIncome);
+	}
+
+	// Could selling this building put survivors in an engineer's way (Sacrifice.Types)? Auto: a
+	// sellable, unimportant building — not a construction yard, factory, income building,
+	// superweapon, defense, wall or armed building, and not a power plant the base can't spare.
+	bool Sacrificable(BuildingClass* const pB, HouseClass* const pHouse, BuildingClass* const pGoal)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		if (cfg.CounterEngSacrificeNone || pB == pGoal) return false;
+		if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0 || pB->Owner != pHouse) return false;
+		auto const pBt = pB->Type;
+		if (pBt->Unsellable) return false;
+		auto const m = pB->GetCurrentMission();
+		if (m == Mission::Selling || m == Mission::Construction) return false;
+		if (!cfg.CounterEngSacrificeTypes.empty()) return ListHas(cfg.CounterEngSacrificeTypes, pBt->ID);
+		if (pBt->ConstructionYard || pBt->HasSuperWeapon() || pBt->Factory != AbstractType::None) return false;
+		if (IncomeKindOf(pBt) > 0 || pBt->IsBaseDefense || pBt->Wall || HasOffensiveWeapon(pBt)) return false;
+		return pBt->PowerBonus <= 0 || pHouse->PowerOutput - pBt->PowerBonus >= pHouse->PowerDrain;
+	}
+
+	// The infantry a sold building of this house releases: the side's crew (RulesClass AlliedCrew /
+	// SovietCrew / ThirdCrew, else Technician), as TechnoClass::GetCrew (0x707D20) picks it. Not
+	// called through GetCrew itself — that rolls the game's synchronized random number.
+	InfantryTypeClass* CrewTypeOf(HouseClass* const pHouse)
+	{
+		auto const r = RulesClass::Instance;
+		switch (pHouse->SideIndex)
+		{
+		case 0: return r->AlliedCrew;
+		case 1: return r->SovietCrew;
+		case 2: return r->ThirdCrew;
+		default: return r->Technician;
+		}
+	}
+
+	// Leptons from c to the segment a-b (the engineer's straight path to its goal).
+	double SegDist(CoordStruct const& c, CoordStruct const& a, CoordStruct const& b)
+	{
+		double const vx = b.X - a.X, vy = b.Y - a.Y;
+		double const len2 = vx * vx + vy * vy;
+		double u = len2 > 0.0 ? ((c.X - a.X) * vx + (c.Y - a.Y) * vy) / len2 : 0.0;
+		u = std::clamp(u, 0.0, 1.0);
+		double const dx = a.X + u * vx - c.X, dy = a.Y + u * vy - c.Y;
+		return std::sqrt(dx * dx + dy * dy);
+	}
+
+	// Expected damage the survivors of selling pB deal the engineer before it reaches the door, and
+	// the frames they need for it (`window`, out): they walk out Sacrifice.Delay frames after the sale
+	// (BuildingClass::GetCrewCount, 0x451330: the refund over the side's SurvivorDivisor, 1..5), then
+	// close to weapon range of the engineer or the door like a responder.
+	double SacrificeContribution(BuildingClass* const pB, EngThreat const& t, HouseClass* const pHouse,
+		int& count, double& window)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		count = pB->GetCrewCount();
+		window = 0.0;
+		auto const pCrew = CrewTypeOf(pHouse);
+		if (count <= 0 || !pCrew) return 0.0;
+		double const dps = EffDPSVs(pCrew, t.Armor, false) / 10.0;
+		if (dps <= 0.0) return 0.0;
+		double const range = BestRangeVs(pCrew, false);
+		double const gap = std::min(DistToFootprint(t.Eng->GetCoords(), pB),
+			DistToFootprint(pB->GetCoords(), t.Goal)) - range;
+		double const speed = pCrew->Speed > 1 ? static_cast<double>(pCrew->Speed) : 1.0;
+		double const delay = cfg.CounterEngSacrificeDelay > 0 ? cfg.CounterEngSacrificeDelay : 60;
+		window = t.Eta - (delay + std::max(0.0, gap) / speed + cfg.CounterEngReaction);
+		return window > 0.0 ? count * dps * window : 0.0;
+	}
+
+	// Interceptors of this type the house is building right now: counted as owned, so an urgent
+	// build doesn't queue a second one while the first is still in the barracks.
+	int InProduction(HouseClass* const pHouse, TechnoTypeClass* const pType)
+	{
+		int n = 0;
+		for (auto const pFact : FactoryClass::Array)
+			if (pFact && pFact->Owner == pHouse && pFact->Object && pFact->Object->GetTechnoType() == pType) ++n;
+		return n;
+	}
+
+	// Make pType the house's next infantry pick: HouseClass::ProducingInfantryTypeIndex (+0x5654), the
+	// slot HouseClass::AI_Infantry (0x4FEEE0) fills from what its teams are missing and the barracks
+	// takes its next build from. A squad's taskforce request competes there with every AI team's and
+	// loses to any bigger demand (no house ever built an interceptor that way); an urgent unit replaces
+	// the AI's pending pick instead. What a barracks is already building is left alone.
+	//
+	// The barracks clears the slot when it takes the pick. One it never takes (no factory can build it
+	// after all) would stall the AI's infantry for good — AI_Infantry returns at once while the slot is
+	// full — so a pick of ours left untaken UrgentPickTimeout frames is cleared and not made again for
+	// UrgentPickBackoff frames.
+	struct UrgentPick { int Index = -1; int Since = 0; int BlockedUntil = 0; };
+	std::map<int, UrgentPick> g_urgentPicks;                          // house -> our last pick
+	constexpr int UrgentPickTimeout = 450;
+	constexpr int UrgentPickBackoff = 1800;
+
+	void ClearStaleUrgentPick(HouseClass* const pHouse, int const now)
+	{
+		auto const it = g_urgentPicks.find(pHouse->ArrayIndex);
+		if (it == g_urgentPicks.end() || it->second.Index < 0) return;
+		auto& p = it->second;
+		if (pHouse->ProducingInfantryTypeIndex != p.Index) { p.Index = -1; return; }   // taken, or replaced
+		if (now - p.Since <= UrgentPickTimeout) return;
+		pHouse->ProducingInfantryTypeIndex = -1;
+		p.Index = -1;
+		p.BlockedUntil = now + UrgentPickBackoff;
+	}
+
+	void BuildUrgently(HouseClass* const pHouse, TechnoTypeClass* const pType)
+	{
+		if (!pType || pType->WhatAmI() != AbstractType::InfantryType) return;
+		if (pHouse->Available_Money() < pType->Cost) return;
+		int const now = Unsorted::CurrentFrame;
+		ClearStaleUrgentPick(pHouse, now);
+		auto& p = g_urgentPicks[pHouse->ArrayIndex];
+		if (now < p.BlockedUntil) return;
+		if (p.Index >= 0) return;               // another urgent pick of ours is still waiting: first come
+		                                        // first served (the counter-engineer ticks before the rush)
+		int const idx = InfantryTypeClass::Array.FindItemIndex(static_cast<InfantryTypeClass*>(pType));
+		if (idx < 0 || pHouse->ProducingInfantryTypeIndex == idx) return;            // already next
+		pHouse->ProducingInfantryTypeIndex = idx;
+		p.Index = idx;
+		p.Since = now;
+	}
+
 	// Fastest buildable, faction-correct armed infantry to keep as a standing interceptor (attack dogs
 	// win on speed). Honors the modder list (Units) if set; else any armed infantry. Never an engineer.
 	TechnoTypeClass* BestAntiEngineer(HouseClass* const pHouse, bool const honorPrereq)
@@ -4265,6 +4428,7 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 
 	int const now = Unsorted::CurrentFrame;
 	int const hIdx = pHouse->ArrayIndex;
+	ClearStaleUrgentPick(pHouse, now);
 	SampleEngineers(now);
 	auto threats = FindEngineerThreats(pHouse);
 	auto& resp = g_responders[hIdx];
@@ -4308,7 +4472,22 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 	int const sense = cfg.SenseInterval > 0 ? cfg.SenseInterval : 15;
 	int const lead = cfg.CounterEngDenySellLead > 0 ? cfg.CounterEngDenySellLead : 2 * sense;
 	double const sellMargin = cfg.CounterEngDenySellMargin > 0.0 ? cfg.CounterEngDenySellMargin : 1.0;
+	int const sacDelay = cfg.CounterEngSacrificeDelay > 0 ? cfg.CounterEngSacrificeDelay : 60;
+	double const sacRadius = (cfg.CounterEngSacrificeRadius > 0 ? cfg.CounterEngSacrificeRadius : 6) * 256.0;
 	std::set<BuildingClass*> retargeted;                                  // soonest threat keeps a tower
+
+	// Forget engineers no longer tracked (dead, or out of sight 300+ frames), and sales out of the window.
+	auto& sells = g_denySells[hIdx];
+	auto& sacs = g_sacrifices[hIdx];
+	for (auto it = sells.begin(); it != sells.end(); )
+		if (!g_engTracks.count(it->first)) it = sells.erase(it); else ++it;
+	for (auto it = sacs.begin(); it != sacs.end(); )
+		if (!g_engTracks.count(it->first)) it = sacs.erase(it); else ++it;
+	auto& sellFrames = g_denySellFrames[hIdx];
+	int const window = cfg.CounterEngDenySellWindow > 0 ? cfg.CounterEngDenySellWindow : 1800;
+	while (!sellFrames.empty() && now - sellFrames.front() > window) sellFrames.pop_front();
+	auto& letGo = g_letGo[hIdx];
+	if (letGo.size() > 256) letGo.clear();
 
 	for (auto& t : threats)
 	{
@@ -4371,22 +4550,95 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 				t.Exp += p.first; ++t.Resp;
 			}
 
-		// Even everything we could send won't kill it before it walks in: sell the building first —
-		// an engineer reaching a building that is mid-sale is turned away (0x519EB2). Needs evidence
-		// it's coming for THIS building: its own order, a measured approach, or it's at the door.
-		if (cfg.CounterEngDenySell && t.Ours && t.Eta <= lead && t.ExpMax < t.Hp * sellMargin
-			&& (t.Intent || t.Approaching || t.Dist <= 128.0) && CanDenySell(t.Goal, pHouse))
+		// A sacrifice already made against this engineer counts until its survivors are on foot; from
+		// then on they're ordinary responders.
+		auto const sit = sacs.find(t.Eng->UniqueID);
+		if (sit != sacs.end() && now - sit->second.Frame < sacDelay + 2 * sense)
+			t.ExpMax += sit->second.Damage;
+
+		// Everything below needs evidence it's coming for THIS building of ours: its own order, a
+		// measured approach, or it's at the door.
+		if (!t.Ours || !(t.Intent || t.Approaching || t.Dist <= 128.0)) continue;
+
+		// Short of firepower: first a sacrifice — sell a cheap building by the engineer's path so its
+		// survivors finish the job. Only a building whose survivors alone cover the shortfall (the
+		// cheapest such), sold at the last moment that still works (two base ticks of slack).
+		int const sacMade = sit != sacs.end() ? sit->second.Count : 0;
+		if (cfg.CounterEngSacrifice && t.ExpMax < t.Need
+			&& (cfg.CounterEngSacrificeMax <= 0 || sacMade < cfg.CounterEngSacrificeMax))
 		{
-			g_denySelling = true;
-			t.Goal->Sell(-1);
-			g_denySelling = false;
-			t.Sold = true;
-			if (cfg.DebugTicks)
-				Debug::Log("[DoctrineExt] counter-eng DENY-SELL: house=%s#%d sold %s — %s#%u %.1f cells out, "
-					"eta=%.0ff, best-case damage %.0f < hp %d.\n", pHouse->get_ID(), hIdx,
-					t.Goal->Type->ID, t.Eng->GetTechnoType()->ID, t.Eng->UniqueID, t.Dist / 256.0,
-					t.Eta, t.ExpMax, t.Hp);
+			double const shortfall = t.Need - t.ExpMax;
+			auto const ec = t.Eng->GetCoords();
+			auto const gc = t.Goal->GetCoords();
+			BuildingClass* best = nullptr;
+			int bestCount = 0;
+			double bestDmg = 0.0, bestWin = 0.0;
+			for (auto const pB : pHouse->Buildings)
+			{
+				if (!Sacrificable(pB, pHouse, t.Goal)) continue;
+				double const half = std::max(pB->Type->GetFoundationWidth(),
+					pB->Type->GetFoundationHeight(false)) * 128.0;
+				if (SegDist(pB->GetCoords(), ec, gc) - half > sacRadius) continue;
+				int count = 0;
+				double win = 0.0;
+				double const dmg = SacrificeContribution(pB, t, pHouse, count, win);
+				if (dmg < shortfall) continue;
+				if (!best || pB->Type->Cost < best->Type->Cost)
+					{ best = pB; bestCount = count; bestDmg = dmg; bestWin = win; }
+			}
+			// Frames of survivor fire the shortfall takes; until the window shrinks to that (+ slack),
+			// a later sale still works and an interceptor or responder may yet make it unnecessary.
+			if (best && bestWin <= bestWin * shortfall / bestDmg + 2.0 * sense)
+			{
+				g_denySelling = true;
+				best->Sell(-1);
+				g_denySelling = false;
+				auto& s = sacs[t.Eng->UniqueID];
+				s.Frame = now; ++s.Count; s.Damage = bestDmg;
+				t.ExpMax += bestDmg;
+				if (cfg.DebugTicks)
+					Debug::Log("[DoctrineExt] counter-eng SACRIFICE: house=%s#%d sold %s for %d survivors vs "
+						"%s#%u -> %s, %.1f cells out, eta=%.0ff, their expected damage %.0f covers shortfall %.0f.\n",
+						pHouse->get_ID(), hIdx, best->Type->ID, bestCount, t.Eng->GetTechnoType()->ID,
+						t.Eng->UniqueID, t.Goal->Type->ID, t.Dist / 256.0, t.Eta, bestDmg, shortfall);
+				continue;
+			}
 		}
+
+		// Nothing we have kills it before it walks in: sell the building first — an engineer reaching a
+		// building that is mid-sale is turned away (0x519EB2). But only a building worth denying
+		// (DenySell.Types), and never more than DenySell.PerEngineer sales to one engineer or
+		// DenySell.Max per DenySell.Window for the house: a bounced engineer just walks to the next
+		// building, and selling the whole base to stop one engineer is worse than losing a power plant.
+		if (!cfg.CounterEngDenySell || t.Eta > lead || t.ExpMax >= t.Hp * sellMargin
+			|| !CanDenySell(t.Goal, pHouse)) continue;
+		DWORD const uid = t.Eng->UniqueID;
+		const char* why = nullptr;
+		if (!WorthDenying(t.Goal, pHouse))
+			why = "not worth denying (DenySell.Types)";
+		else if (cfg.CounterEngDenySellPerEngineer > 0 && sells[uid] >= cfg.CounterEngDenySellPerEngineer)
+			why = "this engineer already cost us a sale (DenySell.PerEngineer)";
+		else if (cfg.CounterEngDenySellMax > 0 && static_cast<int>(sellFrames.size()) >= cfg.CounterEngDenySellMax)
+			why = "house sale cap reached (DenySell.Max per DenySell.Window)";
+		if (why)
+		{
+			if (cfg.DebugTicks && letGo.insert({ uid, t.Goal->UniqueID }).second)
+				Debug::Log("[DoctrineExt] counter-eng LET-GO: house=%s#%d keeps %s — %s#%u %.1f cells out, "
+					"eta=%.0ff, best-case damage %.0f < hp %d: %s.\n", pHouse->get_ID(), hIdx,
+					t.Goal->Type->ID, t.Eng->GetTechnoType()->ID, uid, t.Dist / 256.0, t.Eta, t.ExpMax, t.Hp, why);
+			continue;
+		}
+		g_denySelling = true;
+		t.Goal->Sell(-1);
+		g_denySelling = false;
+		t.Sold = true;
+		++sells[uid];
+		sellFrames.push_back(now);
+		if (cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] counter-eng DENY-SELL: house=%s#%d sold %s — %s#%u %.1f cells out, "
+				"eta=%.0ff, best-case damage %.0f < hp %d.\n", pHouse->get_ID(), hIdx,
+				t.Goal->Type->ID, t.Eng->GetTechnoType()->ID, uid, t.Dist / 256.0,
+				t.Eta, t.ExpMax, t.Hp);
 	}
 
 	// Steer every responder onto its engineer (re-issued only when it drifted, so the attack isn't
@@ -4416,24 +4668,36 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 	for (auto const& t : threats)
 		if (t.ExpMax < t.Need) ++shortOf;
 	auto const pDog = cfg.CounterEngBuild ? BestAntiEngineer(pHouse, cfg.HonorPrereqForCounterEng()) : nullptr;
-	int owned = 0;
+	int owned = 0, building = 0;
 	if (pDog)
+	{
 		for (int i = 0; i < TechnoClass::Array.Count; ++i)
 		{
 			auto const pT = TechnoClass::Array.GetItem(i);
 			if (pT && pT->Owner == pHouse && !pT->InLimbo && pT->Health > 0 && pT->GetTechnoType() == pDog)
 				++owned;
 		}
+		building = InProduction(pHouse, pDog);
+	}
 	int const cap = cfg.CounterEngMax > 0 ? cfg.CounterEngMax : 3;
-	int want = (pDog ? std::min(shortOf, cap) : 0) - owned;
+	int want = (pDog ? std::min(shortOf, cap) : 0) - owned - building;
 	if (want < 0) want = 0;
-	if (want > 0) EnsureSquadTeam(pHouse, 1, pDog, "DANT", want);
+	if (want > 0)
+	{
+		EnsureSquadTeam(pHouse, 1, pDog, "DANT", want);
+		if (cfg.CounterEngBuildUrgent) BuildUrgently(pHouse, pDog);
+	}
 	else if (pSquad) EnsureSquadTeam(pHouse, 1, nullptr, "DANT", 0);   // stop asking
+	if (pDog && shortOf > 0 && cfg.CounterEngBuildIgnorePause)
+		g_interceptorNeed[hIdx] = { pDog, now + 2 * interval };       // lapses two passes after the last need
+	else
+		g_interceptorNeed.erase(hIdx);
 
 	if (!cfg.DebugTicks || threats.empty()) return;
-	Debug::Log("[DoctrineExt] counter-eng: house=%s#%d threats=%d responders=%d dog=%s owned=%d build=%d.\n",
-		pHouse->get_ID(), hIdx, static_cast<int>(threats.size()), static_cast<int>(resp.size()),
-		pDog ? pDog->get_ID() : "(none)", owned, want);
+	Debug::Log("[DoctrineExt] counter-eng: house=%s#%d threats=%d responders=%d dog=%s owned=%d building=%d "
+		"build=%d sold=%d/%d.\n", pHouse->get_ID(), hIdx, static_cast<int>(threats.size()),
+		static_cast<int>(resp.size()), pDog ? pDog->get_ID() : "(none)", owned, building, want,
+		static_cast<int>(sellFrames.size()), cfg.CounterEngDenySellMax);
 	int shown = 0;
 	for (auto const& t : threats)
 	{
@@ -4546,6 +4810,7 @@ void Teams::EngineerRush(HouseClass* pHouse)
 	auto const lit = g_engRushLastFire.find(hIdx);
 	if (lit != g_engRushLastFire.end() && now - lit->second < interval) return;
 	g_engRushLastFire[hIdx] = now;
+	ClearStaleUrgentPick(pHouse, now);
 
 	auto& assign = g_engRushAssign[hIdx];
 	auto& cool = g_engRushCooldown[hIdx];
@@ -4633,6 +4898,11 @@ void Teams::EngineerRush(HouseClass* pHouse)
 		auto const pF = static_cast<FootClass*>(pT);
 		if (TryAddToTeam(pTeam, pF)) onTeam[pF->UniqueID] = pF;
 	}
+	// Still short after taking the spares: make the engineer the barracks' next build (Build.Urgent),
+	// unless one is already in production.
+	if (flush && pEng && cfg.EngRushBuildUrgent
+		&& static_cast<int>(onTeam.size()) + InProduction(pHouse, pEng) < desired)
+		BuildUrgently(pHouse, pEng);
 
 	// Escorts: armed units nearest the base, up to Escorts per engineer; extras (an engineer died) go home.
 	int const escortCap = cfg.EngRushEscorts > 0 ? cfg.EngRushEscorts * static_cast<int>(onTeam.size()) : 0;
@@ -5038,6 +5308,12 @@ namespace
 					if (!exempt) pause = true;
 				}
 			}
+			if (pause)                                        // an interceptor a threat needs now goes through
+			{
+				auto const nit = g_interceptorNeed.find(pHouse->ArrayIndex);
+				if (nit != g_interceptorNeed.end() && Unsorted::CurrentFrame <= nit->second.second
+					&& pObj->GetTechnoType() == nit->second.first) pause = false;
+			}
 			if (pause) { pFact->Suspend(true); anyPaused = true; }
 			else pFact->Unsuspend(true);
 		}
@@ -5229,6 +5505,12 @@ void Teams::Reset()
 	g_denySelling = false;
 	g_engTracks.clear();
 	g_engTrackFrame = -1;
+	g_denySells.clear();
+	g_denySellFrames.clear();
+	g_sacrifices.clear();
+	g_letGo.clear();
+	g_interceptorNeed.clear();
+	g_urgentPicks.clear();
 	g_engRushLastFire.clear();
 	g_engRushAssign.clear();
 	g_engRushCooldown.clear();

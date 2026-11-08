@@ -433,6 +433,28 @@ public:
 	                                 // (0 = auto: two base ticks)
 	double CounterEngDenySellMargin = 1.0; // DenySell.Margin — sell when ALL reachable firepower's
 	                                 // expected damage < HP x this
+	std::vector<std::string> CounterEngDenySellTypes; // DenySell.Types — buildings worth selling to
+	                                 // deny a capture: empty = auto (construction yards, superweapons,
+	                                 // and the house's LAST factory of a kind / last income building);
+	                                 // a list = exactly these; none/null = never (still kill engineers)
+	bool CounterEngDenySellNone = false; // DenySell.Types=none (or null)
+	int CounterEngDenySellPerEngineer = 1; // DenySell.PerEngineer — sales one engineer may cause (0 = no cap)
+	int CounterEngDenySellMax = 2;   // DenySell.Max — sales per house per DenySell.Window (0 = no cap)
+	int CounterEngDenySellWindow = 1800; // DenySell.Window — frames DenySell.Max counts over
+	bool CounterEngSacrifice = false; // Sacrifice — sell a cheap building by the engineer's path so its
+	                                 // survivors (the side's crew infantry) kill the engineer
+	std::vector<std::string> CounterEngSacrificeTypes; // Sacrifice.Types — buildings that may be
+	                                 // sacrificed: empty = auto (crewed, not a construction yard,
+	                                 // factory, income building, superweapon, defense or wall, and not
+	                                 // a power plant we can't spare); a list = exactly; none/null = never
+	bool CounterEngSacrificeNone = false; // Sacrifice.Types=none (or null)
+	int CounterEngSacrificeMax = 1;  // Sacrifice.Max — sacrifices per engineer
+	int CounterEngSacrificeRadius = 6; // Sacrifice.Radius — cells from the engineer's path to its goal
+	int CounterEngSacrificeDelay = 60; // Sacrifice.Delay — frames from the sale to survivors on foot
+	bool CounterEngBuildUrgent = true; // Build.Urgent — the interceptor jumps the AI's own infantry
+	                                 // pick (else it waits for the AI to fill the squad's taskforce)
+	bool CounterEngBuildIgnorePause = true; // Build.IgnorePause — the interceptor is exempt from
+	                                 // [Doctrine.Economy] PauseProduction while a threat outruns us
 	int CounterEngHonorPrereq = -1;  // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForCounterEng() const
 		{ return CounterEngHonorPrereq < 0 ? HonorPrerequisites : (CounterEngHonorPrereq != 0); }
@@ -453,6 +475,7 @@ public:
 	double EngRushSafety = 1.0;      // Safety — rush only if expected enemy damage x this < engineer HP
 	int EngRushMinCash = 0;          // MinCash — build new rush engineers only at or above this cash
 	int EngRushRetryDelay = 900;     // RetryDelay — frames before re-rushing a target that killed one
+	bool EngRushBuildUrgent = true;  // Build.Urgent — rush engineers jump the AI's own infantry pick
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

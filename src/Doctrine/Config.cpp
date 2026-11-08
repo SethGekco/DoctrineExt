@@ -338,18 +338,44 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CounterEngDenySellExclude = SplitList(buf);
 	cfg.CounterEngDenySellLead = pINI->ReadInteger("Doctrine.CounterEngineer", "DenySell.Lead", cfg.CounterEngDenySellLead);
 	cfg.CounterEngDenySellMargin = pINI->ReadDouble("Doctrine.CounterEngineer", "DenySell.Margin", cfg.CounterEngDenySellMargin);
+	pINI->ReadString("Doctrine.CounterEngineer", "DenySell.Types", "", buf, sizeof(buf));
+	cfg.CounterEngDenySellTypes = SplitList(buf);
+	cfg.CounterEngDenySellNone = IsNoneList(cfg.CounterEngDenySellTypes);
+	if (cfg.CounterEngDenySellNone) cfg.CounterEngDenySellTypes.clear();
+	cfg.CounterEngDenySellPerEngineer = pINI->ReadInteger("Doctrine.CounterEngineer", "DenySell.PerEngineer", cfg.CounterEngDenySellPerEngineer);
+	cfg.CounterEngDenySellMax = pINI->ReadInteger("Doctrine.CounterEngineer", "DenySell.Max", cfg.CounterEngDenySellMax);
+	cfg.CounterEngDenySellWindow = pINI->ReadInteger("Doctrine.CounterEngineer", "DenySell.Window", cfg.CounterEngDenySellWindow);
+	cfg.CounterEngSacrifice = pINI->ReadBool("Doctrine.CounterEngineer", "Sacrifice", cfg.CounterEngSacrifice);
+	pINI->ReadString("Doctrine.CounterEngineer", "Sacrifice.Types", "", buf, sizeof(buf));
+	cfg.CounterEngSacrificeTypes = SplitList(buf);
+	cfg.CounterEngSacrificeNone = IsNoneList(cfg.CounterEngSacrificeTypes);
+	if (cfg.CounterEngSacrificeNone) cfg.CounterEngSacrificeTypes.clear();
+	cfg.CounterEngSacrificeMax = pINI->ReadInteger("Doctrine.CounterEngineer", "Sacrifice.Max", cfg.CounterEngSacrificeMax);
+	cfg.CounterEngSacrificeRadius = pINI->ReadInteger("Doctrine.CounterEngineer", "Sacrifice.Radius", cfg.CounterEngSacrificeRadius);
+	cfg.CounterEngSacrificeDelay = pINI->ReadInteger("Doctrine.CounterEngineer", "Sacrifice.Delay", cfg.CounterEngSacrificeDelay);
+	cfg.CounterEngBuildUrgent = pINI->ReadBool("Doctrine.CounterEngineer", "Build.Urgent", cfg.CounterEngBuildUrgent);
+	cfg.CounterEngBuildIgnorePause = pINI->ReadBool("Doctrine.CounterEngineer", "Build.IgnorePause", cfg.CounterEngBuildIgnorePause);
 	if (cfg.CounterEngEnable)
 		Debug::Log("[DoctrineExt] [Doctrine.CounterEngineer]: Enable=1 Units=%u (empty=auto) "
-			"ThreatTypes=%u (empty=Engineer=yes)%s Interval=%d Radius=%d Max=%d Build=%d Respond=%d "
-			"RespondRadius=%d RespondMargin=%.2f RespondMax=%d ReactionFrames=%d RetargetDefenses=%d "
-			"DenySell=%d DenySell.Exclude=%u DenySell.Lead=%d DenySell.Margin=%.2f HonorPrereq=%d\n",
+			"ThreatTypes=%u (empty=Engineer=yes)%s Interval=%d Radius=%d Max=%d Build=%d Build.Urgent=%d "
+			"Build.IgnorePause=%d Respond=%d RespondRadius=%d RespondMargin=%.2f RespondMax=%d "
+			"ReactionFrames=%d RetargetDefenses=%d DenySell=%d DenySell.Types=%u (empty=auto)%s "
+			"DenySell.Exclude=%u DenySell.Lead=%d DenySell.Margin=%.2f DenySell.PerEngineer=%d "
+			"DenySell.Max=%d DenySell.Window=%d Sacrifice=%d Sacrifice.Types=%u (empty=auto)%s "
+			"Sacrifice.Max=%d Sacrifice.Radius=%d Sacrifice.Delay=%d HonorPrereq=%d\n",
 			static_cast<unsigned>(cfg.CounterEngUnits.size()),
 			static_cast<unsigned>(cfg.CounterEngThreatTypes.size()), cfg.CounterEngThreatNone ? " NONE" : "",
 			cfg.CounterEngInterval, cfg.CounterEngRadius, cfg.CounterEngMax, cfg.CounterEngBuild,
+			cfg.CounterEngBuildUrgent, cfg.CounterEngBuildIgnorePause,
 			cfg.CounterEngRespond, cfg.CounterEngRespondRadius, cfg.CounterEngRespondMargin,
 			cfg.CounterEngRespondMax, cfg.CounterEngReaction, cfg.CounterEngRetargetDefenses,
-			cfg.CounterEngDenySell, static_cast<unsigned>(cfg.CounterEngDenySellExclude.size()),
-			cfg.CounterEngDenySellLead, cfg.CounterEngDenySellMargin, cfg.CounterEngHonorPrereq);
+			cfg.CounterEngDenySell, static_cast<unsigned>(cfg.CounterEngDenySellTypes.size()),
+			cfg.CounterEngDenySellNone ? " NONE" : "", static_cast<unsigned>(cfg.CounterEngDenySellExclude.size()),
+			cfg.CounterEngDenySellLead, cfg.CounterEngDenySellMargin, cfg.CounterEngDenySellPerEngineer,
+			cfg.CounterEngDenySellMax, cfg.CounterEngDenySellWindow, cfg.CounterEngSacrifice,
+			static_cast<unsigned>(cfg.CounterEngSacrificeTypes.size()), cfg.CounterEngSacrificeNone ? " NONE" : "",
+			cfg.CounterEngSacrificeMax, cfg.CounterEngSacrificeRadius, cfg.CounterEngSacrificeDelay,
+			cfg.CounterEngHonorPrereq);
 	// ─── [Doctrine.EngineerRush] — capture enemy buildings near base ──
 	cfg.EngRushEnable = pINI->ReadBool("Doctrine.EngineerRush", "Enable", cfg.EngRushEnable);
 	cfg.EngRushInterval = pINI->ReadInteger("Doctrine.EngineerRush", "Interval", cfg.EngRushInterval);
@@ -365,14 +391,16 @@ void DoctrineConfig::EnsureParsed()
 	cfg.EngRushSafety = pINI->ReadDouble("Doctrine.EngineerRush", "Safety", cfg.EngRushSafety);
 	cfg.EngRushMinCash = pINI->ReadInteger("Doctrine.EngineerRush", "MinCash", cfg.EngRushMinCash);
 	cfg.EngRushRetryDelay = pINI->ReadInteger("Doctrine.EngineerRush", "RetryDelay", cfg.EngRushRetryDelay);
+	cfg.EngRushBuildUrgent = pINI->ReadBool("Doctrine.EngineerRush", "Build.Urgent", cfg.EngRushBuildUrgent);
 	cfg.EngRushHonorPrereq = pINI->ReadInteger("Doctrine.EngineerRush", "HonorPrereq", cfg.EngRushHonorPrereq);
 	if (cfg.EngRushEnable)
 		Debug::Log("[DoctrineExt] [Doctrine.EngineerRush]: Enable=1 Interval=%d Radius=%d Targets=%u "
 			"(empty=any) Exclude=%u Priority=%u Max=%d Escorts=%d Safety=%.2f MinCash=%d RetryDelay=%d "
-			"HonorPrereq=%d\n", cfg.EngRushInterval, cfg.EngRushRadius,
+			"Build.Urgent=%d HonorPrereq=%d\n", cfg.EngRushInterval, cfg.EngRushRadius,
 			static_cast<unsigned>(cfg.EngRushTargets.size()), static_cast<unsigned>(cfg.EngRushExclude.size()),
 			static_cast<unsigned>(cfg.EngRushPriority.size()), cfg.EngRushMax, cfg.EngRushEscorts,
-			cfg.EngRushSafety, cfg.EngRushMinCash, cfg.EngRushRetryDelay, cfg.EngRushHonorPrereq);
+			cfg.EngRushSafety, cfg.EngRushMinCash, cfg.EngRushRetryDelay, cfg.EngRushBuildUrgent,
+			cfg.EngRushHonorPrereq);
 	if (cfg.EconomyEnable)
 		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

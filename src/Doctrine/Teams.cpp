@@ -4272,6 +4272,16 @@ namespace
 			&& pB->GetCurrentMission() != Mission::Selling;
 	}
 
+	// Denied even when DenySell.PerEngineer or DenySell.Max is used up (DenySell.Uncapped; it must still
+	// be worth denying). Auto: a construction yard — cheaper sales must never cost the house its yard.
+	bool DenyUncapped(BuildingClass* const pB)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (cfg.CounterEngDenySellUncappedNone) return false;
+		if (!cfg.CounterEngDenySellUncapped.empty()) return ListHas(cfg.CounterEngDenySellUncapped, pB->Type->ID);
+		return pB->Type->ConstructionYard;
+	}
+
 	// Is losing this building to a capture worse than selling it (DenySell.Types)? Auto: a
 	// construction yard or superweapon always; a factory or income building only when it's the
 	// house's last of that kind — a spare barracks, a power plant or a lab can go, since losing it
@@ -4592,6 +4602,36 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 				t.Exp += p.first; ++t.Resp;
 			}
 
+		// Nobody gets there before it goes in (it's at the door, or standing by it): still send the
+		// Respond.Late nearest units that can hurt it, soonest arrival first — an engineer that hasn't gone
+		// in yet can still be caught. They add nothing to the expected damage DenySell trusts.
+		int const lateMax = std::min(cfg.CounterEngRespondLate, perEng);
+		if (cfg.CounterEngRespond && lateMax > 0 && t.Exp < t.Need && t.Resp < lateMax)
+		{
+			std::vector<std::pair<double, FootClass*>> late;
+			for (auto const pR : cands)
+			{
+				if (resp.count(pR->UniqueID)) continue;
+				auto const rc = pR->GetCoords();
+				if (DistToFootprint(rc, t.Goal) > respondR && Dist2D(rc, ec) > respondR) continue;
+				if (EffDPSVs(pR->GetTechnoType(), t.Armor, false) <= 0.0) continue;
+				late.push_back({ Dist2D(rc, ec) / StepSpeed(pR), pR });
+			}
+			std::sort(late.begin(), late.end(),
+				[](std::pair<double, FootClass*> const& a, std::pair<double, FootClass*> const& b)
+				{ return a.first < b.first; });
+			for (auto const& p : late)
+			{
+				if (t.Resp >= lateMax) break;
+				auto const pR = p.second;
+				if (!pSquad) pSquad = EnsureSquadTeam(pHouse, 1, nullptr, "DANT", 0);
+				TryAddToTeam(pSquad, pR);
+				resp[pR->UniqueID] = t.Eng->UniqueID;
+				committed[pR->UniqueID] = pR;
+				++t.Resp;
+			}
+		}
+
 		// A sacrifice already made against this engineer counts until its survivors are on foot; from
 		// then on they're ordinary responders.
 		auto const sit = sacs.find(t.Eng->UniqueID);
@@ -4656,12 +4696,16 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 			|| !CanDenySell(t.Goal, pHouse)) continue;
 		DWORD const uid = t.Eng->UniqueID;
 		const char* why = nullptr;
+		const char* capped = nullptr;
+		if (cfg.CounterEngDenySellPerEngineer > 0 && sells[uid] >= cfg.CounterEngDenySellPerEngineer)
+			capped = "this engineer already cost us a sale (DenySell.PerEngineer)";
+		else if (cfg.CounterEngDenySellMax > 0 && static_cast<int>(sellFrames.size()) >= cfg.CounterEngDenySellMax)
+			capped = "house sale cap reached (DenySell.Max per DenySell.Window)";
+		bool const uncapped = capped && DenyUncapped(t.Goal);
 		if (!WorthDenying(t.Goal, pHouse))
 			why = "not worth denying (DenySell.Types)";
-		else if (cfg.CounterEngDenySellPerEngineer > 0 && sells[uid] >= cfg.CounterEngDenySellPerEngineer)
-			why = "this engineer already cost us a sale (DenySell.PerEngineer)";
-		else if (cfg.CounterEngDenySellMax > 0 && static_cast<int>(sellFrames.size()) >= cfg.CounterEngDenySellMax)
-			why = "house sale cap reached (DenySell.Max per DenySell.Window)";
+		else if (capped && !uncapped)
+			why = capped;
 		if (why)
 		{
 			if (cfg.DebugTicks && letGo.insert({ uid, t.Goal->UniqueID }).second)
@@ -4678,9 +4722,9 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		sellFrames.push_back(now);
 		if (cfg.DebugTicks)
 			Debug::Log("[DoctrineExt] counter-eng DENY-SELL: house=%s#%d sold %s — %s#%u %.1f cells out, "
-				"eta=%.0ff, best-case damage %.0f < hp %d.\n", pHouse->get_ID(), hIdx,
+				"eta=%.0ff, best-case damage %.0f < hp %d%s.\n", pHouse->get_ID(), hIdx,
 				t.Goal->Type->ID, t.Eng->GetTechnoType()->ID, uid, t.Dist / 256.0,
-				t.Eta, t.ExpMax, t.Hp);
+				t.Eta, t.ExpMax, t.Hp, uncapped ? " (DenySell.Uncapped: past the sale caps)" : "");
 	}
 
 	// Steer every responder onto its engineer (re-issued only when it drifted, so the attack isn't
@@ -4757,6 +4801,8 @@ namespace
 	std::map<int, int> g_engRushLastFire;                         // house -> last pass frame
 	std::map<int, std::map<DWORD, DWORD>> g_engRushAssign;        // house -> engineer UID -> target UID
 	std::map<int, std::map<DWORD, int>> g_engRushCooldown;        // house -> target UID -> retry frame
+	std::map<int, std::set<DWORD>> g_engRushMine;                 // house -> its building UIDs last pass
+	std::map<int, std::set<DWORD>> g_engRushLost;                 // house -> its buildings the enemy captured
 
 	TeamClass* FindRushTeam(int const hIdx)
 	{
@@ -4868,10 +4914,20 @@ void Teams::EngineerRush(HouseClass* pHouse)
 			if (!pEngType) pEngType = pF->GetTechnoType();
 		}
 
-	// Hostile buildings by UID, and the rushable ones near base whose door the enemy can't cover.
+	// The capture squad's engineers, which a recapture may take (Recapture.UseCaptureSquad) — so a house
+	// that can't build one any more (no barracks) still prices the risk for the one it has.
+	auto const pCapTeam = cfg.EngRushRecapture && cfg.EngRushRecaptureUseCapture ? FindCaptureTeam(hIdx) : nullptr;
+	for (auto pF = pCapTeam ? pCapTeam->FirstUnit : nullptr; pF && !pEngType; pF = pF->NextTeamMember)
+		if (IsLiveEngineer(pF)) pEngType = pF->GetTechnoType();
+
+	// Hostile buildings by UID, and the rushable ones near base whose door the enemy can't cover. One the
+	// enemy captured from us (ours last pass, hostile now — a capture keeps the object and its UniqueID)
+	// comes first when Recapture is on, whatever Targets and Priority say; Exclude still applies.
 	struct Cand { BuildingClass* B; int Rank; int Value; double Dist; double Risk; };
 	std::vector<Cand> cands;
 	std::map<DWORD, BuildingClass*> hostile;
+	auto& mine = g_engRushMine[hIdx];
+	auto& lost = g_engRushLost[hIdx];
 	auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
 	double const maxD = (cfg.EngRushRadius > 0 ? cfg.EngRushRadius : 30) * 256.0;
 	double const safety = cfg.EngRushSafety > 0.0 ? cfg.EngRushSafety : 1.0;
@@ -4880,15 +4936,25 @@ void Teams::EngineerRush(HouseClass* pHouse)
 	{
 		auto const pB = BuildingClass::Array.GetItem(i);
 		if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0) continue;
-		if (!IsHostileTo(pHouse, pB->Owner) || !WantsRush(pB->Type)) continue;
-		hostile[pB->UniqueID] = pB;
+		if (!IsHostileTo(pHouse, pB->Owner)) continue;
+		DWORD const uid = pB->UniqueID;
+		bool const ours = cfg.EngRushRecapture && (lost.count(uid) || mine.count(uid))
+			&& pB->Type->Capturable && !ListHas(cfg.EngRushExclude, pB->Type->ID);
+		if (ours) lost.insert(uid);
+		else if (!WantsRush(pB->Type)) continue;
+		hostile[uid] = pB;
 		if (!pEngType) continue;
 		double const d = Dist2D(base, pB->GetCoords());
-		if (d > maxD || cool.count(pB->UniqueID)) continue;
+		if (d > maxD || cool.count(uid)) continue;
 		double const risk = RushRisk(shooters, pB, pEngType);
 		if (risk * safety >= pEngType->Strength) continue;               // its door is covered
-		cands.push_back({ pB, RushRank(pB->Type), pB->Type->Cost, d, risk });
+		cands.push_back({ pB, ours ? -1 : RushRank(pB->Type), pB->Type->Cost, d, risk });
 	}
+	mine.clear();
+	for (auto const pB : pHouse->Buildings)
+		if (pB && !pB->InLimbo && pB->Health > 0) mine.insert(pB->UniqueID);
+	for (auto it = lost.begin(); it != lost.end(); )                      // retaken, destroyed or excluded
+		if (!hostile.count(*it)) it = lost.erase(it); else ++it;
 	std::sort(cands.begin(), cands.end(), [](Cand const& a, Cand const& b)
 	{
 		if (a.Rank != b.Rank) return a.Rank < b.Rank;
@@ -4938,6 +5004,33 @@ void Teams::EngineerRush(HouseClass* pHouse)
 		if (!IsLiveEngineer(pT) || pT->Owner != pHouse) continue;
 		auto const pF = static_cast<FootClass*>(pT);
 		if (TryAddToTeam(pTeam, pF)) onTeam[pF->UniqueID] = pF;
+	}
+	// Still short for a recapture: take the capture squad's engineer nearest the building we lost
+	// (Recapture.UseCaptureSquad) — getting our own building back beats a derrick, and with no refinery
+	// or yard the engine cancels every new build. Our squads tie on priority, so the capture squad's is
+	// lowered for the one AddMember call; one per pass.
+	int recaptures = 0;
+	for (auto const& c : cands) if (c.Rank < 0) ++recaptures;
+	if (pCapTeam && static_cast<int>(onTeam.size()) < std::min(recaptures, desired))
+	{
+		auto const tc = cands[0].B->GetCoords();
+		FootClass* pTake = nullptr;
+		double bestD = 1e18;
+		for (auto pF = pCapTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+			if (IsLiveEngineer(pF) && Dist2D(tc, pF->GetCoords()) < bestD)
+				{ bestD = Dist2D(tc, pF->GetCoords()); pTake = pF; }
+		if (pTake)
+		{
+			int const prio = pCapTeam->Type->Priority;
+			pCapTeam->Type->Priority = DoctrineSquadPriority - 1;
+			bool const moved = TryAddToTeam(pTeam, pTake);
+			pCapTeam->Type->Priority = prio;
+			if (moved) onTeam[pTake->UniqueID] = pTake;
+			if (cfg.DebugTicks)
+				Debug::Log("[DoctrineExt] eng-rush recapture: house=%s#%d %s capture-squad %s#%u (%.1f cells "
+					"from %s).\n", pHouse->get_ID(), hIdx, moved ? "took" : "could not take",
+					pTake->GetTechnoType()->ID, pTake->UniqueID, bestD / 256.0, cands[0].B->Type->ID);
+		}
 	}
 	// Still short after taking the spares: make the engineer the barracks' next build (Build.Urgent),
 	// unless one is already in production, and let it (in production too) past the economy pause
@@ -5008,10 +5101,10 @@ void Teams::EngineerRush(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] eng-rush: house=%s#%d targets=%d desired=%d eng=%d escorts=%d/%d "
-			"build=%d%s best=%s@%.1fc risk=%.0f/%d.\n", pHouse->get_ID(), hIdx,
+			"build=%d%s best=%s@%.1fc%s risk=%.0f/%d.\n", pHouse->get_ID(), hIdx,
 			static_cast<int>(cands.size()), desired, static_cast<int>(onTeam.size()), escorts, escortCap,
 			want, flush ? "" : " (below MinCash)", cands[0].B->Type->ID, cands[0].Dist / 256.0,
-			cands[0].Risk, pEngType->Strength);
+			cands[0].Rank < 0 ? " (recapture)" : "", cands[0].Risk, pEngType->Strength);
 }
 
 void Teams::SteerEngineerRush(HouseClass* pHouse)
@@ -5562,4 +5655,6 @@ void Teams::Reset()
 	g_engRushLastFire.clear();
 	g_engRushAssign.clear();
 	g_engRushCooldown.clear();
+	g_engRushMine.clear();
+	g_engRushLost.clear();
 }

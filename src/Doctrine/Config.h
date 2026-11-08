@@ -431,6 +431,8 @@ public:
 	int CounterEngRespondRadius = 15;// RespondRadius — cells from the threatened building to pull responders
 	double CounterEngRespondMargin = 1.5; // RespondMargin — commit until expected damage >= HP x this
 	int CounterEngRespondMax = 4;    // RespondMax — responders per engineer
+	int CounterEngRespondLate = 2;   // Respond.Late — responders sent per engineer even when none can get
+	                                 // there before it goes in (0 = none); they don't count for DenySell
 	int CounterEngReaction = 15;     // ReactionFrames — a retasked unit's turn/acquire delay
 	bool CounterEngRetargetDefenses = true; // RetargetDefenses — point in-range defenses at the engineer
 	bool CounterEngDenySell = true;  // DenySell — sell a building an engineer reaches before it can die
@@ -447,6 +449,10 @@ public:
 	int CounterEngDenySellPerEngineer = 1; // DenySell.PerEngineer — sales one engineer may cause (0 = no cap)
 	int CounterEngDenySellMax = 2;   // DenySell.Max — sales per house per DenySell.Window (0 = no cap)
 	int CounterEngDenySellWindow = 1800; // DenySell.Window — frames DenySell.Max counts over
+	std::vector<std::string> CounterEngDenySellUncapped; // DenySell.Uncapped — denied even when
+	                                 // PerEngineer or Max is used up: empty = auto (construction yards),
+	                                 // a list = exactly these, none/null = the caps apply to everything
+	bool CounterEngDenySellUncappedNone = false; // DenySell.Uncapped=none (or null)
 	bool CounterEngSacrifice = false; // Sacrifice — sell a cheap building by the engineer's path so its
 	                                 // survivors (the side's crew infantry) kill the engineer
 	std::vector<std::string> CounterEngSacrificeTypes; // Sacrifice.Types — buildings that may be
@@ -484,6 +490,10 @@ public:
 	bool EngRushBuildUrgent = true;  // Build.Urgent — rush engineers jump the AI's own infantry pick
 	bool EngRushBuildIgnorePause = false; // Build.IgnorePause — rush engineers are exempt from
 	                                 // [Doctrine.Economy] PauseProduction (MinCash still applies)
+	bool EngRushRecapture = true;    // Recapture — buildings the enemy captured from us are rushed first
+	                                 // (Targets and Priority don't apply to them; Exclude does)
+	bool EngRushRecaptureUseCapture = true; // Recapture.UseCaptureSquad — a recapture may take the
+	                                 // [Doctrine.Capture] squad's engineer when the rush has none
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

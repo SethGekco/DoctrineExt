@@ -63,8 +63,8 @@ DenySell.Types.Easy=none  ; Easy AIs never sell to deny a capture
 - The same works inside each rule's own section (`When.Easy=`, `Scale.Hard=` …).
 - Map-wide trackers read the plain tags, because every house shares them:
   the lane and death-zone heatmaps (`Lane*` / `DeathZone*` in
-  `[Doctrine.General]`) and the AITrigger gate (`AITriggerDelay`,
-  `CrateChaserGateCount`).
+  `[Doctrine.General]`), the auto-arsenal grader (`AutoArsenalDepth`) and the
+  AITrigger gate (`AITriggerDelay`, `CrateChaserGateCount`).
 - Each override is logged once per game: `[DoctrineExt] Hard AI: [Doctrine.Capture] Enable.Hard=no`.
 
 ## Status

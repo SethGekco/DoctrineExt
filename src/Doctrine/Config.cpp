@@ -444,6 +444,10 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CounterEngDenySellUncapped = SplitList(buf);
 	cfg.CounterEngDenySellUncappedNone = IsNoneList(cfg.CounterEngDenySellUncapped);
 	if (cfg.CounterEngDenySellUncappedNone) cfg.CounterEngDenySellUncapped.clear();
+	cfg.CounterEngDenySellKeepIrreplaceable = pINI->ReadBool("Doctrine.CounterEngineer", "DenySell.KeepIrreplaceable",
+		cfg.CounterEngDenySellKeepIrreplaceable);
+	cfg.CounterEngDenySellIfStronger = pINI->ReadDouble("Doctrine.CounterEngineer", "DenySell.SellIfStronger",
+		cfg.CounterEngDenySellIfStronger);
 	cfg.CounterEngSacrifice = pINI->ReadBool("Doctrine.CounterEngineer", "Sacrifice", cfg.CounterEngSacrifice);
 	pINI->ReadString("Doctrine.CounterEngineer", "Sacrifice.Types", "", buf, sizeof(buf));
 	cfg.CounterEngSacrificeTypes = SplitList(buf);
@@ -461,6 +465,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			"Respond.Late=%d ReactionFrames=%d RetargetDefenses=%d DenySell=%d DenySell.Types=%u (empty=auto)%s "
 			"DenySell.Exclude=%u DenySell.Lead=%d DenySell.Margin=%.2f DenySell.PerEngineer=%d "
 			"DenySell.Max=%d DenySell.Window=%d DenySell.Uncapped=%u (empty=auto)%s "
+			"DenySell.KeepIrreplaceable=%d DenySell.SellIfStronger=%.2f "
 			"Sacrifice=%d Sacrifice.Types=%u (empty=auto)%s "
 			"Sacrifice.Max=%d Sacrifice.Radius=%d Sacrifice.Delay=%d HonorPrereq=%d\n",
 			static_cast<unsigned>(cfg.CounterEngUnits.size()),
@@ -475,7 +480,8 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			cfg.CounterEngDenySellLead, cfg.CounterEngDenySellMargin, cfg.CounterEngDenySellPerEngineer,
 			cfg.CounterEngDenySellMax, cfg.CounterEngDenySellWindow,
 			static_cast<unsigned>(cfg.CounterEngDenySellUncapped.size()),
-			cfg.CounterEngDenySellUncappedNone ? " NONE" : "", cfg.CounterEngSacrifice,
+			cfg.CounterEngDenySellUncappedNone ? " NONE" : "", cfg.CounterEngDenySellKeepIrreplaceable,
+			cfg.CounterEngDenySellIfStronger, cfg.CounterEngSacrifice,
 			static_cast<unsigned>(cfg.CounterEngSacrificeTypes.size()), cfg.CounterEngSacrificeNone ? " NONE" : "",
 			cfg.CounterEngSacrificeMax, cfg.CounterEngSacrificeRadius, cfg.CounterEngSacrificeDelay,
 			cfg.CounterEngHonorPrereq);
@@ -510,6 +516,20 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			cfg.EngRushSafety, cfg.EngRushMinCash, cfg.EngRushRetryDelay, cfg.EngRushBuildUrgent,
 			cfg.EngRushBuildIgnorePause, cfg.EngRushRecapture, cfg.EngRushRecaptureUseCapture,
 			cfg.EngRushHonorPrereq);
+	// ─── [Doctrine.Salvage] — decide before the engine's raise-money base sale ──
+	cfg.SalvageEnable = pINI->ReadBool("Doctrine.Salvage", "Enable", cfg.SalvageEnable);
+	cfg.SalvageBlockWithIncome = pINI->ReadBool("Doctrine.Salvage", "BlockWithIncome", cfg.SalvageBlockWithIncome);
+	cfg.SalvageBlockWithoutYard = pINI->ReadBool("Doctrine.Salvage", "BlockWithoutYard", cfg.SalvageBlockWithoutYard);
+	cfg.SalvageBlockWhilePlan = pINI->ReadBool("Doctrine.Salvage", "BlockWhilePlan", cfg.SalvageBlockWhilePlan);
+	pINI->ReadString("Doctrine.Salvage", "Keep", "", buf, sizeof(buf));
+	cfg.SalvageKeep = SplitList(buf);
+	cfg.SalvageKeepNone = IsNoneList(cfg.SalvageKeep);
+	if (cfg.SalvageKeepNone) cfg.SalvageKeep.clear();
+	if (cfg.SalvageEnable)
+		Echo("[DoctrineExt] [Doctrine.Salvage]: Enable=1 BlockWithIncome=%d BlockWithoutYard=%d "
+			"BlockWhilePlan=%d Keep=%u (empty=auto)%s\n", cfg.SalvageBlockWithIncome, cfg.SalvageBlockWithoutYard,
+			cfg.SalvageBlockWhilePlan, static_cast<unsigned>(cfg.SalvageKeep.size()),
+			cfg.SalvageKeepNone ? " NONE" : "");
 	if (cfg.EconomyEnable)
 		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

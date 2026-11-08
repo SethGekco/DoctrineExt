@@ -4282,6 +4282,46 @@ namespace
 		return pB->Type->ConstructionYard;
 	}
 
+	// Could the house build this building again (DenySell.KeepIrreplaceable)? A yard: it owns another yard
+	// or an MCV, or can build an MCV ([General] BaseUnit) and pay for it. Anything else: it owns a yard
+	// and can pay for a new one.
+	bool Replaceable(BuildingClass* const pB, HouseClass* const pHouse)
+	{
+		int const cash = static_cast<int>(pHouse->Available_Money());
+		bool yard = false;
+		for (auto const pO : pHouse->Buildings)
+			if (pO && pO != pB && pO->Type && !pO->InLimbo && pO->Health > 0 && pO->Type->ConstructionYard
+				&& pO->GetCurrentMission() != Mission::Selling)
+				yard = true;
+		if (!pB->Type->ConstructionYard) return yard && cash >= pB->Type->GetActualCost(pHouse);
+		if (yard) return true;
+		for (auto const pU : UnitClass::Array)
+			if (pU && pU->Owner == pHouse && !pU->InLimbo && pU->Health > 0 && pU->Type->DeploysInto
+				&& pU->Type->DeploysInto->ConstructionYard)
+				return true;
+		for (auto const pMcv : RulesClass::Instance->BaseUnit)
+			if (CanBuildStrict(pHouse, pMcv) && cash >= pMcv->GetActualCost(pHouse)) return true;
+		return false;
+	}
+
+	// What a house's army is worth: the cost of its armed units (no miners, MCVs or engineers).
+	int ArmyValue(HouseClass* const pHouse)
+	{
+		int v = 0;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->Health <= 0) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Unit && what != AbstractType::Infantry && what != AbstractType::Aircraft) continue;
+			auto const pType = pT->GetTechnoType();
+			if (!pType || pType->ResourceGatherer || pType->DeploysInto || !HasOffensiveWeapon(pType)) continue;
+			if (pType->WhatAmI() == AbstractType::InfantryType && static_cast<InfantryTypeClass*>(pType)->Engineer) continue;
+			v += pType->GetActualCost(pHouse);
+		}
+		return v;
+	}
+
 	// Is losing this building to a capture worse than selling it (DenySell.Types)? Auto: a
 	// construction yard or superweapon always; a factory or income building only when it's the
 	// house's last of that kind — a spare barracks, a power plant or a lab can go, since losing it
@@ -4706,6 +4746,21 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 			why = "not worth denying (DenySell.Types)";
 		else if (capped && !uncapped)
 			why = capped;
+		else if (cfg.CounterEngDenySellKeepIrreplaceable && !Replaceable(t.Goal, pHouse))
+		{
+			// Selling a building we can't build again loses it for good; captured, we can retake it.
+			// Only an army that can win without it (SellIfStronger) sells it anyway, to deny it.
+			int const ours = ArmyValue(pHouse);
+			int const theirs = t.Eng->Owner ? ArmyValue(t.Eng->Owner) : 0;
+			if (cfg.CounterEngDenySellIfStronger <= 0.0 || ours < theirs * cfg.CounterEngDenySellIfStronger)
+			{
+				static char keepWhy[192];
+				std::snprintf(keepWhy, sizeof(keepWhy), "we couldn't build it again and our army (%d) isn't "
+					"%.1fx theirs (%d): retake it instead (DenySell.KeepIrreplaceable / SellIfStronger)",
+					ours, cfg.CounterEngDenySellIfStronger, theirs);
+				why = keepWhy;
+			}
+		}
 		if (why)
 		{
 			if (cfg.DebugTicks && letGo.insert({ uid, t.Goal->UniqueID }).second)
@@ -4803,6 +4858,7 @@ namespace
 	std::map<int, std::map<DWORD, int>> g_engRushCooldown;        // house -> target UID -> retry frame
 	std::map<int, std::set<DWORD>> g_engRushMine;                 // house -> its building UIDs last pass
 	std::map<int, std::set<DWORD>> g_engRushLost;                 // house -> its buildings the enemy captured
+	std::map<int, int> g_recaptureSeen;                           // house -> last pass with a recapture target
 
 	TeamClass* FindRushTeam(int const hIdx)
 	{
@@ -5011,6 +5067,7 @@ void Teams::EngineerRush(HouseClass* pHouse)
 	// lowered for the one AddMember call; one per pass.
 	int recaptures = 0;
 	for (auto const& c : cands) if (c.Rank < 0) ++recaptures;
+	if (recaptures > 0) g_recaptureSeen[hIdx] = now;                     // Salvage.BlockWhilePlan
 	if (pCapTeam && static_cast<int>(onTeam.size()) < std::min(recaptures, desired))
 	{
 		auto const tc = cands[0].B->GetCoords();
@@ -5570,16 +5627,125 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 			cash, hasIncome, anyPaused, emergency, OwnsBarracks(pHouse), OwnsIncomeStructure(pHouse));
 }
 
+// ─── Salvage (§10n) ─────────────────────────────────────────────────────────────
+// The engine's raise-money strategy: HouseClass::AI (0x4FD500) asks 0x4FD9A0 whether the house lacks
+// income it can afford (no refinery, or no miner, and not enough cash for the refinery / war factory /
+// miner — so ALWAYS with no yard), and if so runs AI_RaiseMoney (0x4FDD10): sell base buildings newest
+// first, yard included, until the cash covers it, then abandon every factory's production. In Rex's
+// 11-08 game it sold a just-retaken yard with $5,542 in the bank and the house was defeated 50 frames
+// later; with no yard it cancels every build each pass, so nothing — no engineer to retake the yard —
+// ever gets built. Salvage decides first.
+namespace
+{
+	struct SalvageCall { int Frame = -1; bool Block = false; const char* Why = ""; };
+	std::map<int, SalvageCall> g_salvage;                 // house -> last raise-money decision
+	std::map<int, int> g_raiseMoneyFrame;                 // house -> frame the engine's sale was let through
+
+	bool OwnsYard(HouseClass* const pHouse)
+	{
+		for (auto const pB : pHouse->Buildings)
+			if (pB && pB->Type && !pB->InLimbo && pB->Health > 0 && pB->Type->ConstructionYard) return true;
+		return false;
+	}
+
+	// Never sold to raise money (Salvage.Keep). Auto: a construction yard, or the house's last factory of
+	// its kind — selling the yard to afford a refinery only the yard can build is how the AI gives up.
+	bool SalvageKeeps(BuildingClass* const pB)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (cfg.SalvageKeepNone) return false;
+		auto const pBt = pB->Type;
+		if (!cfg.SalvageKeep.empty()) return ListHas(cfg.SalvageKeep, pBt->ID);
+		if (pBt->ConstructionYard) return true;
+		if (pBt->Factory == AbstractType::None) return false;
+		for (auto const pO : pB->Owner->Buildings)
+			if (pO && pO != pB && pO->Type && !pO->InLimbo && pO->Health > 0 && pO->Type->Factory == pBt->Factory
+				&& pO->Type->Naval == pBt->Naval && pO->GetCurrentMission() != Mission::Selling)
+				return false;
+		return true;
+	}
+
+	// Can the house field an engineer: it owns one, or can build one and pay for it.
+	bool EngineerObtainable(HouseClass* const pHouse)
+	{
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (pT && pT->Owner == pHouse && IsLiveEngineer(pT)) return true;
+		}
+		auto const pEng = BestEngineer(pHouse, DoctrineConfig::Get().HonorPrereqForEngRush());
+		return pEng && pHouse->Available_Money() >= pEng->GetActualCost(pHouse);
+	}
+}
+
+bool Teams::SalvageBlocksRaiseMoney(HouseClass* pHouse)
+{
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral() || pHouse->IsControlledByHuman()) return false;
+	if (pHouse->CountResourceDestinations > 0 && pHouse->CountResourceGatherers > 0)
+		return false;                                     // the engine's own check passes: nothing to decide
+	DoctrineConfig::HouseScope const scope(pHouse);       // called from the engine's AI, outside any tick
+	auto const& cfg = DoctrineConfig::Get();
+	if (!cfg.SalvageEnable) return false;
+	int const now = Unsorted::CurrentFrame;
+	int const hIdx = pHouse->ArrayIndex;
+	auto& s = g_salvage[hIdx];
+	if (s.Frame < 0 || now - s.Frame >= 15)               // decided at most every 15 frames
+	{
+		bool block = true;
+		const char* why = nullptr;
+		if (cfg.SalvageBlockWithIncome && HasIncome(pHouse))
+			why = "it has income by [Doctrine.Economy]'s measure (BlockWithIncome)";
+		else if (cfg.SalvageBlockWithoutYard && !OwnsYard(pHouse))
+			why = "it has no construction yard, so the money can't buy a refinery (BlockWithoutYard)";
+		else if (cfg.SalvageBlockWhilePlan && EngineerObtainable(pHouse))
+		{
+			auto const rit = g_recaptureSeen.find(hIdx);
+			int const rushInterval = cfg.EngRushInterval > 0 ? cfg.EngRushInterval : 60;
+			if (cfg.EngRushEnable && cfg.EngRushRecapture && rit != g_recaptureSeen.end()
+				&& now - rit->second <= 2 * rushInterval)
+				why = "it can retake a building it lost (BlockWhilePlan, Recapture)";
+			else if (cfg.CaptureEnable && !FindCaptureTargets(pHouse).empty())
+				why = "it can capture income (BlockWhilePlan, [Doctrine.Capture])";
+		}
+		if (!why)
+		{
+			block = false;
+			why = "nothing better to do; Keep buildings are still never sold";
+		}
+		bool const changed = s.Frame < 0 || block != s.Block || std::strcmp(why, s.Why) != 0;
+		s.Frame = now; s.Block = block; s.Why = why;
+		if (changed && cfg.DebugTicks)
+			Debug::Log("[DoctrineExt] salvage: house=%s#%d %s the engine's raise-money base sale: %s. cash=%d "
+				"refineries=%d miners=%d.\n", pHouse->get_ID(), hIdx, block ? "blocks" : "allows", why,
+				static_cast<int>(pHouse->Available_Money()), pHouse->CountResourceDestinations,
+				pHouse->CountResourceGatherers);
+	}
+	if (!s.Block) g_raiseMoneyFrame[hIdx] = now;
+	return s.Block;
+}
+
 bool Teams::ShouldBlockSell(BuildingClass* pBld)
 {
 	if (g_denySelling) return false;                      // our own capture-denial sale (§10l)
 	if (!pBld || !pBld->Type) return false;
 	DoctrineConfig::HouseScope const scope(pBld->Owner);  // called from the Sell hook, outside any tick
 	auto const& cfg = DoctrineConfig::Get();
-	if (!cfg.EconomyEnable || !cfg.EconomyPreventSelling) return false;
 	auto const pH = pBld->Owner;
 	if (!pH || pH->Defeated || pH->IsNeutral() || pH->IsControlledByHuman())
 		return false;                                     // AI houses only; never the human player
+	// Salvage: the engine's raise-money sale let through this frame never takes a Keep building.
+	if (cfg.SalvageEnable)
+	{
+		auto const rit = g_raiseMoneyFrame.find(pH->ArrayIndex);
+		if (rit != g_raiseMoneyFrame.end() && rit->second == Unsorted::CurrentFrame && SalvageKeeps(pBld))
+		{
+			if (cfg.DebugTicks)
+				Debug::Log("[DoctrineExt] salvage: house=%s#%d keeps %s from the engine's raise-money sale "
+					"(Salvage.Keep).\n", pH->get_ID(), pH->ArrayIndex, pBld->Type->ID);
+			return true;
+		}
+	}
+	if (!cfg.EconomyEnable || !cfg.EconomyPreventSelling) return false;
 	// Protect only while the house is still securing income (the firesale window) unless the modder
 	// wants it always. Once it owns a working refinery+miner (HasIncome) it may sell normally again.
 	if (!cfg.EconomyPreventSellingAlways && HasIncome(pH)) return false;
@@ -5597,6 +5763,17 @@ DEFINE_HOOK(0x44717D, BuildingClass_Sell_BlockAIFiresale, 0x6)
 {
 	GET(BuildingClass* const, pThis, ESI);
 	return Teams::ShouldBlockSell(pThis) ? 0x447203 : 0;
+}
+
+// The raise-money urgency (0x4FD9A0, __thiscall, no arguments; its only caller is HouseClass::AI at
+// 0x4FD500): when Salvage blocks, jump to 0x4104B0 (xor eax,eax; ret) — at entry ESP holds the return
+// address, so that returns "not urgent" and AI_RaiseMoney (0x4FDD10) doesn't run. 8 stolen bytes = two
+// whole instructions (sub esp,14h; mov eax,[0A8B238h]), nothing branches into them. Phobos's
+// AI_RaiseMoney hook at 0x4FE0A3 is inside 0x4FDD10 and untouched.
+DEFINE_HOOK(0x4FD9A0, HouseClass_RaiseMoneyUrgency_Salvage, 0x8)
+{
+	GET(HouseClass* const, pThis, ECX);
+	return Teams::SalvageBlocksRaiseMoney(pThis) ? 0x4104B0 : 0;
 }
 
 int Teams::ChaserGateMax() { return g_chaserGateMax; }
@@ -5657,4 +5834,7 @@ void Teams::Reset()
 	g_engRushCooldown.clear();
 	g_engRushMine.clear();
 	g_engRushLost.clear();
+	g_recaptureSeen.clear();
+	g_salvage.clear();
+	g_raiseMoneyFrame.clear();
 }

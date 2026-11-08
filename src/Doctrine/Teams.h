@@ -137,6 +137,12 @@ namespace Teams
 	// no ping-pong). The human player is never blocked. (§10k)
 	bool ShouldBlockSell(BuildingClass* pBld);
 
+	// Salvage (§10n): should the engine's raise-money strategy (sell base buildings newest first, yard
+	// included, then abandon all production) be skipped for this AI house? Yes while it has income by
+	// the Economy's measure, has no yard, or can retake/capture its way back ([Doctrine.Salvage]).
+	// Called from the hook on its urgency check (0x4FD9A0).
+	bool SalvageBlocksRaiseMoney(HouseClass* pHouse);
+
 	// Air-defense (AA P1): keep own anti-air firepower >= enemy air DPS x ratio,
 	// building AntiAir arsenal units when short (scales as the enemy adds air), and
 	// screen AA forward of base split across incoming-air bearings.

@@ -453,6 +453,13 @@ public:
 	                                 // PerEngineer or Max is used up: empty = auto (construction yards),
 	                                 // a list = exactly these, none/null = the caps apply to everything
 	bool CounterEngDenySellUncappedNone = false; // DenySell.Uncapped=none (or null)
+	bool CounterEngDenySellKeepIrreplaceable = true; // DenySell.KeepIrreplaceable — don't sell a building
+	                                 // the house couldn't build again (a yard with no other yard, MCV or
+	                                 // MCV it can build and pay for; anything else with no yard or no cash
+	                                 // for it): let it be captured and retake it ([Doctrine.EngineerRush] Recapture)
+	double CounterEngDenySellIfStronger = 1.5; // DenySell.SellIfStronger — sell it anyway when our army is
+	                                 // worth at least this many times the engineer owner's (it can win
+	                                 // without it). 0 = never
 	bool CounterEngSacrifice = false; // Sacrifice — sell a cheap building by the engineer's path so its
 	                                 // survivors (the side's crew infantry) kill the engineer
 	std::vector<std::string> CounterEngSacrificeTypes; // Sacrifice.Types — buildings that may be
@@ -494,6 +501,23 @@ public:
 	                                 // (Targets and Priority don't apply to them; Exclude does)
 	bool EngRushRecaptureUseCapture = true; // Recapture.UseCaptureSquad — a recapture may take the
 	                                 // [Doctrine.Capture] squad's engineer when the rush has none
+
+	// ─── Salvage ([Doctrine.Salvage], §10n) ─────────────────────────────────────
+	// The engine's raise-money strategy (urgency 0x4FD9A0 -> HouseClass::AI_RaiseMoney 0x4FDD10): an AI
+	// without a refinery + miner it can afford sells its newest buildings, the yard included, until it
+	// can, and cancels all its production. Salvage decides first.
+	bool SalvageEnable = false;      // Enable — opt-in master switch
+	bool SalvageBlockWithIncome = true; // BlockWithIncome — not while the house has income by
+	                                 // [Doctrine.Economy]'s measure (a derrick counts; the engine only
+	                                 // counts a refinery + miner)
+	bool SalvageBlockWithoutYard = true; // BlockWithoutYard — not while the house has no construction
+	                                 // yard: the money can't buy the refinery it sells for
+	bool SalvageBlockWhilePlan = true; // BlockWhilePlan — not while it can get an engineer to retake a
+	                                 // building it lost (Recapture) or capture income ([Doctrine.Capture])
+	std::vector<std::string> SalvageKeep; // Keep — never sold to raise money: empty = auto (construction
+	                                 // yards and the house's last factory of each kind), a list = exactly
+	                                 // these, none/null = nothing kept
+	bool SalvageKeepNone = false;    // Keep=none (or null)
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

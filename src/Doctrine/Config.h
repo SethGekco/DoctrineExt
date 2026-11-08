@@ -412,6 +412,10 @@ public:
 	bool CounterEngEnable = false;   // Enable — opt-in master switch
 	std::vector<std::string> CounterEngUnits; // Units — interceptors to BUILD; empty = auto (fastest
 	                                 // buildable armed infantry; attack dogs win on speed)
+	std::vector<std::string> CounterEngThreatTypes; // ThreatTypes — enemy types that trigger the
+	                                 // response: empty = every Engineer=yes infantry; a list = exactly
+	                                 // these infantry/vehicle types (a C4 commando, a spy, a demo truck)
+	bool CounterEngThreatNone = false; // ThreatTypes=none (or null): nothing triggers it
 	int CounterEngInterval = 30;     // Interval — frames between production passes / debug lines
 	int CounterEngRadius = 12;       // Radius — cells from our building/contested tech an approaching
 	                                 // engineer becomes a threat (any range if it targets one)

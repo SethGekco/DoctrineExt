@@ -42,6 +42,22 @@ namespace
 		return out;
 	}
 
+	// A type list whose empty value means "auto" can still be switched off outright: a "none" or
+	// "null" token (any case) means nothing at all.
+	bool IsNoneList(std::vector<std::string> const& list)
+	{
+		auto const same = [](std::string const& s, const char* const word)
+		{
+			if (s.size() != std::strlen(word)) return false;
+			for (size_t i = 0; i < s.size(); ++i)
+				if ((s[i] | 0x20) != word[i]) return false;
+			return true;
+		};
+		for (auto const& s : list)
+			if (same(s, "none") || same(s, "null")) return true;
+		return false;
+	}
+
 	// Split When= into observation / op / threshold. Two-char ops first so
 	// ">=" doesn't parse as ">" + "=200".
 	bool ParseWhen(DoctrineRule& rule)
@@ -306,6 +322,10 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CounterEngRadius = pINI->ReadInteger("Doctrine.CounterEngineer", "Radius", cfg.CounterEngRadius);
 	cfg.CounterEngMax = pINI->ReadInteger("Doctrine.CounterEngineer", "Max", cfg.CounterEngMax);
 	cfg.CounterEngHonorPrereq = pINI->ReadInteger("Doctrine.CounterEngineer", "HonorPrereq", cfg.CounterEngHonorPrereq);
+	pINI->ReadString("Doctrine.CounterEngineer", "ThreatTypes", "", buf, sizeof(buf));
+	cfg.CounterEngThreatTypes = SplitList(buf);
+	cfg.CounterEngThreatNone = IsNoneList(cfg.CounterEngThreatTypes);
+	if (cfg.CounterEngThreatNone) cfg.CounterEngThreatTypes.clear();
 	cfg.CounterEngBuild = pINI->ReadBool("Doctrine.CounterEngineer", "Build", cfg.CounterEngBuild);
 	cfg.CounterEngRespond = pINI->ReadBool("Doctrine.CounterEngineer", "Respond", cfg.CounterEngRespond);
 	cfg.CounterEngRespondRadius = pINI->ReadInteger("Doctrine.CounterEngineer", "RespondRadius", cfg.CounterEngRespondRadius);
@@ -319,10 +339,12 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CounterEngDenySellLead = pINI->ReadInteger("Doctrine.CounterEngineer", "DenySell.Lead", cfg.CounterEngDenySellLead);
 	cfg.CounterEngDenySellMargin = pINI->ReadDouble("Doctrine.CounterEngineer", "DenySell.Margin", cfg.CounterEngDenySellMargin);
 	if (cfg.CounterEngEnable)
-		Debug::Log("[DoctrineExt] [Doctrine.CounterEngineer]: Enable=1 Units=%u (empty=auto) Interval=%d "
-			"Radius=%d Max=%d Build=%d Respond=%d RespondRadius=%d RespondMargin=%.2f RespondMax=%d "
-			"ReactionFrames=%d RetargetDefenses=%d DenySell=%d DenySell.Exclude=%u DenySell.Lead=%d "
-			"DenySell.Margin=%.2f HonorPrereq=%d\n", static_cast<unsigned>(cfg.CounterEngUnits.size()),
+		Debug::Log("[DoctrineExt] [Doctrine.CounterEngineer]: Enable=1 Units=%u (empty=auto) "
+			"ThreatTypes=%u (empty=Engineer=yes)%s Interval=%d Radius=%d Max=%d Build=%d Respond=%d "
+			"RespondRadius=%d RespondMargin=%.2f RespondMax=%d ReactionFrames=%d RetargetDefenses=%d "
+			"DenySell=%d DenySell.Exclude=%u DenySell.Lead=%d DenySell.Margin=%.2f HonorPrereq=%d\n",
+			static_cast<unsigned>(cfg.CounterEngUnits.size()),
+			static_cast<unsigned>(cfg.CounterEngThreatTypes.size()), cfg.CounterEngThreatNone ? " NONE" : "",
 			cfg.CounterEngInterval, cfg.CounterEngRadius, cfg.CounterEngMax, cfg.CounterEngBuild,
 			cfg.CounterEngRespond, cfg.CounterEngRespondRadius, cfg.CounterEngRespondMargin,
 			cfg.CounterEngRespondMax, cfg.CounterEngReaction, cfg.CounterEngRetargetDefenses,

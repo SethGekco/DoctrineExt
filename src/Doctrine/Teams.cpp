@@ -4035,6 +4035,22 @@ namespace
 			&& static_cast<InfantryTypeClass*>(pType)->Engineer;
 	}
 
+	// A unit the urgent response treats as an engineer threat (ThreatTypes): every Engineer=yes
+	// infantry by default; with a modder list, exactly those infantry/vehicle types whatever their
+	// flags (a C4 commando, a spy, a demo truck); with none/null, nothing. Our own capturers stay
+	// Engineer=yes (IsLiveEngineer) — only those can capture.
+	bool IsThreatType(TechnoClass* const pT)
+	{
+		auto const& cfg = DoctrineConfig::Instance;
+		if (cfg.CounterEngThreatNone) return false;
+		if (cfg.CounterEngThreatTypes.empty()) return IsLiveEngineer(pT);
+		if (!pT || pT->InLimbo || pT->Health <= 0) return false;
+		auto const what = pT->WhatAmI();
+		if (what != AbstractType::Infantry && what != AbstractType::Unit) return false;
+		auto const pType = pT->GetTechnoType();
+		return pType && ListHas(cfg.CounterEngThreatTypes, pType->ID);
+	}
+
 	void SampleEngineers(int const now)
 	{
 		if (g_engTrackFrame == now) return;
@@ -4042,7 +4058,7 @@ namespace
 		for (int i = 0; i < TechnoClass::Array.Count; ++i)
 		{
 			auto const pT = TechnoClass::Array.GetItem(i);
-			if (!IsLiveEngineer(pT)) continue;
+			if (!IsThreatType(pT)) continue;
 			auto& t = g_engTracks[pT->UniqueID];
 			auto const c = pT->GetCoords();
 			if (t.F1 <= 0 || now - t.F1 > 60)                   // new, or back out of a transport
@@ -4106,7 +4122,7 @@ namespace
 		for (int i = 0; i < TechnoClass::Array.Count; ++i)
 		{
 			auto const pT = TechnoClass::Array.GetItem(i);
-			if (!IsLiveEngineer(pT)) continue;
+			if (!IsThreatType(pT)) continue;
 			auto const pO = pT->Owner;
 			if (!pO || pO == pHouse || pHouse->IsAlliedWith(pO)) continue;    // enemy only
 			auto const pE = static_cast<FootClass*>(pT);

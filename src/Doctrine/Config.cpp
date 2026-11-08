@@ -450,6 +450,8 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CounterEngPicketTowardEnemy = pINI->ReadBool("Doctrine.CounterEngineer", "Picket.TowardEnemy",
 		cfg.CounterEngPicketTowardEnemy);
 	cfg.CounterEngPicketBuild = pINI->ReadBool("Doctrine.CounterEngineer", "Picket.Build", cfg.CounterEngPicketBuild);
+	cfg.CounterEngPicketBuildUrgent = pINI->ReadBool("Doctrine.CounterEngineer", "Picket.Build.Urgent",
+		cfg.CounterEngPicketBuildUrgent);
 	cfg.CounterEngPicketInterval = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.Interval",
 		cfg.CounterEngPicketInterval);
 	pINI->ReadString("Doctrine.CounterEngineer", "Transports", "", buf, sizeof(buf));
@@ -523,13 +525,14 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 		Echo("[DoctrineExt] [Doctrine.CounterEngineer]: Predict.Goal=%d Predict.Width=%d Predict.Elsewhere=%d "
 			"Predict.Intercept=%d ShareDefenses=%d Picket=%d Picket.Units=%u (empty=auto)%s Picket.Posts=%d "
 			"Picket.PerPost=%d Picket.Distance=%d Picket.MinSightings=%d Picket.Memory=%d Picket.TowardEnemy=%d "
-			"Picket.Build=%d Picket.Interval=%d Transports=%u (empty=auto)%s Transports.Cargo=%s "
+			"Picket.Build=%d Picket.Build.Urgent=%d Picket.Interval=%d Transports=%u (empty=auto)%s Transports.Cargo=%s "
 			"Transports.DenySell=%d\n", cfg.CounterEngPredictGoal, cfg.CounterEngPredictWidth,
 			cfg.CounterEngPredictElsewhere, cfg.CounterEngPredictIntercept, cfg.CounterEngShareDefenses,
 			cfg.CounterEngPicket, static_cast<unsigned>(cfg.CounterEngPicketUnits.size()),
 			cfg.CounterEngPicketUnitsNone ? " NONE" : "", cfg.CounterEngPicketPosts, cfg.CounterEngPicketPerPost,
 			cfg.CounterEngPicketDistance, cfg.CounterEngPicketMinSightings, cfg.CounterEngPicketMemory,
-			cfg.CounterEngPicketTowardEnemy, cfg.CounterEngPicketBuild, cfg.CounterEngPicketInterval,
+			cfg.CounterEngPicketTowardEnemy, cfg.CounterEngPicketBuild, cfg.CounterEngPicketBuildUrgent,
+			cfg.CounterEngPicketInterval,
 			static_cast<unsigned>(cfg.CounterEngTransports.size()), cfg.CounterEngTransportsNone ? " NONE" : "",
 			cfg.CounterEngTransportCargo == 2 ? "know" : cfg.CounterEngTransportCargo == 1 ? "assume" : "no",
 			cfg.CounterEngTransportDenySell);

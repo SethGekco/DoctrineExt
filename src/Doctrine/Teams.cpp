@@ -5148,11 +5148,20 @@ void Teams::EngineerPickets(HouseClass* pHouse)
 	auto const center = CellClass::Cell2Coord(pHouse->GetBaseCenter());
 	if (center.X == 0 && center.Y == 0) return;
 
-	// The posts ring the base just past its outermost building, like the defenders' perimeter.
-	double radius = 0.0;
+	// The posts ring the base just past its outermost building, like the defenders' perimeter. Only the
+	// base itself: walking out from the center, a gap of more than 6 cells ends it, so a building captured
+	// across the map doesn't move the ring there (11-08 test: a 166-cell "edge").
+	std::vector<double> dists;
 	for (auto const pBld : pHouse->Buildings)
 		if (pBld && !pBld->InLimbo)
-			radius = std::max(radius, Dist2D(pBld->GetCoords(), center));
+			dists.push_back(Dist2D(pBld->GetCoords(), center));
+	std::sort(dists.begin(), dists.end());
+	double radius = 0.0;
+	for (double const d : dists)
+	{
+		if (d - radius > 6.0 * 256.0) break;
+		radius = d;
+	}
 	radius += std::max(0, cfg.CounterEngPicketDistance) * 256.0;
 	radius = std::max(radius, 5.0 * 256.0);
 
@@ -5289,6 +5298,8 @@ void Teams::EngineerPickets(HouseClass* pHouse)
 	int const have = static_cast<int>(kept.size());
 	auto const pBuild = cfg.CounterEngPicketBuild && have < want ? PicketBuildType(pHouse) : nullptr;
 	EnsureSquadTeam(pHouse, want, pBuild, "DPKT", pBuild ? want - have : 0);
+	if (pBuild && cfg.CounterEngPicketBuildUrgent) BuildUrgently(pHouse, pBuild);   // else it rarely wins
+	                                                                               // the barracks
 
 	if (cfg.DebugTicks)
 	{

@@ -460,6 +460,8 @@ public:
 	bool CounterEngPicketTowardEnemy = true; // Picket.TowardEnemy — posts no sighting has claimed face the
 	                                 // nearest enemy bases
 	bool CounterEngPicketBuild = false; // Picket.Build — build pickets (the interceptor) when short
+	bool CounterEngPicketBuildUrgent = false; // Picket.Build.Urgent — a picket (infantry) becomes the AI's
+	                                 // next infantry build, as Build.Urgent does for the interceptor
 	int CounterEngPicketInterval = 150; // Picket.Interval — frames between placement passes
 	std::vector<std::string> CounterEngTransports; // Transports — enemy carriers watched; empty = auto
 	                                 // (any type with Passengers); a list = exactly these

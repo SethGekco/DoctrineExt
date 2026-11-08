@@ -4368,8 +4368,21 @@ namespace
 		auto const it = g_urgentPicks.find(pHouse->ArrayIndex);
 		if (it == g_urgentPicks.end() || it->second.Index < 0) return;
 		auto& p = it->second;
-		if (pHouse->ProducingInfantryTypeIndex != p.Index) { p.Index = -1; return; }   // taken, or replaced
+		bool const log = DoctrineConfig::Get().DebugTicks;
+		if (pHouse->ProducingInfantryTypeIndex != p.Index)                          // taken, or replaced
+		{
+			if (log)
+				Debug::Log("[DoctrineExt] urgent-build: house=%s#%d %s left the slot after %df (now %d).\n",
+					pHouse->get_ID(), pHouse->ArrayIndex, InfantryTypeClass::Array.GetItem(p.Index)->ID,
+					now - p.Since, pHouse->ProducingInfantryTypeIndex);
+			p.Index = -1;
+			return;
+		}
 		if (now - p.Since <= UrgentPickTimeout) return;
+		if (log)
+			Debug::Log("[DoctrineExt] urgent-build: house=%s#%d %s never taken in %df; slot cleared, no urgent "
+				"builds for %df.\n", pHouse->get_ID(), pHouse->ArrayIndex,
+				InfantryTypeClass::Array.GetItem(p.Index)->ID, now - p.Since, UrgentPickBackoff);
 		pHouse->ProducingInfantryTypeIndex = -1;
 		p.Index = -1;
 		p.BlockedUntil = now + UrgentPickBackoff;
@@ -4387,6 +4400,9 @@ namespace
 		                                        // first served (the counter-engineer ticks before the rush)
 		int const idx = InfantryTypeClass::Array.FindItemIndex(static_cast<InfantryTypeClass*>(pType));
 		if (idx < 0 || pHouse->ProducingInfantryTypeIndex == idx) return;            // already next
+		if (DoctrineConfig::Get().DebugTicks)
+			Debug::Log("[DoctrineExt] urgent-build: house=%s#%d next infantry %s (was %d).\n", pHouse->get_ID(),
+				pHouse->ArrayIndex, pType->ID, pHouse->ProducingInfantryTypeIndex);
 		pHouse->ProducingInfantryTypeIndex = idx;
 		p.Index = idx;
 		p.Since = now;

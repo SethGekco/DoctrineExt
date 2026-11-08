@@ -23,14 +23,25 @@ DoctrineConfig const* DoctrineConfig::Active = &DoctrineConfig::Instance;
 
 namespace
 {
-	// Tag suffix per HouseClass::AIDifficulty (0 = Hard, 1 = Normal, 2 = Easy).
-	const char* const kDifficulty[3] = { "Hard", "Normal", "Easy" };
+	// Tag suffixes per HouseClass::AIDifficulty (0 = Hard, 1 = Normal, 2 = Easy). The lobby calls
+	// Normal "Medium AI", so ".Medium=" reads too; ".Normal=" wins if a tag has both.
+	const char* const kDifficulty[3][2] = { { "Hard", nullptr }, { "Normal", "Medium" }, { "Easy", nullptr } };
 
 	bool SameWord(const char* a, const char* b)
 	{
 		for (; *a && *b; ++a, ++b)
 			if ((*a | 0x20) != (*b | 0x20)) return false;
 		return *a == *b;
+	}
+
+	// Which kDifficulty name a tag's last part is: {difficulty, name index}, or {-1, -1}.
+	std::pair<int, int> DifficultyName(const char* const tail)
+	{
+		for (int d = 0; d < 3; ++d)
+			for (int n = 0; n < 2; ++n)
+				if (kDifficulty[d][n] && SameWord(tail, kDifficulty[d][n]))
+					return { d, n };
+		return { -1, -1 };
 	}
 
 	// Echo parsed values to debug.log: on for the tags as written, off for the per-difficulty sets
@@ -46,12 +57,12 @@ namespace
 	}
 
 	// Reads the [Doctrine.*] tags for one AI difficulty: "<Key>.<Difficulty>" when the INI has it,
-	// else "<Key>" (no suffix = the tags as written). Same calls as CCINIClass, so the parser reads
-	// through either.
+	// else "<Key>" (difficulty -1 = the tags as written). Same calls as CCINIClass, so the parser
+	// reads through either.
 	class TagReader
 	{
 	public:
-		TagReader(CCINIClass* const pINI, const char* const suffix) : INI(pINI), Suffix(suffix) { }
+		TagReader(CCINIClass* const pINI, int const difficulty) : INI(pINI), Difficulty(difficulty) { }
 
 		int ReadInteger(const char* s, const char* k, int def) { return INI->ReadInteger(s, Key(s, k), def); }
 		bool ReadBool(const char* s, const char* k, bool def) { return INI->ReadBool(s, Key(s, k), def); }
@@ -70,29 +81,34 @@ namespace
 			out = k;
 			auto const dot = out.rfind('.');
 			if (dot == std::string::npos) return true;
-			const char* const tail = out.c_str() + dot + 1;
-			bool const variant = SameWord(tail, kDifficulty[0]) || SameWord(tail, kDifficulty[1])
-				|| SameWord(tail, kDifficulty[2]);
-			if (!variant) return true;
-			if (!Suffix || !SameWord(tail, Suffix)) return false;
+			auto const [d, n] = DifficultyName(out.c_str() + dot + 1);
+			if (d < 0) return true;
+			if (d != Difficulty) return false;
 			out.resize(dot);
+			if (n > 0 && INI->Exists(s, (out + "." + kDifficulty[d][0]).c_str())) return false;
 			return !INI->Exists(s, out.c_str());
 		}
 
 	private:
 		const char* Key(const char* s, const char* k)
 		{
-			if (!Suffix) return k;
-			std::snprintf(Variant, sizeof(Variant), "%s.%s", k, Suffix);
-			if (!INI->Exists(s, Variant)) return k;
-			char value[256] = { 0 };
-			INI->ReadString(s, Variant, "", value, sizeof(value));
-			Debug::Log("[DoctrineExt] %s AI: [%s] %s=%s (overrides %s=)\n", Suffix, s, Variant, value, k);
-			return Variant;
+			if (Difficulty < 0) return k;
+			for (auto const pName : kDifficulty[Difficulty])
+			{
+				if (!pName) continue;
+				std::snprintf(Variant, sizeof(Variant), "%s.%s", k, pName);
+				if (!INI->Exists(s, Variant)) continue;
+				char value[256] = { 0 };
+				INI->ReadString(s, Variant, "", value, sizeof(value));
+				Debug::Log("[DoctrineExt] %s AI: [%s] %s=%s (overrides %s=)\n", kDifficulty[Difficulty][0], s,
+					Variant, value, k);
+				return Variant;
+			}
+			return k;
 		}
 
 		CCINIClass* INI;
-		const char* Suffix;
+		int Difficulty;
 		char Variant[160] = { 0 };
 	};
 
@@ -720,7 +736,7 @@ void DoctrineConfig::EnsureParsed()
 
 	Instance.Parsed = true;
 	g_echo = true;
-	TagReader asWritten(pRules, nullptr);
+	TagReader asWritten(pRules, -1);
 	Parse(Instance, &asWritten);
 
 	// One more set per AI difficulty: the same tags, each overridden by its "<Tag>.<Difficulty>=".
@@ -731,7 +747,7 @@ void DoctrineConfig::EnsureParsed()
 		auto& c = ByDifficulty[d];
 		c = DoctrineConfig{};
 		c.Parsed = true;
-		TagReader variant(pRules, kDifficulty[d]);
+		TagReader variant(pRules, d);
 		Parse(c, &variant);
 	}
 	g_echo = true;

@@ -610,10 +610,10 @@ public:
 	// heatmaps, kills) and the once-per-scenario AITrigger remap/gate read this one.
 	static DoctrineConfig Instance;
 
-	// Per AI difficulty: every tag also reads as "<Tag>.Easy=", "<Tag>.Normal=" or "<Tag>.Hard="
-	// (e.g. [Doctrine.Capture] Enable.Hard=no), which overrides "<Tag>=" for AI houses of that
-	// difficulty only. Indexed by HouseClass::AIDifficulty, which runs backwards: 0 = Hard (the
-	// lobby's Brutal AI), 1 = Normal (Medium AI), 2 = Easy.
+	// Per AI difficulty: every tag also reads as "<Tag>.Easy=", "<Tag>.Normal=" (or ".Medium=") or
+	// "<Tag>.Hard=" (e.g. [Doctrine.Capture] Enable.Hard=no), which overrides "<Tag>=" for AI houses
+	// of that difficulty only. Indexed by HouseClass::AIDifficulty, which runs backwards: 0 = Hard
+	// (the lobby's Hard AI), 1 = Normal (Medium AI), 2 = Easy.
 	static DoctrineConfig ByDifficulty[3];
 
 	// The tags for the house being worked on: its difficulty's set inside a HouseScope, else

@@ -34,8 +34,9 @@ Cooldown=900
 
 ### Per AI difficulty
 
-Every tag can also be written as `<Tag>.Easy=`, `<Tag>.Normal=` or `<Tag>.Hard=`.
-That value replaces `<Tag>=` for AI houses of that difficulty only:
+Every tag can also be written as `<Tag>.Easy=`, `<Tag>.Medium=` (or `<Tag>.Normal=`)
+or `<Tag>.Hard=`. That value replaces `<Tag>=` for AI houses of that difficulty only;
+`<Tag>=` stays the value for the other difficulties:
 
 ```ini
 [Doctrine.Capture]
@@ -46,8 +47,16 @@ Enable.Hard=no            ; Hard AIs don't capture; Easy and Normal do
 DenySell.Types.Easy=none  ; Easy AIs never sell to deny a capture
 ```
 
-- Easy, Normal and Hard are the lobby's Easy, Medium and Brutal AI
-  (`HouseClass::AIDifficulty` 2, 1, 0).
+- Easy, Medium and Hard are the lobby's Easy AI, Medium AI and Hard AI
+  (`HouseClass::AIDifficulty` 2, 1, 0). `.Normal` is the engine's name for
+  Medium; if a tag has both, `.Normal` wins. The lobby's AI Modifier (Brutal,
+  Extreme ...) is a separate map option, not a difficulty.
+- Put the override right under its tag, so the section reads per difficulty:
+
+  ```ini
+  Predict.Intercept=yes       ; Medium and Hard AIs cut the engineer off
+  Predict.Intercept.Easy=no   ; Easy AIs chase it
+  ```
 - In `[Doctrine.Arsenal]` and `[Doctrine.Rules]`, `AntiAir.Hard=` overrides a
   role or line for Hard AIs. A variant whose plain key doesn't exist adds the
   entry for that difficulty only.

@@ -430,6 +430,8 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CounterEngRetargetDefenses = pINI->ReadBool("Doctrine.CounterEngineer", "RetargetDefenses", cfg.CounterEngRetargetDefenses);
 	cfg.CounterEngPredictGoal = pINI->ReadBool("Doctrine.CounterEngineer", "Predict.Goal", cfg.CounterEngPredictGoal);
 	cfg.CounterEngPredictWidth = pINI->ReadInteger("Doctrine.CounterEngineer", "Predict.Width", cfg.CounterEngPredictWidth);
+	cfg.CounterEngPredictElsewhere = pINI->ReadBool("Doctrine.CounterEngineer", "Predict.Elsewhere",
+		cfg.CounterEngPredictElsewhere);
 	cfg.CounterEngPredictIntercept = pINI->ReadBool("Doctrine.CounterEngineer", "Predict.Intercept",
 		cfg.CounterEngPredictIntercept);
 	cfg.CounterEngShareDefenses = pINI->ReadBool("Doctrine.CounterEngineer", "ShareDefenses", cfg.CounterEngShareDefenses);
@@ -491,9 +493,9 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			cfg.CounterEngSacrificeMax, cfg.CounterEngSacrificeRadius, cfg.CounterEngSacrificeDelay,
 			cfg.CounterEngHonorPrereq);
 	if (cfg.CounterEngEnable)
-		Echo("[DoctrineExt] [Doctrine.CounterEngineer]: Predict.Goal=%d Predict.Width=%d Predict.Intercept=%d "
-			"ShareDefenses=%d\n", cfg.CounterEngPredictGoal, cfg.CounterEngPredictWidth,
-			cfg.CounterEngPredictIntercept, cfg.CounterEngShareDefenses);
+		Echo("[DoctrineExt] [Doctrine.CounterEngineer]: Predict.Goal=%d Predict.Width=%d Predict.Elsewhere=%d "
+			"Predict.Intercept=%d ShareDefenses=%d\n", cfg.CounterEngPredictGoal, cfg.CounterEngPredictWidth,
+			cfg.CounterEngPredictElsewhere, cfg.CounterEngPredictIntercept, cfg.CounterEngShareDefenses);
 	// ─── [Doctrine.EngineerRush] — capture enemy buildings near base ──
 	cfg.EngRushEnable = pINI->ReadBool("Doctrine.EngineerRush", "Enable", cfg.EngRushEnable);
 	cfg.EngRushInterval = pINI->ReadInteger("Doctrine.EngineerRush", "Interval", cfg.EngRushInterval);

@@ -440,6 +440,8 @@ public:
 	                                 // building) and then its heading, instead of assuming the nearest
 	int CounterEngPredictWidth = 3;  // Predict.Width — cells either side of its heading a building may be and
 	                                 // still count as the one it's walking at
+	bool CounterEngPredictElsewhere = true; // Predict.Elsewhere — one whose order names another house's building
+	                                 // (or ends by one) is going there: walking past ours is no threat
 	bool CounterEngPredictIntercept = true; // Predict.Intercept — responders cut it off where their path meets
 	                                 // its predicted path to the building, instead of chasing it from behind
 	bool CounterEngShareDefenses = true; // ShareDefenses — a defense shoots one engineer at a time: engineers

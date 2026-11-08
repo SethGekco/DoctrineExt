@@ -4180,6 +4180,31 @@ namespace
 		return nullptr;
 	}
 
+	// True if the engineer's own order names another house's building, or its move order ends within two cells
+	// of one (Predict.Elsewhere): it is going there, so walking past ours is no threat. Target and Destination
+	// are the engine's live pointers. Run after the anchor checks, so an order ending by ours as well wins.
+	bool OrderedElsewhere(FootClass* const pE, HouseClass* const pHouse, std::vector<BuildingClass*> const& anchors)
+	{
+		auto const other = [&](AbstractClass* const p) {
+			if (!p || p->WhatAmI() != AbstractType::Building) return false;
+			auto const pB = static_cast<BuildingClass*>(p);
+			return pB->Owner != pHouse && std::find(anchors.begin(), anchors.end(), pB) == anchors.end();
+		};
+		if (other(pE->Target) || other(pE->Destination)) return true;
+		AbstractClass* const dests[2] = { pE->Destination, pE->MegaDestination };
+		for (auto const pD : dests)
+		{
+			if (!pD || pD->WhatAmI() != AbstractType::Cell) continue;
+			auto const mc = static_cast<CellClass*>(pD)->MapCoords;
+			for (short dx = -2; dx <= 2; ++dx)
+				for (short dy = -2; dy <= 2; ++dy)
+					if (auto const pC = MapClass::Instance.TryGetCellAt(
+						CellStruct { static_cast<short>(mc.X + dx), static_cast<short>(mc.Y + dy) }))
+						if (other(pC->GetBuilding())) return true;
+		}
+		return false;
+	}
+
 	// The anchor an engineer is walking at (Predict.Goal): ahead of it along its measured heading, within
 	// Predict.Width cells of that line (past the building's own half-size), the first it would reach.
 	BuildingClass* HeadingGoal(CoordStruct const& c, EngTrack const& tr, std::vector<BuildingClass*> const& anchors)
@@ -4208,7 +4233,8 @@ namespace
 	// Enemy engineers coming for an anchor, soonest arrival first. One whose own order names an anchor
 	// (or, with Predict.Goal, whose move order ends at one) is a threat at any range; otherwise it must be
 	// within Radius AND measurably closing in (or already at the door) — one idling by our wall or walking
-	// past is left alone. Its goal is then the anchor it's walking at (Predict.Goal), else the nearest.
+	// past is left alone, as is one whose order names another house's building (Predict.Elsewhere). Its goal
+	// is then the anchor it's walking at (Predict.Goal), else the nearest.
 	std::vector<EngThreat> FindEngineerThreats(HouseClass* const pHouse)
 	{
 		auto const& cfg = DoctrineConfig::Get();
@@ -4232,6 +4258,8 @@ namespace
 				if (pE->Target == pB || pE->Destination == pB) { t.Goal = pB; t.Intent = true; break; }
 			if (!t.Goal && cfg.CounterEngPredictGoal && (t.Goal = OrderedGoal(pE, anchors)) != nullptr)
 				{ t.Intent = true; t.Guess = "order"; }
+			if (!t.Goal && cfg.CounterEngPredictElsewhere && OrderedElsewhere(pE, pHouse, anchors))
+				continue;
 			if (!t.Goal && cfg.CounterEngPredictGoal && moved
 				&& (t.Goal = HeadingGoal(c, tit->second, anchors)) != nullptr)
 				t.Guess = "heading";

@@ -70,7 +70,7 @@ namespace
 		if (base.X == 0 && base.Y == 0)
 			return 0.0;
 
-		int const radius = DoctrineConfig::Instance.AirAlertRadius;
+		int const radius = DoctrineConfig::Get().AirAlertRadius;
 		int const r2 = radius * radius;
 
 		double total = 0.0;

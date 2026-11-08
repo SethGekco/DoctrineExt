@@ -45,18 +45,21 @@ namespace
 
 void Engine::TickHouse(HouseClass* pHouse)
 {
-	auto& cfg = DoctrineConfig::Instance;
-	if (!cfg.Parsed)
+	if (!DoctrineConfig::Instance.Parsed)
 		DoctrineConfig::EnsureParsed();
 	// Remap AITriggerType difficulty flags once, now that they're loaded.
 	AITriggerDifficulty::EnsureApplied();
 	// AITrigger gate: hold triggers off for AITriggerDelay frames so DoctrineExt
 	// gets a head start (no-op when the delay is 0).
 	AITriggerDifficulty::GateTick(Unsorted::CurrentFrame);
-	if (cfg.Rules.empty())
-		return;
 
 	if (!pHouse)
+		return;
+
+	// From here on every tag reads as this house's difficulty sees it ("<Tag>.Hard=" etc.).
+	DoctrineConfig::HouseScope const scope(pHouse);
+	auto const& cfg = DoctrineConfig::Get();
+	if (cfg.Rules.empty())
 		return;
 
 	// One-time census of every house's human/AI status, so we can prove which
@@ -138,7 +141,7 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// out) and races for crates, sized from [CrateRules]; or the older single-
 	// grabber path. Both self-throttled + opt-in; the squad supersedes the single
 	// grabber when enabled so they don't fight over the same units.
-	if (DoctrineConfig::Instance.CrateSquad)
+	if (DoctrineConfig::Get().CrateSquad)
 	{
 		Teams::CrateSquadDoctrine(pHouse);   // detect + recruit (throttled)
 		Teams::SteerCrateSquad(pHouse);      // keep chasers moving (every tick)

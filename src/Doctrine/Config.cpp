@@ -8,17 +8,94 @@
 #include "Doctrine/AITriggerDifficulty.h"
 
 #include <CCINIClass.h>
+#include <HouseClass.h>
 #include <Utilities/Debug.h>
 #include <Utilities/Macro.h>
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 DoctrineConfig DoctrineConfig::Instance;
+DoctrineConfig DoctrineConfig::ByDifficulty[3];
+DoctrineConfig const* DoctrineConfig::Active = &DoctrineConfig::Instance;
 
 namespace
 {
+	// Tag suffix per HouseClass::AIDifficulty (0 = Hard, 1 = Normal, 2 = Easy).
+	const char* const kDifficulty[3] = { "Hard", "Normal", "Easy" };
+
+	bool SameWord(const char* a, const char* b)
+	{
+		for (; *a && *b; ++a, ++b)
+			if ((*a | 0x20) != (*b | 0x20)) return false;
+		return *a == *b;
+	}
+
+	// Echo parsed values to debug.log: on for the tags as written, off for the per-difficulty sets
+	// (those log only their overrides, from TagReader).
+	bool g_echo = true;
+	void Echo(const char* const pFormat, ...)
+	{
+		if (!g_echo) return;
+		va_list args;
+		va_start(args, pFormat);
+		Debug::LogWithVArgs(pFormat, args);
+		va_end(args);
+	}
+
+	// Reads the [Doctrine.*] tags for one AI difficulty: "<Key>.<Difficulty>" when the INI has it,
+	// else "<Key>" (no suffix = the tags as written). Same calls as CCINIClass, so the parser reads
+	// through either.
+	class TagReader
+	{
+	public:
+		TagReader(CCINIClass* const pINI, const char* const suffix) : INI(pINI), Suffix(suffix) { }
+
+		int ReadInteger(const char* s, const char* k, int def) { return INI->ReadInteger(s, Key(s, k), def); }
+		bool ReadBool(const char* s, const char* k, bool def) { return INI->ReadBool(s, Key(s, k), def); }
+		double ReadDouble(const char* s, const char* k, double def) { return INI->ReadDouble(s, Key(s, k), def); }
+		int ReadString(const char* s, const char* k, const char* def, char* buf, size_t size)
+			{ return INI->ReadString(s, Key(s, k), def, buf, size); }
+		int GetKeyCount(const char* s) { return INI->GetKeyCount(s); }
+		const char* GetKeyName(const char* s, int i) { return INI->GetKeyName(s, i); }
+		auto GetSection(const char* s) { return INI->GetSection(s); }
+
+		// A listed entry ([Doctrine.Arsenal] roles, [Doctrine.Rules] lines): a plain key is itself. A
+		// difficulty variant only stands in for a key the section lacks, and only for its own
+		// difficulty ("AntiAir.Hard=" alone adds a role for Hard AIs). False = skip this key.
+		bool EntryName(const char* s, const char* k, std::string& out)
+		{
+			out = k;
+			auto const dot = out.rfind('.');
+			if (dot == std::string::npos) return true;
+			const char* const tail = out.c_str() + dot + 1;
+			bool const variant = SameWord(tail, kDifficulty[0]) || SameWord(tail, kDifficulty[1])
+				|| SameWord(tail, kDifficulty[2]);
+			if (!variant) return true;
+			if (!Suffix || !SameWord(tail, Suffix)) return false;
+			out.resize(dot);
+			return !INI->Exists(s, out.c_str());
+		}
+
+	private:
+		const char* Key(const char* s, const char* k)
+		{
+			if (!Suffix) return k;
+			std::snprintf(Variant, sizeof(Variant), "%s.%s", k, Suffix);
+			if (!INI->Exists(s, Variant)) return k;
+			char value[256] = { 0 };
+			INI->ReadString(s, Variant, "", value, sizeof(value));
+			Debug::Log("[DoctrineExt] %s AI: [%s] %s=%s (overrides %s=)\n", Suffix, s, Variant, value, k);
+			return Variant;
+		}
+
+		CCINIClass* INI;
+		const char* Suffix;
+		char Variant[160] = { 0 };
+	};
+
 	// Split a comma-separated INI value into trimmed, non-empty tokens.
 	std::vector<std::string> SplitList(const char* value)
 	{
@@ -82,19 +159,32 @@ namespace
 void DoctrineConfig::Reset()
 {
 	Instance = DoctrineConfig{};
+	for (auto& c : ByDifficulty)
+		c = DoctrineConfig{};
+	Active = &Instance;
 }
 
-void DoctrineConfig::EnsureParsed()
+DoctrineConfig const& DoctrineConfig::For(HouseClass* const pHouse)
 {
-	auto& cfg = Instance;
-	if (cfg.Parsed)
-		return;
+	if (!pHouse) return Instance;
+	auto const d = static_cast<unsigned>(pHouse->AIDifficulty);
+	return d < 3 && ByDifficulty[d].Parsed ? ByDifficulty[d] : Instance;
+}
 
-	auto const pINI = CCINIClass::INI_Rules;
-	if (!pINI)
-		return;
+DoctrineConfig::HouseScope::HouseScope(HouseClass* const pHouse) : Prev(Active)
+{
+	Active = &For(pHouse);
+}
 
-	cfg.Parsed = true;
+DoctrineConfig::HouseScope::~HouseScope()
+{
+	Active = Prev;
+}
+
+// One full read of the [Doctrine.*] tags into cfg, through a TagReader (the tags as written, or one
+// difficulty's view of them).
+static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
+{
 	char buf[1024] = { 0 };
 
 	// ─── [Doctrine.General] ─────────────────────────────────────────────
@@ -140,7 +230,7 @@ void DoctrineConfig::EnsureParsed()
 	pINI->ReadString("Doctrine.Reserve", "Build", "", buf, sizeof(buf));
 	cfg.ReserveBuild = SplitList(buf);
 	if (cfg.ReserveAmount > 0 || cfg.ReserveGrowth > 0)
-		Debug::Log("[DoctrineExt] [Doctrine.Reserve]: Amount=%d Growth=%d/%df Cooldown=%d Build=%s\n",
+		Echo("[DoctrineExt] [Doctrine.Reserve]: Amount=%d Growth=%d/%df Cooldown=%d Build=%s\n",
 			cfg.ReserveAmount, cfg.ReserveGrowth, cfg.ReserveGrowthWindow, cfg.ReserveCooldown, buf);
 	// [Doctrine.Budget] — PriorityBuildings[0..] + PriorityBuildings.Reserve[0..].
 	cfg.BudgetTiers.clear();
@@ -164,7 +254,7 @@ void DoctrineConfig::EnsureParsed()
 		&& pINI->ReadBool("Doctrine.Budget", "Enable", true);
 	cfg.BudgetInterval = pINI->ReadInteger("Doctrine.Budget", "Interval", cfg.BudgetInterval);
 	if (cfg.BudgetEnable)
-		Debug::Log("[DoctrineExt] [Doctrine.Budget]: %d priority tier(s), interval=%d.\n",
+		Echo("[DoctrineExt] [Doctrine.Budget]: %d priority tier(s), interval=%d.\n",
 			static_cast<int>(cfg.BudgetTiers.size()), cfg.BudgetInterval);
 
 	cfg.RushRatio = pINI->ReadDouble("Doctrine.General", "RushRatio", cfg.RushRatio);
@@ -265,7 +355,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CaptureEnemyOwned = pINI->ReadBool("Doctrine.Capture", "EnemyOwned", cfg.CaptureEnemyOwned);
 	cfg.CaptureHonorPrereq = pINI->ReadInteger("Doctrine.Capture", "HonorPrereq", cfg.CaptureHonorPrereq);
 	if (cfg.CaptureEnable)
-		Debug::Log("[DoctrineExt] [Doctrine.Capture]: Enable=1 Targets=%u (empty=any) Interval=%d "
+		Echo("[DoctrineExt] [Doctrine.Capture]: Enable=1 Targets=%u (empty=any) Interval=%d "
 			"MaxTeams=%d Radius=%d EngineerMax=%d EnemyOwned=%d HonorPrereq=%d\n",
 			static_cast<unsigned>(cfg.CaptureTargets.size()), cfg.CaptureInterval, cfg.CaptureMaxTeams,
 			cfg.CaptureRadius, cfg.CaptureEngineerMax, cfg.CaptureEnemyOwned, cfg.CaptureHonorPrereq);
@@ -356,7 +446,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.CounterEngBuildUrgent = pINI->ReadBool("Doctrine.CounterEngineer", "Build.Urgent", cfg.CounterEngBuildUrgent);
 	cfg.CounterEngBuildIgnorePause = pINI->ReadBool("Doctrine.CounterEngineer", "Build.IgnorePause", cfg.CounterEngBuildIgnorePause);
 	if (cfg.CounterEngEnable)
-		Debug::Log("[DoctrineExt] [Doctrine.CounterEngineer]: Enable=1 Units=%u (empty=auto) "
+		Echo("[DoctrineExt] [Doctrine.CounterEngineer]: Enable=1 Units=%u (empty=auto) "
 			"ThreatTypes=%u (empty=Engineer=yes)%s Interval=%d Radius=%d Max=%d Build=%d Build.Urgent=%d "
 			"Build.IgnorePause=%d Respond=%d RespondRadius=%d RespondMargin=%.2f RespondMax=%d "
 			"ReactionFrames=%d RetargetDefenses=%d DenySell=%d DenySell.Types=%u (empty=auto)%s "
@@ -394,7 +484,7 @@ void DoctrineConfig::EnsureParsed()
 	cfg.EngRushBuildUrgent = pINI->ReadBool("Doctrine.EngineerRush", "Build.Urgent", cfg.EngRushBuildUrgent);
 	cfg.EngRushHonorPrereq = pINI->ReadInteger("Doctrine.EngineerRush", "HonorPrereq", cfg.EngRushHonorPrereq);
 	if (cfg.EngRushEnable)
-		Debug::Log("[DoctrineExt] [Doctrine.EngineerRush]: Enable=1 Interval=%d Radius=%d Targets=%u "
+		Echo("[DoctrineExt] [Doctrine.EngineerRush]: Enable=1 Interval=%d Radius=%d Targets=%u "
 			"(empty=any) Exclude=%u Priority=%u Max=%d Escorts=%d Safety=%.2f MinCash=%d RetryDelay=%d "
 			"Build.Urgent=%d HonorPrereq=%d\n", cfg.EngRushInterval, cfg.EngRushRadius,
 			static_cast<unsigned>(cfg.EngRushTargets.size()), static_cast<unsigned>(cfg.EngRushExclude.size()),
@@ -402,7 +492,7 @@ void DoctrineConfig::EnsureParsed()
 			cfg.EngRushSafety, cfg.EngRushMinCash, cfg.EngRushRetryDelay, cfg.EngRushBuildUrgent,
 			cfg.EngRushHonorPrereq);
 	if (cfg.EconomyEnable)
-		Debug::Log("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
+		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "
 			"Pause(I/V/A/N/B/D/SW)=%d/%d/%d/%d/%d/%d/%d BreakCond=%u EmergencyRadius=%d HonorPrereq=%d\n",
 			cfg.EconomyInterval, cfg.EconomyRadius, static_cast<unsigned>(cfg.EconomyIncomeBuildings.size()),
@@ -416,26 +506,28 @@ void DoctrineConfig::EnsureParsed()
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
-	Debug::Log("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d LaneBucket=%d LaneSampleInterval=%d LaneRadius=%d LaneMinStrength=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
+	Echo("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d LaneBucket=%d LaneSampleInterval=%d LaneRadius=%d LaneMinStrength=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
 		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.InterceptStandoff, cfg.DefendPerimeter, cfg.BaseEdgeMargin, cfg.LaneBucket, cfg.LaneSampleInterval, cfg.LaneRadius, cfg.LaneMinStrength, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");
 	for (int i = 0; i < roleCount; ++i)
 	{
-		auto const pKey = pINI->GetKeyName("Doctrine.Arsenal", i);
-		if (!pKey || !*pKey)
+		auto const pRawKey = pINI->GetKeyName("Doctrine.Arsenal", i);
+		std::string keyName;
+		if (!pRawKey || !*pRawKey || !pINI->EntryName("Doctrine.Arsenal", pRawKey, keyName))
 			continue;
+		auto const pKey = keyName.c_str();
 		pINI->ReadString("Doctrine.Arsenal", pKey, "", buf, sizeof(buf));
 		DoctrineArsenalRole role;
 		role.Role = pKey;
 		role.Units = SplitList(buf);
 		if (role.Units.empty())
 		{
-			Debug::Log("[DoctrineExt] WARNING: arsenal role %s has no units, dropped.\n", pKey);
+			Echo("[DoctrineExt] WARNING: arsenal role %s has no units, dropped.\n", pKey);
 			continue;
 		}
-		Debug::Log("[DoctrineExt] arsenal %s (%u units): %s\n",
+		Echo("[DoctrineExt] arsenal %s (%u units): %s\n",
 			role.Role.c_str(), role.Units.size(), buf);
 		cfg.Arsenal.push_back(std::move(role));
 	}
@@ -444,10 +536,11 @@ void DoctrineConfig::EnsureParsed()
 	int const ruleCount = pINI->GetKeyCount("Doctrine.Rules");
 	for (int i = 0; i < ruleCount; ++i)
 	{
-		auto const pKey = pINI->GetKeyName("Doctrine.Rules", i);
-		if (!pKey)
+		auto const pRawKey = pINI->GetKeyName("Doctrine.Rules", i);
+		std::string keyName;
+		if (!pRawKey || !pINI->EntryName("Doctrine.Rules", pRawKey, keyName))
 			continue;
-		pINI->ReadString("Doctrine.Rules", pKey, "", buf, sizeof(buf));
+		pINI->ReadString("Doctrine.Rules", keyName.c_str(), "", buf, sizeof(buf));
 		if (!*buf)
 			continue;
 
@@ -456,7 +549,7 @@ void DoctrineConfig::EnsureParsed()
 		auto const section = rule.Name.c_str();
 		if (!pINI->GetSection(section))
 		{
-			Debug::Log("[DoctrineExt] WARNING: rule %s listed but section missing, dropped.\n", section);
+			Echo("[DoctrineExt] WARNING: rule %s listed but section missing, dropped.\n", section);
 			continue;
 		}
 
@@ -474,7 +567,7 @@ void DoctrineConfig::EnsureParsed()
 		rule.Period = pINI->ReadInteger(section, "Period", rule.Period);
 
 		if (!ParseWhen(rule))
-			Debug::Log("[DoctrineExt] WARNING: rule %s has unparseable When=%s, rule is inert.\n",
+			Echo("[DoctrineExt] WARNING: rule %s has unparseable When=%s, rule is inert.\n",
 				section, rule.WhenRaw.c_str());
 
 		bool roleKnown = false;
@@ -482,18 +575,47 @@ void DoctrineConfig::EnsureParsed()
 			if (role.Role == rule.Respond)
 				roleKnown = true;
 		if (!roleKnown)
-			Debug::Log("[DoctrineExt] WARNING: rule %s responds with unknown role %s.\n",
+			Echo("[DoctrineExt] WARNING: rule %s responds with unknown role %s.\n",
 				section, rule.Respond.c_str());
 
-		Debug::Log("[DoctrineExt] rule %s: When=%s (obs=%s op=%s val=%.2f) Respond=%s Scale=%.2f Mission=%s Target=%s Cooldown=%d Priority=%d Period=%d\n",
+		Echo("[DoctrineExt] rule %s: When=%s (obs=%s op=%s val=%.2f) Respond=%s Scale=%.2f Mission=%s Target=%s Cooldown=%d Priority=%d Period=%d\n",
 			rule.Name.c_str(), rule.WhenRaw.c_str(), rule.WhenObs.c_str(), rule.WhenOp.c_str(),
 			rule.WhenValue, rule.Respond.c_str(), rule.Scale, rule.Mission.c_str(),
 			rule.Target.c_str(), rule.Cooldown, rule.Priority, rule.Period);
 		cfg.Rules.push_back(std::move(rule));
 	}
 
-	Debug::Log("[DoctrineExt] doctrine loaded: %u roles, %u rules.\n",
+	Echo("[DoctrineExt] doctrine loaded: %u roles, %u rules.\n",
 		cfg.Arsenal.size(), cfg.Rules.size());
+}
+
+void DoctrineConfig::EnsureParsed()
+{
+	if (Instance.Parsed)
+		return;
+
+	auto const pRules = CCINIClass::INI_Rules;
+	if (!pRules)
+		return;
+
+	Instance.Parsed = true;
+	g_echo = true;
+	TagReader asWritten(pRules, nullptr);
+	Parse(Instance, &asWritten);
+
+	// One more set per AI difficulty: the same tags, each overridden by its "<Tag>.<Difficulty>=".
+	// Only the overrides are logged.
+	g_echo = false;
+	for (int d = 0; d < 3; ++d)
+	{
+		auto& c = ByDifficulty[d];
+		c = DoctrineConfig{};
+		c.Parsed = true;
+		TagReader variant(pRules, kDifficulty[d]);
+		Parse(c, &variant);
+	}
+	g_echo = true;
+	Active = &Instance;
 }
 
 // Scenario::ClearClasses — game-mode INIs merge into the rules INI per

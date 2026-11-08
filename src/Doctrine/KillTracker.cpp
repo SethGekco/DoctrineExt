@@ -43,7 +43,7 @@ KillTracker::Ace KillTracker::TopEnemyAce(HouseClass* pOwner)
 {
 	Ace best;
 	DWORD bestId = 0;
-	bool const mobileOnly = DoctrineConfig::Instance.AceMobileOnly;
+	bool const mobileOnly = DoctrineConfig::Get().AceMobileOnly;
 	for (auto const& [pUnit, stats] : g_kills)
 	{
 		if (!pUnit || IsStale(pUnit, stats)) continue;

@@ -174,9 +174,9 @@ namespace
 			// this modded stack (an Allied AI picked and built Flak Tracks),
 			// so the build path re-checks Owner= itself unless the modder
 			// opts out. Units the house physically owns are always usable.
-			bool const ownerOK = !DoctrineConfig::Instance.StrictOwnership
+			bool const ownerOK = !DoctrineConfig::Get().StrictOwnership
 				|| pHouse->InOwners(pType);
-			if (DoctrineConfig::Instance.DebugTicks)
+			if (DoctrineConfig::Get().DebugTicks)
 				Debug::Log("[DoctrineExt]   candidate %s for %s#%d: CanBuild=%d inOwners=%d owned=%d\n",
 					id.c_str(), pHouse->get_ID(), pHouse->ArrayIndex,
 					static_cast<int>(canBuild), ownerOK, owned);
@@ -290,7 +290,7 @@ namespace
 		int maxTL = (pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10)
 			? pHouse->TechLevel : 10;
 		if (tl > maxTL) return false;                      // e.g. TechLevel=11
-		if (DoctrineConfig::Instance.StrictOwnership && !pHouse->InOwners(pType))
+		if (DoctrineConfig::Get().StrictOwnership && !pHouse->InOwners(pType))
 			return false;
 		// Our own prereq check FIRST (when honoring) — CanBuild leaks the generic TECH
 		// prereq for AI houses, so don't trust it alone.
@@ -304,7 +304,7 @@ namespace
 	bool IsEligible(HouseClass* const pHouse, TechnoTypeClass* const pType)
 	{
 		if (!pType || !IsTeamable(pType)) return false;
-		bool const ownerOK = !DoctrineConfig::Instance.StrictOwnership
+		bool const ownerOK = !DoctrineConfig::Get().StrictOwnership
 			|| pHouse->InOwners(pType);
 		return (pHouse->CanBuild(pType, false, true) == CanBuildResult::Buildable
 			&& ownerOK) || CountOwned(pHouse, pType) > 0;
@@ -399,7 +399,7 @@ namespace
 			auto const pType = TechnoTypeClass::Find(id.c_str());
 			if (!pType || !IsEligible(pHouse, pType)) continue;
 			double const score = CounterScore(pType, pTarget);
-			if (DoctrineConfig::Instance.DebugTicks)
+			if (DoctrineConfig::Get().DebugTicks)
 				Debug::Log("[DoctrineExt]   counter %s vs %s: score=%.2f\n",
 					id.c_str(), pTarget->GetTechnoType() ? pTarget->GetTechnoType()->ID : "?",
 					score);
@@ -553,7 +553,7 @@ namespace
 
 	int RoleWeight(DecapRole const r)
 	{
-		auto const& c = DoctrineConfig::Instance;
+		auto const& c = DoctrineConfig::Get();
 		switch (r)
 		{
 		case DecapRole::ConYard:  return c.DecapConYard;
@@ -583,8 +583,8 @@ namespace
 			count[static_cast<int>(RoleOf(pB->Type))]++;
 		}
 
-		int const killThreshold = DoctrineConfig::Instance.DeathZoneMinStrength > 0
-			? DoctrineConfig::Instance.DeathZoneMinStrength : 48;
+		int const killThreshold = DoctrineConfig::Get().DeathZoneMinStrength > 0
+			? DoctrineConfig::Get().DeathZoneMinStrength : 48;
 		BuildingClass* best = nullptr;
 		double bestScore = -1.0;
 		for (int i = 0; i < BuildingClass::Array.Count; ++i)
@@ -620,7 +620,7 @@ namespace
 	bool IsExcludedChaser(TechnoTypeClass* const pType)
 	{
 		if (!pType) return true;
-		for (auto const& ex : DoctrineConfig::Instance.CrateChaseExclude)
+		for (auto const& ex : DoctrineConfig::Get().CrateChaseExclude)
 			if (ex == pType->ID) return true;
 		return false;
 	}
@@ -645,7 +645,7 @@ namespace
 		auto const pType = pTechno->GetTechnoType();
 		if (!pType) return false;
 
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		std::string const id = pType->ID;
 		// Explicit exclude always wins; explicit include forces eligibility.
 		for (auto const& ex : cfg.FloodExclude)
@@ -713,8 +713,8 @@ namespace
 	bool AcquireSlot(PoolSlot& out, HouseClass* const pHouse, int const frame,
 		int const ttl, int const priority)
 	{
-		int const perHouse = DoctrineConfig::Instance.TeamsPerHouse > 0
-			? DoctrineConfig::Instance.TeamsPerHouse : 1;
+		int const perHouse = DoctrineConfig::Get().TeamsPerHouse > 0
+			? DoctrineConfig::Get().TeamsPerHouse : 1;
 		int const hIdx = pHouse->ArrayIndex;
 
 		char id[0x18];
@@ -766,7 +766,7 @@ namespace
 bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsValue,
 	TechnoClass* pTarget)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 
 	// Intercept behaves like HuntTarget (aggressive, target-bound) — the
 	// difference is which observation feeds it: HuntAce chases the enemy's
@@ -826,13 +826,13 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	// better tool / more mass. Defensive missions (Intercept/DefendBase) still
 	// respond regardless.
 	if (pType && rule.Mission == "HuntTarget"
-		&& counterScore < DoctrineConfig::Instance.MinCounterScore)
+		&& counterScore < DoctrineConfig::Get().MinCounterScore)
 	{
 		if (cfg.DebugTicks)
 			Debug::Log("[DoctrineExt] %s declines hunt for %s#%d: best counter %s "
 				"scores %.2f < MinCounterScore %.2f (no viable counter).\n",
 				rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex, pType->ID,
-				counterScore, DoctrineConfig::Instance.MinCounterScore);
+				counterScore, DoctrineConfig::Get().MinCounterScore);
 		return false;
 	}
 
@@ -1029,8 +1029,8 @@ bool Teams::HasActiveIntercept(HouseClass* pHouse)
 
 void Teams::LogTeamFill(HouseClass* pHouse)
 {
-	int const perHouse = DoctrineConfig::Instance.TeamsPerHouse > 0
-		? DoctrineConfig::Instance.TeamsPerHouse : 1;
+	int const perHouse = DoctrineConfig::Get().TeamsPerHouse > 0
+		? DoctrineConfig::Get().TeamsPerHouse : 1;
 	int const hIdx = pHouse->ArrayIndex;
 	char id[0x18];
 	for (int i = 0; i < perHouse; ++i)
@@ -1088,7 +1088,7 @@ void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 		bearing = std::atan2(dy, dx); // toward the current raider
 	}
 
-	int const standoffCells = DoctrineConfig::Instance.InterceptStandoff;
+	int const standoffCells = DoctrineConfig::Get().InterceptStandoff;
 	double const standoff = standoffCells * 256.0; // leptons per cell
 	// Don't screen past the raider when we're aiming at it; the lane path uses
 	// the full standoff (the raid may not have reached the corridor yet).
@@ -1110,7 +1110,7 @@ void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 
 void Teams::SteerDefenders(HouseClass* pHouse)
 {
-	if (!DoctrineConfig::Instance.DefendPerimeter) return;
+	if (!DoctrineConfig::Get().DefendPerimeter) return;
 	int const hIdx = pHouse->ArrayIndex;
 
 	// Collect this house's live defend slots.
@@ -1135,7 +1135,7 @@ void Teams::SteerDefenders(HouseClass* pHouse)
 			+ double(c.Y - center.Y) * (c.Y - center.Y));
 		if (d > radius) radius = d;
 	}
-	radius += DoctrineConfig::Instance.BaseEdgeMargin * 256.0;
+	radius += DoctrineConfig::Get().BaseEdgeMargin * 256.0;
 	if (radius < 5 * 256.0) radius = 5 * 256.0; // floor for tiny/new bases
 
 	// Face the fan toward where the enemy ACTUALLY comes from: the hottest
@@ -1166,7 +1166,7 @@ void Teams::SteerDefenders(HouseClass* pHouse)
 	// Proof-of-orientation trace (throttled, DebugTicks): the bearing the
 	// defenders are actually fanning toward and whether it came from the
 	// learned lane or the geometric fallback.
-	if (DoctrineConfig::Instance.DebugTicks)
+	if (DoctrineConfig::Get().DebugTicks)
 	{
 		static std::map<int, int> lastLog;
 		int const now = Unsorted::CurrentFrame;
@@ -1269,8 +1269,8 @@ void Teams::SteerHunters(HouseClass* pHouse, TechnoClass* pTarget)
 	// weak side is opposite that mass.
 	double sx = 0.0, sy = 0.0;
 	int supporters = 0;
-	int const scanCells = DoctrineConfig::Instance.SupportScanRadius > 0
-		? DoctrineConfig::Instance.SupportScanRadius : 8;
+	int const scanCells = DoctrineConfig::Get().SupportScanRadius > 0
+		? DoctrineConfig::Get().SupportScanRadius : 8;
 	double const scanLep = scanCells * 256.0;
 	for (int i = 0; i < TechnoClass::Array.Count; ++i)
 	{
@@ -1302,8 +1302,8 @@ void Teams::SteerHunters(HouseClass* pHouse, TechnoClass* pTarget)
 		wdx = bx / bl; wdy = by / bl;
 	}
 
-	int const standoffCells = DoctrineConfig::Instance.HuntStandoff > 0
-		? DoctrineConfig::Instance.HuntStandoff : 5;
+	int const standoffCells = DoctrineConfig::Get().HuntStandoff > 0
+		? DoctrineConfig::Get().HuntStandoff : 5;
 	double const standoff = standoffCells * 256.0;
 
 	// Try the weak bearing; if the approach point sits in a hot death-zone
@@ -1322,7 +1322,7 @@ void Teams::SteerHunters(HouseClass* pHouse, TechnoClass* pTarget)
 		if (!pC) continue;
 		CellStruct cs; cs.X = static_cast<short>(pt.X / 256); cs.Y = static_cast<short>(pt.Y / 256);
 		if (DeathZones::ScoreAtCell(pHouse, cs.X, cs.Y)
-			< DoctrineConfig::Instance.DeathZoneMinStrength)
+			< DoctrineConfig::Get().DeathZoneMinStrength)
 		{
 			pCell = pC; // clear of the killbox
 			break;
@@ -1447,8 +1447,8 @@ namespace
 	bool CratePathDangerous(HouseClass* const pHouse, CoordStruct const& from, CellClass* const pCell)
 	{
 		auto const to = pCell->GetCellCoords();
-		int const thresh = DoctrineConfig::Instance.DeathZoneMinStrength > 0
-			? DoctrineConfig::Instance.DeathZoneMinStrength : 48;
+		int const thresh = DoctrineConfig::Get().DeathZoneMinStrength > 0
+			? DoctrineConfig::Get().DeathZoneMinStrength : 48;
 		for (int s = 1; s <= 5; ++s)
 		{
 			double const t = s / 6.0;
@@ -1524,7 +1524,7 @@ namespace
 	// fallback — the caller LiberateMembers it before use. Returns null if none.
 	FootClass* PickChaser(HouseClass* const pHouse)
 	{
-		auto const& chasers = DoctrineConfig::Instance.CrateChasers;
+		auto const& chasers = DoctrineConfig::Get().CrateChasers;
 		FootClass* bySpeedFree = nullptr; int bestSpeedFree = -1;
 		FootClass* byListFree = nullptr;  int bestListRankFree = 1 << 30;
 		FootClass* bySpeedTeam = nullptr; int bestSpeedTeam = -1;
@@ -1719,7 +1719,7 @@ namespace
 
 void Teams::GarrisonDoctrine(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.GarrisonInfantry) return; // opt-in
 
 	int const now = Unsorted::CurrentFrame;
@@ -1877,7 +1877,7 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 
 void Teams::CrateDoctrine(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.CrateChase && !cfg.CrateFiresaleMCV) return; // opt-in
 
 	int const now = Unsorted::CurrentFrame;
@@ -1981,8 +1981,8 @@ void Teams::SteerCrate(HouseClass* pHouse)
 	// Track the nearest crate to the grabber (a bit wider than the base scan so
 	// it keeps homing as it travels); when the crate's gone (collected or taken)
 	// disband so the unit returns to the AI.
-	int const r = (DoctrineConfig::Instance.CrateScanRadius > 0
-		? DoctrineConfig::Instance.CrateScanRadius : 30) * 2;
+	int const r = (DoctrineConfig::Get().CrateScanRadius > 0
+		? DoctrineConfig::Get().CrateScanRadius : 30) * 2;
 	auto const pCrate = NearestCrate(pTeam->FirstUnit->GetCoords(), r);
 	if (!pCrate)
 	{
@@ -2010,7 +2010,7 @@ namespace
 	{
 		outTier = 0;
 		TechnoTypeClass* best = nullptr;
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		int const giveUp = cfg.CrateCatcherGiveUp > 0 ? cfg.CrateCatcherGiveUp : 6;
 		auto const& fails = g_catcherFail[pHouse->ArrayIndex];
 		for (auto const& e : cfg.CrateChasers)
@@ -2037,7 +2037,7 @@ namespace
 
 	int DesiredSquadSize()
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		auto const r = RulesClass::Instance;
 		if (!r || !r->Crates) return 0;                 // crates disabled globally
 		int const capCfg = cfg.CrateSquadMax > 0 ? cfg.CrateSquadMax : 6;
@@ -2237,7 +2237,7 @@ namespace
 	FootClass* PickSquadRecruit(HouseClass* const pHouse, TeamClass* const pExclude,
 		bool const water = false)
 	{
-		auto const& chasers = DoctrineConfig::Instance.CrateChasers;
+		auto const& chasers = DoctrineConfig::Get().CrateChasers;
 		FootClass* bySpeedFree = nullptr; int bestSpeedFree = -1;
 		FootClass* byListFree = nullptr;  int bestListFree = 1 << 30;
 		FootClass* bySpeedTeam = nullptr; int bestSpeedTeam = -1;
@@ -2281,7 +2281,7 @@ namespace
 
 void Teams::CrateSquadDoctrine(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.CrateSquad) return; // opt-in
 
 	int const now = Unsorted::CurrentFrame;
@@ -2627,7 +2627,7 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 		if (d <= 1.5 * 256.0)
 		{
 			bool const got = pCell->CollectCrate(pF);
-			if (got && DoctrineConfig::Instance.DebugTicks)
+			if (got && DoctrineConfig::Get().DebugTicks)
 				Debug::Log("[DoctrineExt] crate GRABBED: house=%s#%d by %s.\n",
 					pHouse->get_ID(), pHouse->ArrayIndex,
 					pF->GetTechnoType() ? pF->GetTechnoType()->get_ID() : "?");
@@ -2653,7 +2653,7 @@ namespace
 
 void Teams::CrateWaterSquad(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.CrateSquad) return; // shares the squad toggle
 	auto const r = RulesClass::Instance;
 	if (!r || !r->Crates) return;
@@ -2791,7 +2791,7 @@ void Teams::SteerCrateWaterSquad(HouseClass* pHouse)
 		double const d = std::sqrt(dx * dx + dy * dy);
 		if (d <= 1.5 * 256.0)
 		{
-			if (pCell->CollectCrate(pF) && DoctrineConfig::Instance.DebugTicks)
+			if (pCell->CollectCrate(pF) && DoctrineConfig::Get().DebugTicks)
 				Debug::Log("[DoctrineExt] water crate GRABBED: house=%s#%d by %s.\n",
 					pHouse->get_ID(), pHouse->ArrayIndex,
 					pF->GetTechnoType() ? pF->GetTechnoType()->get_ID() : "?");
@@ -2836,7 +2836,7 @@ namespace
 
 void Teams::CommanderTakeover(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (cfg.CommanderIdleTime <= 0) return; // opt-in
 
 	int const now = Unsorted::CurrentFrame;
@@ -2981,7 +2981,7 @@ namespace
 
 void Teams::AirDefense(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.AirDefenseEnable) return; // opt-in
 
 	EnsureWarZoneLink(); // optional persistent air-death memory (AA P2)
@@ -3263,7 +3263,7 @@ namespace
 
 void Teams::BaseExpansion(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.ExpansionEnable) return; // opt-in
 
 	int const now = Unsorted::CurrentFrame;
@@ -3335,7 +3335,7 @@ void Teams::BaseExpansion(HouseClass* pHouse)
 
 void Teams::NavalDoctrine(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.NavalEnable) return; // opt-in
 
 	int const now = Unsorted::CurrentFrame;
@@ -3450,7 +3450,7 @@ int Teams::CountIdleArmed(HouseClass* pHouse)
 
 void Teams::FloodResponse(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (cfg.FloodThreshold <= 0) return; // opt-in (off by default)
 
 	int const now = Unsorted::CurrentFrame;
@@ -3489,7 +3489,7 @@ void Teams::FloodResponse(HouseClass* pHouse)
 
 void Teams::ReserveSpend(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (cfg.ReserveBuild.empty()) return;
 	if (cfg.ReserveAmount <= 0 && cfg.ReserveGrowth <= 0) return; // opt-in
 
@@ -3552,7 +3552,7 @@ void Teams::ReserveSpend(HouseClass* pHouse)
 
 void Teams::RushCheck(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (cfg.RushRatio <= 0.0) return; // opt-in
 
 	int const now = Unsorted::CurrentFrame;
@@ -3665,7 +3665,7 @@ static void BudgetRelease(HouseClass* const pHouse)
 	for (auto const pFact : FactoryClass::Array)
 		if (pFact && pFact->Owner == pHouse) pFact->Unsuspend(true);
 	it->second = false;
-	if (DoctrineConfig::Instance.DebugTicks)
+	if (DoctrineConfig::Get().DebugTicks)
 		Debug::Log("[DoctrineExt] budget: house=%s#%d lockdown released.\n",
 			pHouse->get_ID(), hIdx);
 }
@@ -3677,7 +3677,7 @@ static void BudgetRelease(HouseClass* const pHouse)
 // trigger), we veto it, so the economy the budget is scaling isn't torn down under it.
 static void BudgetProtectEssentials(HouseClass* const pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	for (auto const pBld : pHouse->Buildings)
 	{
 		if (!pBld || !pBld->Type) continue;
@@ -3704,7 +3704,7 @@ static void BudgetProtectEssentials(HouseClass* const pHouse)
 // and the ConYard keep working throughout, so defenses/formations still go up.
 void Teams::ForcedBudget(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.BudgetEnable || cfg.BudgetTiers.empty()) return;
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral() || pHouse->IsControlledByHuman())
 		return;                                           // AI houses only
@@ -3806,7 +3806,7 @@ namespace
 	bool WantsCapture(BuildingTypeClass* const pBt)
 	{
 		if (!pBt || !pBt->Capturable) return false;
-		auto const& list = DoctrineConfig::Instance.CaptureTargets;
+		auto const& list = DoctrineConfig::Get().CaptureTargets;
 		if (list.empty()) return true;
 		for (auto const& id : list)
 			if (id == pBt->ID) return true;
@@ -3817,7 +3817,7 @@ namespace
 	// own/allied owners, (optionally) enemy-owned, out-of-range, and blacklisted ones.
 	std::vector<std::pair<BuildingClass*, double>> FindCaptureTargets(HouseClass* const pHouse)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		int const now = Unsorted::CurrentFrame;
 		int const hIdx = pHouse->ArrayIndex;
 		auto const base = CellClass::Cell2Coord(pHouse->GetBaseCenter());
@@ -3867,7 +3867,7 @@ namespace
 
 void Teams::CaptureDoctrine(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.CaptureEnable) return;                                       // opt-in
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
 		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
@@ -3970,7 +3970,7 @@ void Teams::CaptureDoctrine(HouseClass* pHouse)
 
 void Teams::SteerCapture(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.CaptureEnable) return;
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
 		|| pHouse->IsControlledByHuman()) return;
@@ -4058,7 +4058,7 @@ namespace
 	// Engineer=yes (IsLiveEngineer) — only those can capture.
 	bool IsThreatType(TechnoClass* const pT)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		if (cfg.CounterEngThreatNone) return false;
 		if (cfg.CounterEngThreatTypes.empty()) return IsLiveEngineer(pT);
 		if (!pT || pT->InLimbo || pT->Health <= 0) return false;
@@ -4113,7 +4113,7 @@ namespace
 	std::vector<BuildingClass*> EngineerAnchors(HouseClass* const pHouse)
 	{
 		std::vector<BuildingClass*> out;
-		bool const contest = DoctrineConfig::Instance.CaptureEnable;
+		bool const contest = DoctrineConfig::Get().CaptureEnable;
 		for (int i = 0; i < BuildingClass::Array.Count; ++i)
 		{
 			auto const pB = BuildingClass::Array.GetItem(i);
@@ -4131,7 +4131,7 @@ namespace
 	// already at the door) — one idling by our wall or walking past is left alone.
 	std::vector<EngThreat> FindEngineerThreats(HouseClass* const pHouse)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		std::vector<EngThreat> out;
 		auto const anchors = EngineerAnchors(pHouse);
 		if (anchors.empty()) return out;
@@ -4218,7 +4218,7 @@ namespace
 		double const range = BestRangeVs(pType, false);
 		auto const rc = pR->GetCoords();
 		double const gap = std::min(Dist2D(rc, t.Eng->GetCoords()), DistToFootprint(rc, t.Goal)) - range;
-		double const react = already ? 0.0 : static_cast<double>(DoctrineConfig::Instance.CounterEngReaction);
+		double const react = already ? 0.0 : static_cast<double>(DoctrineConfig::Get().CounterEngReaction);
 		double const window = t.Eta - (std::max(0.0, gap) / StepSpeed(pR) + react);
 		return window > 0.0 ? dps * window : 0.0;
 	}
@@ -4242,7 +4242,7 @@ namespace
 	bool CanDenySell(BuildingClass* const pB, HouseClass* const pHouse)
 	{
 		return pB->Owner == pHouse && !pB->Type->Unsellable
-			&& !ListHas(DoctrineConfig::Instance.CounterEngDenySellExclude, pB->Type->ID)
+			&& !ListHas(DoctrineConfig::Get().CounterEngDenySellExclude, pB->Type->ID)
 			&& pB->GetCurrentMission() != Mission::Selling;
 	}
 
@@ -4252,7 +4252,7 @@ namespace
 	// doesn't cost the house its production.
 	bool WorthDenying(BuildingClass* const pB, HouseClass* const pHouse)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		if (cfg.CounterEngDenySellNone) return false;
 		auto const pBt = pB->Type;
 		if (!cfg.CounterEngDenySellTypes.empty()) return ListHas(cfg.CounterEngDenySellTypes, pBt->ID);
@@ -4276,7 +4276,7 @@ namespace
 	// superweapon, defense, wall or armed building, and not a power plant the base can't spare.
 	bool Sacrificable(BuildingClass* const pB, HouseClass* const pHouse, BuildingClass* const pGoal)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		if (cfg.CounterEngSacrificeNone || pB == pGoal) return false;
 		if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0 || pB->Owner != pHouse) return false;
 		auto const pBt = pB->Type;
@@ -4322,7 +4322,7 @@ namespace
 	double SacrificeContribution(BuildingClass* const pB, EngThreat const& t, HouseClass* const pHouse,
 		int& count, double& window)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		count = pB->GetCrewCount();
 		window = 0.0;
 		auto const pCrew = CrewTypeOf(pHouse);
@@ -4396,7 +4396,7 @@ namespace
 	// win on speed). Honors the modder list (Units) if set; else any armed infantry. Never an engineer.
 	TechnoTypeClass* BestAntiEngineer(HouseClass* const pHouse, bool const honorPrereq)
 	{
-		auto const& list = DoctrineConfig::Instance.CounterEngUnits;
+		auto const& list = DoctrineConfig::Get().CounterEngUnits;
 		TechnoTypeClass* best = nullptr; int bestSpeed = -1;
 		for (auto const pIt : InfantryTypeClass::Array)
 		{
@@ -4421,7 +4421,7 @@ namespace
 
 void Teams::CounterEngineers(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.CounterEngEnable) return;                                    // opt-in
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
 		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
@@ -4733,14 +4733,14 @@ namespace
 
 	bool WantsRush(BuildingTypeClass* const pBt)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		if (!pBt || !pBt->Capturable || ListHas(cfg.EngRushExclude, pBt->ID)) return false;
 		return cfg.EngRushTargets.empty() || ListHas(cfg.EngRushTargets, pBt->ID);
 	}
 
 	int RushRank(BuildingTypeClass* const pBt)
 	{
-		auto const& list = DoctrineConfig::Instance.EngRushPriority;
+		auto const& list = DoctrineConfig::Get().EngRushPriority;
 		for (size_t i = 0; i < list.size(); ++i)
 			if (list[i] == pBt->ID) return static_cast<int>(i);
 		return INT_MAX;
@@ -4799,7 +4799,7 @@ namespace
 
 void Teams::EngineerRush(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.EngRushEnable) return;                                       // opt-in
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
 		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
@@ -4971,7 +4971,7 @@ void Teams::EngineerRush(HouseClass* pHouse)
 
 void Teams::SteerEngineerRush(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.EngRushEnable) return;
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
 		|| pHouse->IsControlledByHuman()) return;
@@ -5081,7 +5081,7 @@ namespace
 	// miner (dead harvester / slave-miner moved off) isn't mistaken for income (Rex's SMIN point).
 	bool OwnsMiner(HouseClass* const pHouse)
 	{
-		auto const& list = DoctrineConfig::Instance.EconomyMinerUnits;
+		auto const& list = DoctrineConfig::Get().EconomyMinerUnits;
 		for (int i = 0; i < TechnoClass::Array.Count; ++i)
 		{
 			auto const pT = TechnoClass::Array.GetItem(i);
@@ -5101,7 +5101,7 @@ namespace
 	int IncomeKindOf(BuildingTypeClass* const pBt)
 	{
 		if (!pBt) return 0;
-		auto const& list = DoctrineConfig::Instance.EconomyIncomeBuildings;
+		auto const& list = DoctrineConfig::Get().EconomyIncomeBuildings;
 		bool const passive = pBt->ProduceCashAmount > 0;
 		if (!list.empty())
 			return InIdList(pBt->ID, list) ? (passive ? 2 : 1) : 0;
@@ -5122,7 +5122,7 @@ namespace
 			if (k == 1) ownsRefinery = true;
 		}
 		if (!ownsRefinery) return false;
-		if (!DoctrineConfig::Instance.EconomyIncomeRequiresMiner) return true;
+		if (!DoctrineConfig::Get().EconomyIncomeRequiresMiner) return true;
 		return OwnsMiner(pHouse);                             // refinery needs a miner to earn
 	}
 
@@ -5168,7 +5168,7 @@ namespace
 	BuildingTypeClass* BestEconomyBuilding(HouseClass* const pHouse, EcoKind const kind,
 		bool const honorPrereq)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		std::vector<std::string> const* pList =
 			kind == EcoKind::Refinery ? &cfg.EconomyRefineryBuild
 			: kind == EcoKind::Barracks ? &cfg.EconomyBarracksBuild : nullptr;
@@ -5197,7 +5197,7 @@ namespace
 	// Owns a barracks (configurable; empty = Factory==InfantryType)?
 	bool OwnsBarracks(HouseClass* const pHouse)
 	{
-		auto const& list = DoctrineConfig::Instance.EconomyBarracksBuild;
+		auto const& list = DoctrineConfig::Get().EconomyBarracksBuild;
 		for (auto const pBld : pHouse->Buildings)
 		{
 			if (!pBld || !pBld->Type || pBld->InLimbo || pBld->Health <= 0) continue;
@@ -5251,7 +5251,7 @@ namespace
 	// always build its economy regardless of pause config.
 	DoctrineConfig::EconomyPauseCat const* EcoCatFor(TechnoClass* const pObj)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		auto const pType = pObj->GetTechnoType();
 		if (!pType) return nullptr;
 		if (pType->ResourceGatherer) return nullptr;          // miners always build
@@ -5281,7 +5281,7 @@ namespace
 	bool EconomyApplyPauses(HouseClass* const pHouse, int const cash, bool const hasIncome,
 		bool const emergency)
 	{
-		auto const& cfg = DoctrineConfig::Instance;
+		auto const& cfg = DoctrineConfig::Get();
 		bool const breakCond = cfg.EconomyBreakConditionNeutral.empty()
 			|| NeutralCapturableNear(pHouse, cfg.EconomyBreakConditionNeutral, cfg.EconomyRadius);
 		bool anyPaused = false;
@@ -5323,7 +5323,7 @@ namespace
 
 void Teams::EconomyOpening(HouseClass* pHouse)
 {
-	auto const& cfg = DoctrineConfig::Instance;
+	auto const& cfg = DoctrineConfig::Get();
 	if (!cfg.EconomyEnable) return;                                       // opt-in
 	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral()
 		|| pHouse->IsControlledByHuman()) return;                         // AI houses only
@@ -5432,10 +5432,11 @@ void Teams::EconomyOpening(HouseClass* pHouse)
 
 bool Teams::ShouldBlockSell(BuildingClass* pBld)
 {
-	auto const& cfg = DoctrineConfig::Instance;
-	if (!cfg.EconomyEnable || !cfg.EconomyPreventSelling) return false;
 	if (g_denySelling) return false;                      // our own capture-denial sale (§10l)
 	if (!pBld || !pBld->Type) return false;
+	DoctrineConfig::HouseScope const scope(pBld->Owner);  // called from the Sell hook, outside any tick
+	auto const& cfg = DoctrineConfig::Get();
+	if (!cfg.EconomyEnable || !cfg.EconomyPreventSelling) return false;
 	auto const pH = pBld->Owner;
 	if (!pH || pH->Defeated || pH->IsNeutral() || pH->IsControlledByHuman())
 		return false;                                     // AI houses only; never the human player

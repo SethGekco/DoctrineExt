@@ -60,6 +60,8 @@ public:
 	int MaxTeamCost = 10000; // hard clamp on any procedural team's cost
 	bool DebugTicks = false; // log every rule evaluation (verbose)
 	int SteerReissue = 90;   // frames before a steered unit still on our move order is sent it again
+	bool SquadEngineControl = false; // let the engine's team update run on DoctrineExt's squads too (it
+	                                 // regroups them on the rally cell every frame; off = suspended teams)
 	bool DebugOrders = false; // log AI units whose orders bounce between DoctrineExt steps and the engine
 	                          // ("orders churn:", OrderAudit)
 	int TeamTTL = 3600;      // frames before a stuck doctrine team is disbanded

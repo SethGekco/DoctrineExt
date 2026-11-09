@@ -1597,6 +1597,23 @@ namespace
 		return n;
 	}
 
+	// Keep a hand-steered squad's team out of the engine's team update (TeamClass::AI 0x6E9140). It
+	// regroups members on the team's rally cell every frame, gathering or on the guard step (0x6EBAD0 /
+	// 0x6EB870: Guard and no destination near it, Move to it when away), and deletes the team once the
+	// guard step runs out. That overwrote our orders every frame (11-08 order-churn audit; rush engineers
+	// near the cell lost their queued Capture). A suspended team returns at the top of it. Membership
+	// stays, so the loose-unit AI still leaves members alone; we recruit by hand, and house production
+	// (0x4FEC20) doesn't check IsSuspended. [Doctrine.General] SquadEngineControl=yes = the old way.
+	TeamClass* HoldForSteering(TeamClass* const pTeam)
+	{
+		if (pTeam && !DoctrineConfig::Get().SquadEngineControl)
+		{
+			pTeam->IsSuspended = true;
+			pTeam->SuspendTimer.Start(0x3FFFFFFF);
+		}
+		return pTeam;
+	}
+
 	// The house's dedicated crate-grab team (ID "DCRG<house>*"), separate from
 	// the combat slot pool. A loose Move order gets countermanded by the base
 	// AI's own unit handling every frame; a TEAM member is driven by the team,
@@ -1647,8 +1664,8 @@ namespace
 		pTT->Droppod = false;
 		pTT->OnTransOnly = false;
 
-		auto const pTeam = pTT->cntInstances > 0 ? pTT->FindFirstInstance()
-			: pTT->CreateTeam(pHouse);
+		auto const pTeam = HoldForSteering(pTT->cntInstances > 0 ? pTT->FindFirstInstance()
+			: pTT->CreateTeam(pHouse));
 		if (!pTeam) return nullptr;
 		// Recruit the grabber only if the team is empty (keep it to one unit).
 		if (!pTeam->FirstUnit && pChaser && !pChaser->Team)
@@ -2123,7 +2140,7 @@ namespace
 		pTT->Droppod = false;
 		pTT->OnTransOnly = false;
 
-		return pTT->cntInstances > 0 ? pTT->FindFirstInstance() : pTT->CreateTeam(pHouse);
+		return HoldForSteering(pTT->cntInstances > 0 ? pTT->FindFirstInstance() : pTT->CreateTeam(pHouse));
 	}
 
 	// Priority for the DLL's hand-managed squads (capture, counter-engineer, rush). The engine's
@@ -2190,14 +2207,14 @@ namespace
 		return false;
 	}
 
-	// Send pF to pGoal, unless it's on our order to pGoal already (still moving) and [Doctrine.General]
-	// SteerReissue frames haven't passed since we sent it.
+	// Send pF to pGoal, unless we sent it to pGoal less than [Doctrine.General] SteerReissue frames ago.
+	// Whatever mission it's on: when something took the order back, re-sending every tick only made the
+	// two orders alternate (run263: p90 20 sends per 300f while the squad team's guard step held it).
 	void SteerMove(FootClass* const pF, AbstractClass* const pGoal)
 	{
 		int const now = Unsorted::CurrentFrame;
 		auto& o = g_steerOrders[pF->UniqueID];
-		bool const moving = pF->GetCurrentMission() == Mission::Move || pF->QueuedMission == Mission::Move;
-		if (o.first == pGoal && moving && now - o.second < DoctrineConfig::Get().SteerReissue) return;
+		if (o.first == pGoal && now - o.second < DoctrineConfig::Get().SteerReissue) return;
 		pF->SetDestination(pGoal, true);
 		pF->QueueMission(Mission::Move, false);
 		o = { pGoal, now };
@@ -6050,7 +6067,8 @@ void Teams::SteerEngineerRush(HouseClass* pHouse)
 			}
 			continue;
 		}
-		bool const reissue = pF->Target != t->second || pF->GetCurrentMission() != Mission::Capture;
+		bool const reissue = pF->Target != t->second
+			|| (pF->GetCurrentMission() != Mission::Capture && pF->QueuedMission != Mission::Capture);
 		if (cfg.DebugTicks)
 		{
 			// At the door: what it's doing each second it stays there, and whether we just re-ordered it.
@@ -6121,7 +6139,8 @@ void Teams::SteerEngineerRush(HouseClass* pHouse)
 		auto const pX = danger[e];
 		if (pX && EffDPSVs(pF->GetTechnoType(), static_cast<int>(pX->GetTechnoType()->Armor), false) > 0.0)
 		{
-			if (pF->Target != pX || pF->GetCurrentMission() != Mission::Attack)
+			if (pF->Target != pX
+				|| (pF->GetCurrentMission() != Mission::Attack && pF->QueuedMission != Mission::Attack))
 			{
 				pF->SetTarget(pX);
 				pF->QueueMission(Mission::Attack, false);

@@ -212,6 +212,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.DebugTicks = pINI->ReadBool("Doctrine.General", "DebugTicks", cfg.DebugTicks);
 	cfg.DebugOrders = pINI->ReadBool("Doctrine.General", "DebugOrders", cfg.DebugOrders);
 	cfg.SteerReissue = pINI->ReadInteger("Doctrine.General", "SteerReissue", cfg.SteerReissue);
+	cfg.SquadEngineControl = pINI->ReadBool("Doctrine.General", "SquadEngineControl", cfg.SquadEngineControl);
 	cfg.TeamTTL = pINI->ReadInteger("Doctrine.General", "TeamTTL", cfg.TeamTTL);
 	cfg.TeamsPerHouse = pINI->ReadInteger("Doctrine.General", "TeamsPerHouse", cfg.TeamsPerHouse);
 	cfg.StrictOwnership = pINI->ReadBool("Doctrine.General", "StrictOwnership", cfg.StrictOwnership);
@@ -684,9 +685,11 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
 	Echo("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d DebugOrders=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d LaneBucket=%d LaneSampleInterval=%d LaneRadius=%d LaneMinStrength=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
 		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.DebugOrders, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.InterceptStandoff, cfg.DefendPerimeter, cfg.BaseEdgeMargin, cfg.LaneBucket, cfg.LaneSampleInterval, cfg.LaneRadius, cfg.LaneMinStrength, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
-	Echo("[DoctrineExt] steering: SteerReissue=%d [Doctrine.AirDefense] ScreenLeash=%d [Doctrine.CounterEngineer] "
-		"Picket.Leash=%d [Doctrine.EngineerRush] Escorts.Leash=%d [Doctrine.Garrison] RedivertDelay=%d\n",
-		cfg.SteerReissue, cfg.AirScreenLeash, cfg.CounterEngPicketLeash, cfg.EngRushEscortsLeash, cfg.GarrisonRedivertDelay);
+	Echo("[DoctrineExt] steering: SteerReissue=%d SquadEngineControl=%d [Doctrine.AirDefense] ScreenLeash=%d "
+		"[Doctrine.CounterEngineer] Picket.Leash=%d [Doctrine.EngineerRush] Escorts.Leash=%d [Doctrine.Garrison] "
+		"RedivertDelay=%d\n",
+		cfg.SteerReissue, cfg.SquadEngineControl, cfg.AirScreenLeash, cfg.CounterEngPicketLeash, cfg.EngRushEscortsLeash,
+		cfg.GarrisonRedivertDelay);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");

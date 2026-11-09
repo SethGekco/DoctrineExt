@@ -5409,29 +5409,33 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 	bool income = false;
 	for (auto const pB : pHouse->Buildings)
 		if (pB && pB->Type && !pB->InLimbo && pB->Health > 0 && IncomeKindOf(pB->Type) > 0) income = true;
-	// NeedIncome: with no income building standing, walls go behind the plan's last unbuilt one (the refinery
-	// first); with none in the plan either, they wait.
+	// NeedIncome: with no income building standing, walls go right behind the plan's next unbuilt one (the
+	// refinery first); with none in the plan either, they wait.
 	auto& nodes = pHouse->Base.BaseNodes;
-	int afterIncome = -1;
-	if (cfg.WallsNeedIncome && !income)
+	auto const nodeType = [](BaseNodeClass const& n)
+	{
+		int const t = n.BuildingTypeIndex;
+		return t >= 0 && t < BuildingTypeClass::Array.Count ? BuildingTypeClass::Array.GetItem(t) : nullptr;
+	};
+	auto const nextIncome = [&]()
+	{
 		for (int i = 0; i < nodes.Count; ++i)
-		{
-			int const t = nodes.Items[i].BuildingTypeIndex;
-			if (!nodes.Items[i].Placed && t >= 0 && t < BuildingTypeClass::Array.Count
-				&& IncomeKindOf(BuildingTypeClass::Array.GetItem(t)) > 0) afterIncome = i + 1;
-		}
+			if (!nodes.Items[i].Placed && IncomeKindOf(nodeType(nodes.Items[i])) > 0) return i;
+		return -1;
+	};
+	bool const behindIncome = cfg.WallsNeedIncome && !income;
 	const char* wait = nullptr;
 	if (wallIdx < 0) wait = "no wall type we can build yet (Types)";
-	else if (cfg.WallsNeedIncome && !income && afterIncome < 0)
-		wait = "no income building yet, none in the plan (NeedIncome)";
+	else if (behindIncome && nextIncome() < 0) wait = "no income building yet, none in the plan (NeedIncome)";
 	else if (cfg.WallsOnSighting && g_picketSightings[hIdx].empty()) wait = "no enemy engineer seen yet (OnSighting)";
 	else if (cash < cfg.WallsMinCash) wait = "cash below MinCash";
 
 	// The ring Ring cells out from each protected building's foundation. A cell already walled or built on
 	// is done (a building stops an engineer as well as a wall), one a wall can't stand on now is skipped
-	// (retried next pass), one with a node of ours pending is left alone; the rest are queued. A cell whose
-	// node of ours went from the plan unbuilt (the engine couldn't place the wall there) waits Retry frames,
-	// so a wall that won't go in can't hold the plan's front forever.
+	// (retried next pass), one with someone else's node pending is left alone; the rest are queued, ours
+	// still pending again with them (so they keep their place as the plan grows). A cell whose node of ours
+	// went from the plan unbuilt (the engine couldn't place the wall there) waits Retry frames, so a wall
+	// that won't go in can't hold the plan's front forever.
 	auto& mine = g_wallMine[hIdx];
 	auto& retry = g_wallRetry[hIdx];
 	bool const typeWasOk = g_wallTypeOk[hIdx];
@@ -5441,6 +5445,7 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 	int protect = 0, cells = 0, walled = 0, builtOn = 0, blocked = 0, pending = 0;
 	int vanished = 0, retrying = 0, occupied = 0, attempts = 0;
 	std::vector<CellStruct> want;
+	std::set<int> ours;                                               // our pending nodes' cells
 	for (auto const pB : pHouse->Buildings)
 	{
 		if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0 || !WallProtects(pB)) continue;
@@ -5472,6 +5477,8 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 					for (auto p = pCell->GetContent(); p; p = p->NextObject)
 						if (p->WhatAmI() == AbstractType::Infantry || p->WhatAmI() == AbstractType::Unit)
 							{ ++occupied; break; }
+					auto const pT = nodeType(nodes.Items[node]);
+					if (mine.count(key) && pT && pT->Wall && ours.insert(key).second) want.push_back(c);
 					continue;
 				}
 				if (mine.erase(key) && typeWasOk && pWall)     // dropped unbuilt, not for want of the type
@@ -5490,10 +5497,19 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 
 	// Queue them, the side facing the nearest enemy base first; with Urgent, ahead of the plan's next
 	// unbuilt node (where the engine puts its own wall nodes), else after the plan; NeedIncome keeps them
-	// behind an unbuilt income building.
-	int queuedNow = 0;
+	// behind the next unbuilt income building. Our pending nodes come out first and go back in with them.
+	int queuedNow = 0, at = -1, afterIncome = -1;
 	if (!wait && !want.empty())
 	{
+		int kept = 0;
+		for (int i = 0; i < nodes.Count; ++i)
+		{
+			auto const& n = nodes.Items[i];
+			auto const pT = nodeType(n);
+			if (!n.Placed && pT && pT->Wall && ours.count(CaptureCellKey(n.MapCoords))) continue;
+			nodes.Items[kept++] = n;
+		}
+		nodes.Count = kept;
 		auto const home = pHouse->GetBaseCenter();
 		CellStruct foe{ 0, 0 };
 		double foeD = 1e18;
@@ -5514,7 +5530,7 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 		if (cfg.WallsUrgent)
 			for (int i = 0; i < nodes.Count; ++i)
 				if (!nodes.Items[i].Placed) { first = i; break; }
-		first = std::max(first, afterIncome);
+		if (behindIncome && (afterIncome = nextIncome()) >= 0) first = std::max(first, ++afterIncome);
 		int const before = nodes.Count;
 		for (auto const& c : want)
 		{
@@ -5523,19 +5539,21 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 			node.MapCoords = c;
 			node.Placed = false;
 			node.Attempts = 0;
-			if (nodes.AddItem(node)) { ++queuedNow; mine.insert(CaptureCellKey(c)); }
+			if (nodes.AddItem(node) && mine.insert(CaptureCellKey(c)).second) ++queuedNow;
 		}
 		if (first < before)
 			std::rotate(nodes.Items + first, nodes.Items + before, nodes.Items + nodes.Count);
+		at = std::min(first, before);
 	}
 
 	if (cfg.DebugTicks && protect > 0)
 		Debug::Log("[DoctrineExt] walls: house=%s#%d type=%s protect=%d ring=%d cells=%d walled=%d built-on=%d "
-			"blocked=%d pending=%d (occupied %d, attempts %d) dropped=%d retrying=%d queued=%d%s cash=%d%s%s.\n",
+			"blocked=%d pending=%d (occupied %d, attempts %d) dropped=%d retrying=%d queued=%d at=%d/%d%s cash=%d%s%s.\n",
 			pHouse->get_ID(), hIdx, pWall ? pWall->ID : "-", protect, ring, cells, walled, builtOn, blocked,
-			pending, occupied, attempts, vanished, retrying, queuedNow,
-			!queuedNow ? "" : afterIncome >= 0 ? " (behind the income building)"
-				: cfg.WallsUrgent ? " (front of the plan)" : "", cash, wait ? "; waiting: " : "", wait ? wait : "");
+			pending, occupied, attempts, vanished, retrying, queuedNow, at, nodes.Count,
+			at < 0 ? "" : afterIncome >= 0 ? " (behind the income building)"
+				: cfg.WallsUrgent ? " (front of the plan)" : " (after the plan)", cash, wait ? "; waiting: " : "",
+			wait ? wait : "");
 }
 
 // ─── Engineer rush (§10m) ────────────────────────────────────────────────────

@@ -4735,13 +4735,29 @@ namespace
 			if (pQ && pQ->WhatAmI() == AbstractType::BuildingType && IncomeKindOf(static_cast<BuildingTypeClass*>(pQ)) > 0)
 				income = true;
 			int const maxTL = pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10 ? pHouse->TechLevel : 10;
+			BuildingTypeClass* pCheapest = nullptr;
 			if (!income && yard)
 				for (auto const pBt : BuildingTypeClass::Array)
 					if (pBt && IncomeKindOf(pBt) > 0 && pBt->TechLevel >= 0 && pBt->TechLevel <= maxTL
-						&& (!cfg.StrictOwnership || pHouse->InOwners(pBt)) && worth >= pBt->GetActualCost(pHouse))
-						{ income = true; break; }
+						&& (!cfg.StrictOwnership || pHouse->InOwners(pBt))
+						&& (!pCheapest || pBt->GetActualCost(pHouse) < pCheapest->GetActualCost(pHouse)))
+						pCheapest = pBt;
+			if (pCheapest && worth >= pCheapest->GetActualCost(pHouse)) income = true;
 			if (!income)
-				return "no income building, miner or one in production, and nothing to build or pay for one with (Doomed.NoIncome)";
+			{
+				static char why[224];
+				if (!yard)
+					std::snprintf(why, sizeof(why), "no income building, miner or one in production, and no yard to "
+						"build one (Doomed.NoIncome)");
+				else if (!pCheapest)
+					std::snprintf(why, sizeof(why), "no income building, miner or one in production, and none we may "
+						"own (tech level %d) (Doomed.NoIncome)", maxTL);
+				else
+					std::snprintf(why, sizeof(why), "no income building, miner or one in production, and cash + what "
+						"our buildings sell for (%d) < %s's %d (Doomed.NoIncome)", worth, pCheapest->ID,
+						pCheapest->GetActualCost(pHouse));
+				return why;
+			}
 		}
 		if (cfg.CounterEngDoomedArmyRatio > 0.0 && ours < theirs * cfg.CounterEngDoomedArmyRatio)
 		{

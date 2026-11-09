@@ -513,6 +513,30 @@ public:
 	double CounterEngDenySellIfStronger = 1.5; // DenySell.SellIfStronger — sell it anyway when our army is
 	                                 // worth at least this many times the engineer owner's (it can win
 	                                 // without it). 0 = never
+	bool CounterEngDenySellLone = true; // DenySell.Lone — sell a building an engineer will get into whatever
+	                                 // DenySell / Types / caps / KeepIrreplaceable say when no other building of
+	                                 // ours it could capture is within Lone.Radius: it's lost anyway, and the
+	                                 // bounced engineer has nothing near to go on to
+	int CounterEngDenySellLoneRadius = 8; // DenySell.Lone.Radius — cells (Capturable=yes buildings, ours or an
+	                                 // ally's, only); 0 = anywhere on the map
+	bool CounterEngDenySellDoomed = true; // DenySell.Doomed — a house past recovery (Doomed.*) sells anything
+	                                 // an engineer will get into, whatever DenySell / Types / caps say
+	bool CounterEngDoomedNoYard = true; // Doomed.NoYard — no construction yard and no MCV to own or build
+	bool CounterEngDoomedNoIncome = true; // Doomed.NoIncome — no income building or miner, and no cash for
+	                                 // an income building it can build
+	double CounterEngDoomedArmyRatio = 0.0; // Doomed.ArmyRatio — our army worth under this times the engineer
+	                                 // owner's (0 = off)
+	double CounterEngDenySellTrade = 1.0; // DenySell.Trade — let a capture through only when it doesn't pay:
+	                                 // the building's refund to the engineer's owner <= the engineer's cost x
+	                                 // this (else sell it), unless we'll retake it (Retake.Army). 0 = off.
+	                                 // Weighs auto DenySell.Types and KeepIrreplaceable; an explicit Types
+	                                 // list (or none) is honored as written
+	bool CounterEngDenySellTradeUncapped = false; // DenySell.Trade.Uncapped — Trade sells past DenySell.PerEngineer
+	                                 // / DenySell.Max too (else the caps still stop a bounced engineer's chain)
+	double CounterEngDenySellRetakeArmy = 0.5; // DenySell.Retake.Army — KeepIrreplaceable lets a building go
+	                                 // to retake it only with an engineer to send (owned or buildable now),
+	                                 // [Doctrine.EngineerRush] Recapture on, and our army worth at least this
+	                                 // times the engineer owner's (0 = no army check)
 	bool CounterEngSacrifice = false; // Sacrifice — sell a cheap building by the engineer's path so its
 	                                 // survivors (the side's crew infantry) kill the engineer
 	std::vector<std::string> CounterEngSacrificeTypes; // Sacrifice.Types — buildings that may be

@@ -4200,6 +4200,7 @@ namespace
 	std::map<int, std::set<std::pair<DWORD, DWORD>>> g_letGo;
 
 	int IncomeKindOf(BuildingTypeClass* pBt);                        // economy section, below
+	bool OwnsMiner(HouseClass* pHouse);                              // economy section, below
 
 	bool IsLiveEngineer(TechnoClass* const pT)
 	{
@@ -4637,6 +4638,96 @@ namespace
 			if (income && IncomeKindOf(pO->Type) > 0) spareIncome = true;
 		}
 		return (factory && !spareFactory) || (income && !spareIncome);
+	}
+
+	// Is this building alone (DenySell.Lone)? No other building an engineer could capture (Capturable=yes;
+	// walls, towers and the rest don't count) of ours or an ally's within Lone.Radius cells of it, so a
+	// bounced engineer has nothing near to go on to and the sale costs us nothing it wasn't losing anyway.
+	bool LoneBuilding(BuildingClass* const pB, HouseClass* const pHouse, HouseClass* const pEnemy)
+	{
+		double const r = DoctrineConfig::Get().CounterEngDenySellLoneRadius * 256.0;
+		auto const at = pB->GetCoords();
+		for (auto const pO : BuildingClass::Array)
+		{
+			if (!pO || pO == pB || !pO->Type || !pO->Owner || pO->InLimbo || pO->Health <= 0) continue;
+			if (pO->Owner == pEnemy || (pO->Owner != pHouse && !pHouse->IsAlliedWith(pO->Owner))) continue;
+			if (!pO->Type->Capturable || pO->GetCurrentMission() == Mission::Selling) continue;
+			if (r <= 0.0 || DistToFootprint(at, pO) <= r) return false;
+		}
+		return true;
+	}
+
+	// Is this house past recovery (DenySell.Doomed)? The first enabled test that holds: no construction
+	// yard and no MCV to own or build (Doomed.NoYard); no income building or miner, and no yard plus cash
+	// for an income building it can build (Doomed.NoIncome); an army worth under Doomed.ArmyRatio times
+	// the engineer owner's. nullptr = it can still recover.
+	const char* DoomedWhy(HouseClass* const pHouse, int const ours, int const theirs)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (!cfg.CounterEngDenySellDoomed) return nullptr;
+		if (cfg.CounterEngDoomedNoYard && !CanRecoverMCV(pHouse))
+			return "no construction yard and no MCV to own or build (Doomed.NoYard)";
+		if (cfg.CounterEngDoomedNoIncome && !OwnsMiner(pHouse))
+		{
+			bool income = false, yard = false;
+			for (auto const pO : pHouse->Buildings)
+			{
+				if (!pO || !pO->Type || pO->InLimbo || pO->Health <= 0) continue;
+				if (pO->GetCurrentMission() == Mission::Selling) continue;
+				if (IncomeKindOf(pO->Type) > 0) income = true;
+				if (pO->Type->ConstructionYard) yard = true;
+			}
+			int const cash = static_cast<int>(pHouse->Available_Money());
+			if (!income && yard)
+				for (auto const pBt : BuildingTypeClass::Array)
+					if (pBt && IncomeKindOf(pBt) > 0 && CanBuildStrict(pHouse, pBt) && cash >= pBt->GetActualCost(pHouse))
+						{ income = true; break; }
+			if (!income) return "no income building or miner, and none we can build and pay for (Doomed.NoIncome)";
+		}
+		if (cfg.CounterEngDoomedArmyRatio > 0.0 && ours < theirs * cfg.CounterEngDoomedArmyRatio)
+		{
+			static char why[128];
+			std::snprintf(why, sizeof(why), "our army (%d) is under %.2fx theirs (%d) (Doomed.ArmyRatio)",
+				ours, cfg.CounterEngDoomedArmyRatio, theirs);
+			return why;
+		}
+		return nullptr;
+	}
+
+	// What the engineer cost its owner (DenySell.Trade). A transport: the engineer we know is aboard
+	// (Transports.Cargo=know), else [General] Engineer.
+	int EngineerCost(TechnoClass* const pEng, bool const carrier)
+	{
+		if (!carrier) return pEng->GetTechnoType()->GetActualCost(pEng->Owner);
+		if (DoctrineConfig::Get().CounterEngTransportCargo == 2)
+			for (auto p = pEng->Passengers.FirstPassenger; p; p = static_cast<FootClass*>(p->NextObject))
+			{
+				auto const pType = p->GetTechnoType();
+				if (pType && pType->WhatAmI() == AbstractType::InfantryType && static_cast<InfantryTypeClass*>(pType)->Engineer)
+					return pType->GetActualCost(pEng->Owner);
+			}
+		auto const pE = RulesClass::Instance->Engineer;
+		return pE ? pE->GetActualCost(pEng->Owner) : 0;
+	}
+
+	// Could we retake a building an engineer captures (DenySell.Retake.Army)? [Doctrine.EngineerRush]
+	// Enable and Recapture on, an engineer to send (owned, or an Engineer=yes infantry we can build and pay
+	// for now), and our army worth at least Retake.Army times the engineer owner's.
+	const char* RetakeWhy(HouseClass* const pHouse, int const ours, int const theirs)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (!cfg.EngRushEnable || !cfg.EngRushRecapture) return nullptr;
+		if (cfg.CounterEngDenySellRetakeArmy > 0.0 && ours < theirs * cfg.CounterEngDenySellRetakeArmy) return nullptr;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (pT && pT->Owner == pHouse && IsLiveEngineer(pT)) return "we have an engineer to retake it";
+		}
+		int const cash = static_cast<int>(pHouse->Available_Money());
+		for (auto const pIt : InfantryTypeClass::Array)
+			if (pIt && pIt->Engineer && CanBuildStrict(pHouse, pIt) && cash >= pIt->GetActualCost(pHouse))
+				return "we can build an engineer to retake it";
+		return nullptr;
 	}
 
 	// Could selling this building put survivors in an engineer's way (Sacrifice.Types)? Auto: a
@@ -5119,35 +5210,90 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		// A building we captured and kept is sold before it's retaken whatever DenySell says
 		// ([Doctrine.Captured] DenyRecapture): every kept capture was worth keeping, and keeping it for
 		// a retake hands it back. The sale caps still apply.
+		//
+		// Some sales skip all of that: a lone building (DenySell.Lone) — it's lost anyway and the bounced
+		// engineer has nothing near to go on to — and anything of a house past recovery (DenySell.Doomed),
+		// which shouldn't hand the enemy easy captures. And a building let go must be let go for a reason:
+		// the capture mustn't pay (its refund to them <= the engineer's cost, DenySell.Trade) unless we can
+		// retake it (DenySell.Retake.Army).
 		bool const recapture = cfg.CapturedDenyRecapture && g_keptCaptures.count(t.Goal->UniqueID);
-		if (!(cfg.CounterEngDenySell || recapture) || t.Eta > lead || t.ExpMax >= t.Hp * sellMargin
-			|| !CanDenySell(t.Goal, pHouse)) continue;
+		if (t.Eta > lead || t.ExpMax >= t.Hp * sellMargin || !CanDenySell(t.Goal, pHouse)) continue;
 		DWORD const uid = t.Eng->UniqueID;
+		auto const pEnemy = t.Eng->Owner;
+		int const ours = ArmyValue(pHouse);
+		int const theirs = pEnemy ? ArmyValue(pEnemy) : 0;
+		const char* forced = nullptr;
+		static char forcedWhy[192];
+		if (cfg.CounterEngDenySellLone && LoneBuilding(t.Goal, pHouse, pEnemy))
+		{
+			std::snprintf(forcedWhy, sizeof(forcedWhy), "no other capturable building of ours within %d cells "
+				"(DenySell.Lone)", cfg.CounterEngDenySellLoneRadius);
+			forced = forcedWhy;
+		}
+		else if (auto const doomed = DoomedWhy(pHouse, ours, theirs))
+		{
+			std::snprintf(forcedWhy, sizeof(forcedWhy), "past recovery: %s (DenySell.Doomed)", doomed);
+			forced = forcedWhy;
+		}
+		if (!forced && !(cfg.CounterEngDenySell || recapture)) continue;
 		const char* why = nullptr;
 		const char* capped = nullptr;
+		bool weigh = false;                                               // DenySell.Trade may overrule why
 		if (cfg.CounterEngDenySellPerEngineer > 0 && sells[uid] >= cfg.CounterEngDenySellPerEngineer)
 			capped = "this engineer already cost us a sale (DenySell.PerEngineer)";
 		else if (cfg.CounterEngDenySellMax > 0 && static_cast<int>(sellFrames.size()) >= cfg.CounterEngDenySellMax)
 			capped = "house sale cap reached (DenySell.Max per DenySell.Window)";
 		bool const uncapped = capped && DenyUncapped(t.Goal);
-		if (!recapture && !WorthDenying(t.Goal, pHouse))
+		if (forced)
+			why = nullptr;
+		else if (!recapture && !WorthDenying(t.Goal, pHouse))
+		{
 			why = "not worth denying (DenySell.Types)";
+			weigh = cfg.CounterEngDenySellTypes.empty() && !cfg.CounterEngDenySellNone;   // auto only
+		}
 		else if (capped && !uncapped)
+		{
 			why = capped;
+			weigh = cfg.CounterEngDenySellTradeUncapped;
+		}
 		else if (!recapture && cfg.CounterEngDenySellKeepIrreplaceable && !Replaceable(t.Goal, pHouse))
 		{
 			// Selling a building we can't build again loses it for good; captured, we can retake it.
 			// Only an army that can win without it (SellIfStronger) sells it anyway, to deny it.
-			int const ours = ArmyValue(pHouse);
-			int const theirs = t.Eng->Owner ? ArmyValue(t.Eng->Owner) : 0;
 			if (cfg.CounterEngDenySellIfStronger <= 0.0 || ours < theirs * cfg.CounterEngDenySellIfStronger)
 			{
 				static char keepWhy[192];
 				std::snprintf(keepWhy, sizeof(keepWhy), "we couldn't build it again and our army (%d) isn't "
-					"%.1fx theirs (%d): retake it instead (DenySell.KeepIrreplaceable / SellIfStronger)",
+					"%.1fx theirs (%d) (DenySell.KeepIrreplaceable / SellIfStronger)",
 					ours, cfg.CounterEngDenySellIfStronger, theirs);
 				why = keepWhy;
+				weigh = true;
 			}
+		}
+		static char tradeWhy[320];
+		bool traded = false;
+		if (why && weigh && cfg.CounterEngDenySellTrade > 0.0)
+		{
+			// Captured, they can sell it: let it through only when that doesn't pay for the engineer, or
+			// when we'll take it back.
+			int const refund = pEnemy ? t.Goal->Type->GetRefund(pEnemy, false) : 0;
+			int const engCost = EngineerCost(t.Eng, t.Carrier);
+			if (refund > engCost * cfg.CounterEngDenySellTrade)
+			{
+				if (auto const retake = RetakeWhy(pHouse, ours, theirs))
+					std::snprintf(tradeWhy, sizeof(tradeWhy), "%s; they'd get %d selling it for a %d engineer, "
+						"but %s (DenySell.Retake.Army)", why, refund, engCost, retake);
+				else
+				{
+					std::snprintf(tradeWhy, sizeof(tradeWhy), "they'd get %d selling it, the engineer cost %d, "
+						"and we can't retake it (DenySell.Trade)", refund, engCost);
+					traded = true;
+				}
+			}
+			else
+				std::snprintf(tradeWhy, sizeof(tradeWhy), "%s; they'd get only %d selling it, the engineer "
+					"cost %d (DenySell.Trade)", why, refund, engCost);
+			why = traded ? nullptr : tradeWhy;
 		}
 		if (why)
 		{
@@ -5165,10 +5311,11 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		sellFrames.push_back(now);
 		if (cfg.DebugTicks)
 			Debug::Log("[DoctrineExt] counter-eng DENY-SELL: house=%s#%d sold %s — %s#%u %.1f cells out, "
-				"eta=%.0ff, best-case damage %.0f < hp %d%s%s.\n", pHouse->get_ID(), hIdx,
+				"eta=%.0ff, best-case damage %.0f < hp %d%s%s%s%s.\n", pHouse->get_ID(), hIdx,
 				t.Goal->Type->ID, t.Eng->GetTechnoType()->ID, uid, t.Dist / 256.0,
-				t.Eta, t.ExpMax, t.Hp, uncapped ? " (DenySell.Uncapped: past the sale caps)" : "",
-				recapture ? " (DenyRecapture: we captured it)" : "");
+				t.Eta, t.ExpMax, t.Hp, uncapped && !forced ? " (DenySell.Uncapped: past the sale caps)" : "",
+				recapture ? " (DenyRecapture: we captured it)" : "", forced ? ": " : traded ? ": " : "",
+				forced ? forced : traded ? tradeWhy : "");
 	}
 
 	// Steer every responder onto its engineer (re-issued only when it drifted, so the attack isn't

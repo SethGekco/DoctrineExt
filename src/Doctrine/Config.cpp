@@ -510,6 +510,19 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 		cfg.CounterEngDenySellKeepIrreplaceable);
 	cfg.CounterEngDenySellIfStronger = pINI->ReadDouble("Doctrine.CounterEngineer", "DenySell.SellIfStronger",
 		cfg.CounterEngDenySellIfStronger);
+	cfg.CounterEngDenySellLone = pINI->ReadBool("Doctrine.CounterEngineer", "DenySell.Lone", cfg.CounterEngDenySellLone);
+	cfg.CounterEngDenySellLoneRadius = pINI->ReadInteger("Doctrine.CounterEngineer", "DenySell.Lone.Radius",
+		cfg.CounterEngDenySellLoneRadius);
+	cfg.CounterEngDenySellDoomed = pINI->ReadBool("Doctrine.CounterEngineer", "DenySell.Doomed", cfg.CounterEngDenySellDoomed);
+	cfg.CounterEngDoomedNoYard = pINI->ReadBool("Doctrine.CounterEngineer", "Doomed.NoYard", cfg.CounterEngDoomedNoYard);
+	cfg.CounterEngDoomedNoIncome = pINI->ReadBool("Doctrine.CounterEngineer", "Doomed.NoIncome", cfg.CounterEngDoomedNoIncome);
+	cfg.CounterEngDoomedArmyRatio = pINI->ReadDouble("Doctrine.CounterEngineer", "Doomed.ArmyRatio",
+		cfg.CounterEngDoomedArmyRatio);
+	cfg.CounterEngDenySellTrade = pINI->ReadDouble("Doctrine.CounterEngineer", "DenySell.Trade", cfg.CounterEngDenySellTrade);
+	cfg.CounterEngDenySellTradeUncapped = pINI->ReadBool("Doctrine.CounterEngineer", "DenySell.Trade.Uncapped",
+		cfg.CounterEngDenySellTradeUncapped);
+	cfg.CounterEngDenySellRetakeArmy = pINI->ReadDouble("Doctrine.CounterEngineer", "DenySell.Retake.Army",
+		cfg.CounterEngDenySellRetakeArmy);
 	cfg.CounterEngSacrifice = pINI->ReadBool("Doctrine.CounterEngineer", "Sacrifice", cfg.CounterEngSacrifice);
 	pINI->ReadString("Doctrine.CounterEngineer", "Sacrifice.Types", "", buf, sizeof(buf));
 	cfg.CounterEngSacrificeTypes = SplitList(buf);
@@ -547,6 +560,13 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			static_cast<unsigned>(cfg.CounterEngSacrificeTypes.size()), cfg.CounterEngSacrificeNone ? " NONE" : "",
 			cfg.CounterEngSacrificeMax, cfg.CounterEngSacrificeRadius, cfg.CounterEngSacrificeDelay,
 			cfg.CounterEngHonorPrereq);
+	if (cfg.CounterEngEnable)
+		Echo("[DoctrineExt] [Doctrine.CounterEngineer]: DenySell.Lone=%d DenySell.Lone.Radius=%d DenySell.Doomed=%d "
+			"Doomed.NoYard=%d Doomed.NoIncome=%d Doomed.ArmyRatio=%.2f DenySell.Trade=%.2f DenySell.Trade.Uncapped=%d "
+			"DenySell.Retake.Army=%.2f\n",
+			cfg.CounterEngDenySellLone, cfg.CounterEngDenySellLoneRadius, cfg.CounterEngDenySellDoomed,
+			cfg.CounterEngDoomedNoYard, cfg.CounterEngDoomedNoIncome, cfg.CounterEngDoomedArmyRatio,
+			cfg.CounterEngDenySellTrade, cfg.CounterEngDenySellTradeUncapped, cfg.CounterEngDenySellRetakeArmy);
 	if (cfg.CounterEngEnable)
 		Echo("[DoctrineExt] [Doctrine.CounterEngineer]: Predict.Goal=%d Predict.Width=%d Predict.Elsewhere=%d "
 			"Predict.Intercept=%d ShareDefenses=%d Picket=%d Picket.Units=%u (empty=auto)%s Picket.Posts=%d "

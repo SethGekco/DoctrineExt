@@ -521,9 +521,10 @@ public:
 	                                 // ally's, only); 0 = anywhere on the map
 	bool CounterEngDenySellDoomed = true; // DenySell.Doomed — a house past recovery (Doomed.*) sells anything
 	                                 // an engineer will get into, whatever DenySell / Types / caps say
-	bool CounterEngDoomedNoYard = true; // Doomed.NoYard — no construction yard and no MCV to own or build
-	bool CounterEngDoomedNoIncome = true; // Doomed.NoIncome — no income building or miner, and no cash for
-	                                 // an income building it can build
+	bool CounterEngDoomedNoYard = true; // Doomed.NoYard — no construction yard, no MCV to own or build, and no
+	                                 // yard of ours an enemy holds that we could retake (Retake.Army)
+	bool CounterEngDoomedNoIncome = true; // Doomed.NoIncome — no income building, miner or one in production,
+	                                 // and no yard, or cash + what our buildings sell for won't pay for one
 	double CounterEngDoomedArmyRatio = 0.0; // Doomed.ArmyRatio — our army worth under this times the engineer
 	                                 // owner's (0 = off)
 	double CounterEngDenySellTrade = 1.0; // DenySell.Trade — let a capture through only when it doesn't pay:

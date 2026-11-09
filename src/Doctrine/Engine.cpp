@@ -5,6 +5,7 @@
 #include "Doctrine/LaneTracker.h"
 #include "Doctrine/DeathZones.h"
 #include "Doctrine/AITriggerDifficulty.h"
+#include "Doctrine/OrderAudit.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -16,6 +17,10 @@
 #include <map>
 #include <set>
 #include <vector>
+
+// One DoctrineExt step of the house tick; under DebugOrders, OrderAudit credits it with the order changes
+// it made (Rex 11-08: "GIs being indecisive ... like they're given multiple orders at the same time").
+#define DOCTRINE_STEP(call) do { call; if (cfg.DebugOrders) OrderAudit::After(pHouse, #call); } while (0)
 
 namespace
 {
@@ -91,6 +96,8 @@ void Engine::TickHouse(HouseClass* pHouse)
 	if (lastIt != g_lastTickFrame.end() && lastIt->second == frame)
 		return;
 	g_lastTickFrame[pHouse->ArrayIndex] = frame;
+	// DebugOrders: what changed since the last tick, the engine did (OrderAudit).
+	if (cfg.DebugOrders) OrderAudit::Begin(pHouse);
 
 	// Learn the map's movement lanes (self-throttled). Cheap and pointer-safe.
 	LaneTracker::Sample(frame);
@@ -105,12 +112,12 @@ void Engine::TickHouse(HouseClass* pHouse)
 		double v = 0.0;
 		TechnoClass* pRaider = nullptr;
 		Observations::Get(pHouse, "EnemyAirIncoming", v, &pRaider);
-		Teams::SteerIntercepts(pHouse, pRaider);
+		DOCTRINE_STEP(Teams::SteerIntercepts(pHouse, pRaider));
 	}
 
 	// Hold the base perimeter (learned outer edge), not the centre.
 	if (Teams::HasActiveDefend(pHouse))
-		Teams::SteerDefenders(pHouse);
+		DOCTRINE_STEP(Teams::SteerDefenders(pHouse));
 
 	// Hunt teams approach the current top ace from its weak side (6c).
 	if (Teams::HasActiveHunt(pHouse))
@@ -118,24 +125,24 @@ void Engine::TickHouse(HouseClass* pHouse)
 		double v = 0.0;
 		TechnoClass* pAce = nullptr;
 		Observations::Get(pHouse, "EnemyUnitKills", v, &pAce);
-		Teams::SteerHunters(pHouse, pAce);
+		DOCTRINE_STEP(Teams::SteerHunters(pHouse, pAce));
 	}
 
 	// Decapitate teams press the enemy's current priority structure (§10h).
 	if (Teams::HasActiveDecap(pHouse))
-		Teams::SteerDecap(pHouse);
+		DOCTRINE_STEP(Teams::SteerDecap(pHouse));
 
 	// Base-flood relief (§10d C): unclog a hoarding base by sending idle armed
 	// units to Hunt. Self-throttled + opt-in (FloodThreshold=0 disables).
-	Teams::FloodResponse(pHouse);
+	DOCTRINE_STEP(Teams::FloodResponse(pHouse));
 
 	// Reserve spender (§10f): spend surplus cash on the modder's build list
 	// instead of hoarding. Self-throttled + opt-in (ReserveAmount=0 disables).
-	Teams::ReserveSpend(pHouse);
+	DOCTRINE_STEP(Teams::ReserveSpend(pHouse));
 
 	// Garrison doctrine (§10e): fill vacant occupiable buildings with Occupier
 	// infantry via the correct enter flags. Self-throttled + opt-in.
-	Teams::GarrisonDoctrine(pHouse);
+	DOCTRINE_STEP(Teams::GarrisonDoctrine(pHouse));
 
 	// Crate doctrine (§10i): a persistent, dedicated squad that stands by (spread
 	// out) and races for crates, sized from [CrateRules]; or the older single-
@@ -143,78 +150,78 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// grabber when enabled so they don't fight over the same units.
 	if (DoctrineConfig::Get().CrateSquad)
 	{
-		Teams::CrateSquadDoctrine(pHouse);   // detect + recruit (throttled)
-		Teams::SteerCrateSquad(pHouse);      // keep chasers moving (every tick)
-		Teams::CrateWaterSquad(pHouse);      // water crates via naval/amphibious units
-		Teams::SteerCrateWaterSquad(pHouse);
+		DOCTRINE_STEP(Teams::CrateSquadDoctrine(pHouse));   // detect + recruit (throttled)
+		DOCTRINE_STEP(Teams::SteerCrateSquad(pHouse));      // keep chasers moving (every tick)
+		DOCTRINE_STEP(Teams::CrateWaterSquad(pHouse));      // water crates via naval/amphibious units
+		DOCTRINE_STEP(Teams::SteerCrateWaterSquad(pHouse));
 	}
 	else
 	{
-		Teams::CrateDoctrine(pHouse);
+		DOCTRINE_STEP(Teams::CrateDoctrine(pHouse));
 		// Steer the crate-grab team onto the crate each tick (sticks vs the AI).
 		if (Teams::HasActiveCrate(pHouse))
-			Teams::SteerCrate(pHouse);
+			DOCTRINE_STEP(Teams::SteerCrate(pHouse));
 	}
 
 	// Economy opening (§10k): secure income FIRST with the starting cash — barracks +
 	// derrick capture if one is near, else force a refinery — holding offensive
 	// production until income is up. Runs before capture so the barracks is planned
 	// first. Self-throttled + opt-in; releases once the house owns an income building.
-	Teams::EconomyOpening(pHouse);
+	DOCTRINE_STEP(Teams::EconomyOpening(pHouse));
 	// (The broke-window firesale is blocked at its source by the BuildingClass::Sell hook
 	// 0x44717D -> Teams::ShouldBlockSell, not here — no per-tick pass needed.)
 
 	// Counter-engineer / urgent response (§10l): retask units onto enemy engineers coming for
 	// our buildings, deny-sell what can't be saved. Every tick, and FIRST, so urgent defense
 	// claims units before capture and rush squads do. Opt-in.
-	Teams::CounterEngineers(pHouse);
+	DOCTRINE_STEP(Teams::CounterEngineers(pHouse));
 	// Engineer pickets: units posted on the bearings engineers come from (after the counter-engineer,
 	// so a picket it has just retasked is left to it). Pass throttled; steering every tick. Opt-in.
-	Teams::EngineerPickets(pHouse);
-	Teams::SteerPickets(pHouse);
+	DOCTRINE_STEP(Teams::EngineerPickets(pHouse));
+	DOCTRINE_STEP(Teams::SteerPickets(pHouse));
 	// Walls: wall in what engineers go for, early, through the AI's own base plan. Pass throttled. Opt-in.
-	Teams::WallDoctrine(pHouse);
+	DOCTRINE_STEP(Teams::WallDoctrine(pHouse));
 
 	// Capture doctrine (§10j): grab neutral/enemy tech buildings (oil derricks etc.)
 	// with engineers, nearest-first. Additive production only — can't destabilise the
 	// base. Pass throttled; steering every tick so the capture order sticks. Opt-in.
-	Teams::CaptureDoctrine(pHouse);
-	Teams::SteerCapture(pHouse);
+	DOCTRINE_STEP(Teams::CaptureDoctrine(pHouse));
+	DOCTRINE_STEP(Teams::SteerCapture(pHouse));
 
 	// Engineer rush (§10m): escorted engineers at enemy buildings near base whose door the
 	// enemy can't cover. Pass throttled; steering every tick. Opt-in.
-	Teams::EngineerRush(pHouse);
-	Teams::SteerEngineerRush(pHouse);
+	DOCTRINE_STEP(Teams::EngineerRush(pHouse));
+	DOCTRINE_STEP(Teams::SteerEngineerRush(pHouse));
 
 	// Commander takeover: if the base AI sits idle (its own aimd/AITrigger teams
 	// never attack) for CommanderIdleTime, DoctrineExt seizes command and drives
 	// the idle army into an assault. Evaluation throttled; steering every tick so
 	// the assault sticks against the base AI. Opt-in (IdleTime=0 disables).
-	Teams::CommanderTakeover(pHouse);
-	Teams::SteerCommander(pHouse);
+	DOCTRINE_STEP(Teams::CommanderTakeover(pHouse));
+	DOCTRINE_STEP(Teams::SteerCommander(pHouse));
 
 	// Air-defense (AA P1): keep AA firepower scaled to the enemy's air strength,
 	// building more AntiAir as the enemy adds aircraft, and screen AA forward split
 	// across incoming-air bearings. Self-throttled + opt-in. Steering every tick.
-	Teams::AirDefense(pHouse);
-	Teams::SteerAirDefense(pHouse);
+	DOCTRINE_STEP(Teams::AirDefense(pHouse));
+	DOCTRINE_STEP(Teams::SteerAirDefense(pHouse));
 
 	// Naval doctrine: force a Naval Yard + navy when there's water and the prereqs
 	// are met (the base AI rarely does). Self-throttled + opt-in.
-	Teams::NavalDoctrine(pHouse);
+	DOCTRINE_STEP(Teams::NavalDoctrine(pHouse));
 
 	// Greedy base-expansion/economy: scale production to land and economy to reachable
 	// wealth (reads WarZoneExt Wealth when present). Self-throttled + opt-in.
-	Teams::BaseExpansion(pHouse);
+	DOCTRINE_STEP(Teams::BaseExpansion(pHouse));
 
 	// Force-comparison rush (§10g): all-in when we dominate the weakest enemy;
 	// allied AIs converge on the same target. Self-throttled + opt-in.
-	Teams::RushCheck(pHouse);
+	DOCTRINE_STEP(Teams::RushCheck(pHouse));
 
 	// Forced budget: a cash-strapped AI finishes its priority buildings (e.g. a
 	// FreeUnit-inflated refinery) instead of selling its base to afford them.
 	// Self-throttled + opt-in ([Doctrine.Budget] PriorityBuildings=...).
-	Teams::ForcedBudget(pHouse);
+	DOCTRINE_STEP(Teams::ForcedBudget(pHouse));
 
 	// Team-fill trace (~every 5s under DebugTicks): shows produced units
 	// joining live doctrine teams via engine-side recruiting over time.
@@ -300,6 +307,7 @@ void Engine::TickHouse(HouseClass* pHouse)
 			g_cooldownUntil[key] = frame + rulePeriod;
 		}
 	}
+	if (cfg.DebugOrders) OrderAudit::After(pHouse, "Dispatch(rules)");
 }
 
 void Engine::Reset()

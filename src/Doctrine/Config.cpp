@@ -6,6 +6,7 @@
 #include "Doctrine/DeathZones.h"
 #include "Doctrine/ArsenalGrader.h"
 #include "Doctrine/AITriggerDifficulty.h"
+#include "Doctrine/OrderAudit.h"
 
 #include <CCINIClass.h>
 #include <HouseClass.h>
@@ -209,6 +210,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.MaxTeamSize = pINI->ReadInteger("Doctrine.General", "MaxTeamSize", cfg.MaxTeamSize);
 	cfg.MaxTeamCost = pINI->ReadInteger("Doctrine.General", "MaxTeamCost", cfg.MaxTeamCost);
 	cfg.DebugTicks = pINI->ReadBool("Doctrine.General", "DebugTicks", cfg.DebugTicks);
+	cfg.DebugOrders = pINI->ReadBool("Doctrine.General", "DebugOrders", cfg.DebugOrders);
 	cfg.TeamTTL = pINI->ReadInteger("Doctrine.General", "TeamTTL", cfg.TeamTTL);
 	cfg.TeamsPerHouse = pINI->ReadInteger("Doctrine.General", "TeamsPerHouse", cfg.TeamsPerHouse);
 	cfg.StrictOwnership = pINI->ReadBool("Doctrine.General", "StrictOwnership", cfg.StrictOwnership);
@@ -566,6 +568,10 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.EngRushPriorityBackup = pINI->ReadInteger("Doctrine.EngineerRush", "Priority.Backup", cfg.EngRushPriorityBackup);
 	cfg.EngRushCripple = pINI->ReadBool("Doctrine.EngineerRush", "Cripple", cfg.EngRushCripple);
 	cfg.EngRushMax = pINI->ReadInteger("Doctrine.EngineerRush", "Max", cfg.EngRushMax);
+	pINI->ReadString("Doctrine.EngineerRush", "Spare", "", buf, sizeof(buf));
+	if (auto const spare = SplitList(buf); !spare.empty())
+		cfg.EngRushSpare = SameWord(spare[0].c_str(), "release") ? 2
+			: SameWord(spare[0].c_str(), "nearest") ? 1 : 0;                  // best / anything else
 	cfg.EngRushEscorts = pINI->ReadInteger("Doctrine.EngineerRush", "Escorts", cfg.EngRushEscorts);
 	cfg.EngRushSafety = pINI->ReadDouble("Doctrine.EngineerRush", "Safety", cfg.EngRushSafety);
 	cfg.EngRushMinCash = pINI->ReadInteger("Doctrine.EngineerRush", "MinCash", cfg.EngRushMinCash);
@@ -580,13 +586,14 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 		Echo("[DoctrineExt] [Doctrine.EngineerRush]: Enable=1 Interval=%d Radius=%d Targets=%u "
 			"(empty=any) Exclude=%u Priority=%u Max=%d Escorts=%d Safety=%.2f MinCash=%d RetryDelay=%d "
 			"Build.Urgent=%d Build.IgnorePause=%d Recapture=%d Recapture.UseCaptureSquad=%d HonorPrereq=%d "
-			"Priority.Radius=%d Priority.Backup=%d Cripple=%d\n",
+			"Priority.Radius=%d Priority.Backup=%d Cripple=%d Spare=%s\n",
 			cfg.EngRushInterval, cfg.EngRushRadius,
 			static_cast<unsigned>(cfg.EngRushTargets.size()), static_cast<unsigned>(cfg.EngRushExclude.size()),
 			static_cast<unsigned>(cfg.EngRushPriority.size()), cfg.EngRushMax, cfg.EngRushEscorts,
 			cfg.EngRushSafety, cfg.EngRushMinCash, cfg.EngRushRetryDelay, cfg.EngRushBuildUrgent,
 			cfg.EngRushBuildIgnorePause, cfg.EngRushRecapture, cfg.EngRushRecaptureUseCapture,
-			cfg.EngRushHonorPrereq, cfg.EngRushPriorityRadius, cfg.EngRushPriorityBackup, cfg.EngRushCripple);
+			cfg.EngRushHonorPrereq, cfg.EngRushPriorityRadius, cfg.EngRushPriorityBackup, cfg.EngRushCripple,
+			cfg.EngRushSpare == 2 ? "release" : cfg.EngRushSpare == 1 ? "nearest" : "best");
 	// ─── [Doctrine.Salvage] — decide before the engine's raise-money base sale ──
 	cfg.SalvageEnable = pINI->ReadBool("Doctrine.Salvage", "Enable", cfg.SalvageEnable);
 	cfg.SalvageBlockWithIncome = pINI->ReadBool("Doctrine.Salvage", "BlockWithIncome", cfg.SalvageBlockWithIncome);
@@ -670,8 +677,8 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.AceMobileOnly = pINI->ReadBool("Doctrine.General", "AceMobileOnly", cfg.AceMobileOnly);
 	cfg.AutoProduce = pINI->ReadBool("Doctrine.General", "AutoProduce", cfg.AutoProduce);
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
-	Echo("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d LaneBucket=%d LaneSampleInterval=%d LaneRadius=%d LaneMinStrength=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
-		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.InterceptStandoff, cfg.DefendPerimeter, cfg.BaseEdgeMargin, cfg.LaneBucket, cfg.LaneSampleInterval, cfg.LaneRadius, cfg.LaneMinStrength, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
+	Echo("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d DebugOrders=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d LaneBucket=%d LaneSampleInterval=%d LaneRadius=%d LaneMinStrength=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
+		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.DebugOrders, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.InterceptStandoff, cfg.DefendPerimeter, cfg.BaseEdgeMargin, cfg.LaneBucket, cfg.LaneSampleInterval, cfg.LaneRadius, cfg.LaneMinStrength, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");
@@ -796,6 +803,7 @@ DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 	DeathZones::Reset();
 	ArsenalGrader::Reset();
 	AITriggerDifficulty::Reset();
+	OrderAudit::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

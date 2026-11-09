@@ -5921,12 +5921,33 @@ void Teams::EngineerRush(HouseClass* pHouse)
 			++filled[tid];
 		}
 	}
+	// Spares (Spare): an engineer no target has room for (the targets thinned out after it joined) goes in
+	// after the best target's or takes the nearest target, or leaves the squad — it used to stand on the
+	// squad in Guard for 600+ frames, next to a door if the squad had walked it there (Rex 11-08: "the
+	// engineer just stood there instead of taking it").
+	int spares = 0;
+	for (auto it = onTeam.begin(); it != onTeam.end(); )
+	{
+		if (next.count(it->first)) { ++it; continue; }
+		++spares;
+		if (cfg.EngRushSpare == 2) { pTeam->LiberateMember(it->second); it = onTeam.erase(it); continue; }
+		DWORD tid = cands[0].B->UniqueID;
+		if (cfg.EngRushSpare == 1)
+		{
+			double bestD = 1e18;
+			for (auto const& c : cands)
+				if (Dist2D(c.B->GetCoords(), it->second->GetCoords()) < bestD)
+					{ bestD = Dist2D(c.B->GetCoords(), it->second->GetCoords()); tid = c.B->UniqueID; }
+		}
+		next[it->first] = tid;
+		++it;
+	}
 	assign = next;
 
 	if (cfg.DebugTicks)
-		Debug::Log("[DoctrineExt] eng-rush: house=%s#%d targets=%d desired=%d eng=%d escorts=%d/%d "
+		Debug::Log("[DoctrineExt] eng-rush: house=%s#%d targets=%d desired=%d eng=%d spare=%d escorts=%d/%d "
 			"build=%d%s best=%s@%.1fc%s risk=%.0f/%d.\n", pHouse->get_ID(), hIdx,
-			static_cast<int>(cands.size()), desired, static_cast<int>(onTeam.size()), escorts, escortCap,
+			static_cast<int>(cands.size()), desired, static_cast<int>(onTeam.size()), spares, escorts, escortCap,
 			want, flush ? "" : " (below MinCash)", cands[0].B->Type->ID, cands[0].Dist / 256.0,
 			cands[0].Rank < 0 ? " (recapture)" : cands[0].Rank < nPri ? " (priority)"
 				: cands[0].Rank == nPri ? " (cripple)" : "", cands[0].Risk, pEngType->Strength);

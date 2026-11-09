@@ -59,6 +59,8 @@ public:
 	int MaxTeamSize = 12;    // hard clamp on any procedural team
 	int MaxTeamCost = 10000; // hard clamp on any procedural team's cost
 	bool DebugTicks = false; // log every rule evaluation (verbose)
+	bool DebugOrders = false; // log AI units whose orders bounce between DoctrineExt steps and the engine
+	                          // ("orders churn:", OrderAudit)
 	int TeamTTL = 3600;      // frames before a stuck doctrine team is disbanded
 	int TeamsPerHouse = 2;   // concurrent doctrine teams per AI house
 	bool StrictOwnership = true; // re-check Owner= on arsenal picks (CanBuild
@@ -532,6 +534,9 @@ public:
 	bool EngRushCripple = false;     // Cripple — a building whose capture leaves its owner without a yard, a
 	                                 // kind of factory, income or enough power ranks right after Priority
 	int EngRushMax = 2;              // Max — concurrent rush engineers
+	int EngRushSpare = 0;            // Spare — a squad engineer no target has room for: 0 best (goes in after
+	                                 // the best target's), 1 nearest (the nearest target), 2 release (leaves
+	                                 // the squad); before, it stood in Guard on the squad
 	int EngRushEscorts = 2;          // Escorts — armed units per engineer (0 = none)
 	double EngRushSafety = 1.0;      // Safety — rush only if expected enemy damage x this < engineer HP
 	int EngRushMinCash = 0;          // MinCash — build new rush engineers only at or above this cash

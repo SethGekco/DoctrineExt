@@ -647,12 +647,14 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.WallsOnSighting = pINI->ReadBool("Doctrine.Walls", "OnSighting", cfg.WallsOnSighting);
 	cfg.WallsMinCash = pINI->ReadInteger("Doctrine.Walls", "MinCash", cfg.WallsMinCash);
 	cfg.WallsInterval = pINI->ReadInteger("Doctrine.Walls", "Interval", cfg.WallsInterval);
+	cfg.WallsRetry = pINI->ReadInteger("Doctrine.Walls", "Retry", cfg.WallsRetry);
 	if (cfg.WallsEnable)
 		Echo("[DoctrineExt] [Doctrine.Walls]: Enable=1 Protect=%u (empty=auto)%s Types=%u (empty=auto)%s Ring=%d "
-			"Urgent=%d NeedIncome=%d OnSighting=%d MinCash=%d Interval=%d\n",
+			"Urgent=%d NeedIncome=%d OnSighting=%d MinCash=%d Interval=%d Retry=%d\n",
 			static_cast<unsigned>(cfg.WallsProtect.size()), cfg.WallsProtectNone ? " NONE" : "",
 			static_cast<unsigned>(cfg.WallsTypes.size()), cfg.WallsTypesNone ? " NONE" : "", cfg.WallsRing,
-			cfg.WallsUrgent, cfg.WallsNeedIncome, cfg.WallsOnSighting, cfg.WallsMinCash, cfg.WallsInterval);
+			cfg.WallsUrgent, cfg.WallsNeedIncome, cfg.WallsOnSighting, cfg.WallsMinCash, cfg.WallsInterval,
+			cfg.WallsRetry);
 	if (cfg.EconomyEnable)
 		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

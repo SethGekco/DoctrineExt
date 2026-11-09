@@ -5355,6 +5355,9 @@ void Teams::SteerPickets(HouseClass* pHouse)
 namespace
 {
 	std::map<int, int> g_wallLastFire;
+	std::map<int, std::set<int>> g_wallMine;          // house -> ring cells (CaptureCellKey) whose wall node we queued
+	std::map<int, std::map<int, int>> g_wallRetry;    // house -> ring cell -> frame it may be queued again
+	std::map<int, bool> g_wallTypeOk;                 // house -> it could build its wall type at the last pass
 
 	// The wall type a house builds (Types): the list's first it can build now; auto = [AI] ConcreteWalls,
 	// our side's (AIBasePlanningSide) first, as the engine's own wall nodes pick it.
@@ -5406,18 +5409,37 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 	bool income = false;
 	for (auto const pB : pHouse->Buildings)
 		if (pB && pB->Type && !pB->InLimbo && pB->Health > 0 && IncomeKindOf(pB->Type) > 0) income = true;
+	// NeedIncome: with no income building standing, walls go behind the plan's last unbuilt one (the refinery
+	// first); with none in the plan either, they wait.
+	auto& nodes = pHouse->Base.BaseNodes;
+	int afterIncome = -1;
+	if (cfg.WallsNeedIncome && !income)
+		for (int i = 0; i < nodes.Count; ++i)
+		{
+			int const t = nodes.Items[i].BuildingTypeIndex;
+			if (!nodes.Items[i].Placed && t >= 0 && t < BuildingTypeClass::Array.Count
+				&& IncomeKindOf(BuildingTypeClass::Array.GetItem(t)) > 0) afterIncome = i + 1;
+		}
 	const char* wait = nullptr;
 	if (wallIdx < 0) wait = "no wall type we can build yet (Types)";
-	else if (cfg.WallsNeedIncome && !income) wait = "no income building yet (NeedIncome)";
+	else if (cfg.WallsNeedIncome && !income && afterIncome < 0)
+		wait = "no income building yet, none in the plan (NeedIncome)";
 	else if (cfg.WallsOnSighting && g_picketSightings[hIdx].empty()) wait = "no enemy engineer seen yet (OnSighting)";
 	else if (cash < cfg.WallsMinCash) wait = "cash below MinCash";
 
 	// The ring Ring cells out from each protected building's foundation. A cell already walled or built on
 	// is done (a building stops an engineer as well as a wall), one a wall can't stand on now is skipped
-	// (retried next pass), one with a node of ours pending is left alone; the rest are queued.
-	auto& nodes = pHouse->Base.BaseNodes;
+	// (retried next pass), one with a node of ours pending is left alone; the rest are queued. A cell whose
+	// node of ours went from the plan unbuilt (the engine couldn't place the wall there) waits Retry frames,
+	// so a wall that won't go in can't hold the plan's front forever.
+	auto& mine = g_wallMine[hIdx];
+	auto& retry = g_wallRetry[hIdx];
+	bool const typeWasOk = g_wallTypeOk[hIdx];
+	g_wallTypeOk[hIdx] = wallIdx >= 0;
+	std::set<int> seen;
 	int const ring = std::max(1, cfg.WallsRing);
 	int protect = 0, cells = 0, walled = 0, builtOn = 0, blocked = 0, pending = 0;
+	int vanished = 0, retrying = 0, occupied = 0, attempts = 0;
 	std::vector<CellStruct> want;
 	for (auto const pB : pHouse->Buildings)
 	{
@@ -5431,24 +5453,44 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 			{
 				if (x != x0 && x != x1 && y != y0 && y != y1) continue;   // inside the ring
 				CellStruct const c{ static_cast<short>(x), static_cast<short>(y) };
+				int const key = CaptureCellKey(c);
 				++cells;
+				seen.insert(key);
 				auto const pCell = MapClass::Instance.TryGetCellAt(c);
 				if (!pCell) { ++blocked; continue; }
 				int const ov = pCell->OverlayTypeIndex;
 				if (ov >= 0 && ov < OverlayTypeClass::Array.Count && OverlayTypeClass::Array.GetItem(ov)->Wall)
-					{ ++walled; continue; }
-				if (pCell->GetBuilding()) { ++builtOn; continue; }
-				bool queued = false;
-				for (int i = 0; i < nodes.Count && !queued; ++i)
-					queued = !nodes.Items[i].Placed && nodes.Items[i].MapCoords == c;
-				if (queued) { ++pending; continue; }
+					{ ++walled; mine.erase(key); continue; }
+				if (pCell->GetBuilding()) { ++builtOn; mine.erase(key); continue; }
+				int node = -1;
+				for (int i = 0; i < nodes.Count && node < 0; ++i)
+					if (!nodes.Items[i].Placed && nodes.Items[i].MapCoords == c) node = i;
+				if (node >= 0)
+				{
+					++pending;
+					attempts = std::max(attempts, static_cast<int>(nodes.Items[node].Attempts));
+					for (auto p = pCell->GetContent(); p; p = p->NextObject)
+						if (p->WhatAmI() == AbstractType::Infantry || p->WhatAmI() == AbstractType::Unit)
+							{ ++occupied; break; }
+					continue;
+				}
+				if (mine.erase(key) && typeWasOk && pWall)     // dropped unbuilt, not for want of the type
+				{
+					++vanished;
+					retry[key] = now + std::max(0, cfg.WallsRetry);
+				}
+				auto const rit = retry.find(key);
+				if (rit != retry.end() && now < rit->second) { ++retrying; continue; }
 				if (!pWall || !pCell->CanThisExistHere(pWall->SpeedType, pWall, pHouse)) { ++blocked; continue; }
 				if (std::find(want.begin(), want.end(), c) == want.end()) want.push_back(c);
 			}
 	}
+	for (auto it = mine.begin(); it != mine.end();)                  // rings gone with their building
+		it = seen.count(*it) ? std::next(it) : mine.erase(it);
 
 	// Queue them, the side facing the nearest enemy base first; with Urgent, ahead of the plan's next
-	// unbuilt node (where the engine puts its own wall nodes), else after the plan.
+	// unbuilt node (where the engine puts its own wall nodes), else after the plan; NeedIncome keeps them
+	// behind an unbuilt income building.
 	int queuedNow = 0;
 	if (!wait && !want.empty())
 	{
@@ -5472,6 +5514,7 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 		if (cfg.WallsUrgent)
 			for (int i = 0; i < nodes.Count; ++i)
 				if (!nodes.Items[i].Placed) { first = i; break; }
+		first = std::max(first, afterIncome);
 		int const before = nodes.Count;
 		for (auto const& c : want)
 		{
@@ -5480,7 +5523,7 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 			node.MapCoords = c;
 			node.Placed = false;
 			node.Attempts = 0;
-			if (nodes.AddItem(node)) ++queuedNow;
+			if (nodes.AddItem(node)) { ++queuedNow; mine.insert(CaptureCellKey(c)); }
 		}
 		if (first < before)
 			std::rotate(nodes.Items + first, nodes.Items + before, nodes.Items + nodes.Count);
@@ -5488,10 +5531,11 @@ void Teams::WallDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks && protect > 0)
 		Debug::Log("[DoctrineExt] walls: house=%s#%d type=%s protect=%d ring=%d cells=%d walled=%d built-on=%d "
-			"blocked=%d pending=%d queued=%d%s cash=%d%s%s.\n", pHouse->get_ID(), hIdx, pWall ? pWall->ID : "-",
-			protect, ring, cells, walled, builtOn, blocked, pending, queuedNow,
-			queuedNow && cfg.WallsUrgent ? " (front of the plan)" : "", cash, wait ? "; waiting: " : "",
-			wait ? wait : "");
+			"blocked=%d pending=%d (occupied %d, attempts %d) dropped=%d retrying=%d queued=%d%s cash=%d%s%s.\n",
+			pHouse->get_ID(), hIdx, pWall ? pWall->ID : "-", protect, ring, cells, walled, builtOn, blocked,
+			pending, occupied, attempts, vanished, retrying, queuedNow,
+			!queuedNow ? "" : afterIncome >= 0 ? " (behind the income building)"
+				: cfg.WallsUrgent ? " (front of the plan)" : "", cash, wait ? "; waiting: " : "", wait ? wait : "");
 }
 
 // ─── Engineer rush (§10m) ────────────────────────────────────────────────────
@@ -6769,6 +6813,9 @@ void Teams::Reset()
 	g_picketAssign.clear();
 	g_picketLastFire.clear();
 	g_wallLastFire.clear();
+	g_wallMine.clear();
+	g_wallRetry.clear();
+	g_wallTypeOk.clear();
 	g_denySelling = false;
 	g_engTracks.clear();
 	g_keptCaptures.clear();

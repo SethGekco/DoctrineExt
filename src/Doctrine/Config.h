@@ -605,11 +605,14 @@ public:
 	bool WallsTypesNone = false;
 	int WallsRing = 1;               // Ring — cells out from the building's foundation (1 = touching it)
 	bool WallsUrgent = true;         // Urgent — walls go to the front of the AI's build plan; no = after it
-	bool WallsNeedIncome = true;     // NeedIncome — start once the house owns an income building
+	bool WallsNeedIncome = true;     // NeedIncome — an income building first: until one stands, walls queue
+	                                 // behind the plan's unbuilt income buildings (and wait while it has none)
 	bool WallsOnSighting = false;    // OnSighting — start once an enemy engineer has come at the base
 	                                 // (the pickets' sightings; needs [Doctrine.CounterEngineer] Enable)
 	int WallsMinCash = 0;            // MinCash — queue walls only while cash >= this
 	int WallsInterval = 150;         // Interval — frames between passes
+	int WallsRetry = 900;            // Retry — frames before a cell whose wall node the engine dropped unbuilt
+	                                 // is queued again (0 = next pass)
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

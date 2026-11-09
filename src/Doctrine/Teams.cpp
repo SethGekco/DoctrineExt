@@ -5106,7 +5106,11 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		{
 			auto& prev = cut[pR->UniqueID];
 			auto const cc = pCut->GetCellCoords();
-			bool const shifted = !prev || Dist2D(prev->GetCellCoords(), cc) > 256.0;   // cut-off point moved
+			// The cut-off point creeps as the engineer walks: re-send for a jump of 3+ cells at once, a
+			// smaller shift only once SteerReissue frames have passed (re-sending every tick restarted it).
+			double const moved = prev ? Dist2D(prev->GetCellCoords(), cc) : 1e18;
+			auto& last = g_steerOrders[pR->UniqueID];
+			bool const shifted = moved > 3.0 * 256.0 || (moved > 256.0 && now - last.second >= cfg.SteerReissue);
 			bool const strayed = pR->GetCurrentMission() != Mission::Move               // countermanded short
 				&& Dist2D(pR->GetCoords(), prev ? prev->GetCellCoords() : cc) > 384.0;  // of it
 			if (shifted || strayed)
@@ -5115,6 +5119,7 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 				pR->SetDestination(pCut, true);
 				pR->QueueMission(Mission::Move, false);
 				prev = pCut;
+				last = { pCut, now };
 			}
 			continue;
 		}

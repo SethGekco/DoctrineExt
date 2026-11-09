@@ -20,6 +20,7 @@
 #include <CellClass.h>
 #include <BuildingClass.h>
 #include <BuildingTypeClass.h>
+#include <CCINIClass.h>
 #include <MissionClass.h>
 #include <RulesClass.h>
 #include <OverlayTypeClass.h>
@@ -151,10 +152,46 @@ namespace
 		return nodes.AddItem(node);
 	}
 
-	// Walk the role's list best-first; take the first type the house can
-	// build right now or already owns units of.
+	// Is the house's country in pType's Owner=? Read by name from the rules INI: the engine keeps Owner= as
+	// a 32-bit country mask, so with more than 32 [Countries] a country and the one 32 (64, 96) places
+	// later share a bit (11-09: Bulgaria, #96, made FLAKT an Americans unit). A type with no Owner= of its
+	// own in the rules INI (inherited, or set elsewhere) falls back to the engine's mask.
+	bool InOwnersByName(HouseClass* const pHouse, TechnoTypeClass* const pType)
+	{
+		static std::map<std::string, std::vector<std::string>> owners;     // empty = use the mask
+		auto it = owners.find(pType->ID);
+		if (it == owners.end())
+		{
+			std::vector<std::string> list;
+			char buf[2048] = {};
+			if (CCINIClass::INI_Rules && CCINIClass::INI_Rules->ReadString(pType->ID, "Owner", "", buf, sizeof(buf)) > 0)
+				for (char* tok = std::strtok(buf, ","); tok; tok = std::strtok(nullptr, ","))
+				{
+					while (*tok == ' ' || *tok == '\t') ++tok;
+					std::string name(tok);
+					while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
+					if (!name.empty()) list.push_back(name);
+				}
+			it = owners.emplace(pType->ID, std::move(list)).first;
+		}
+		if (it->second.empty() || !pHouse->Type) return pHouse->InOwners(pType);
+		auto const pHt = pHouse->Type;
+		const char* const parent = pHt->ParentCountry;
+		const char* const country = parent && *parent ? parent : pHt->ID;
+		for (auto const& name : it->second)
+			if (_strcmpi(name.c_str(), country) == 0) return true;
+		return false;
+	}
+
+	bool CanBuildStrict(HouseClass* pHouse, TechnoTypeClass* pType, bool honorPrereq = true);
+
+	// Walk the role's list best-first; take the first type the house can really build right now (tech
+	// level, Owner= and prerequisites, CanBuildStrict), else the first it owns units of — those are only
+	// recruited, never built (Dispatch caps the team at the free ones).
 	TechnoTypeClass* PickType(HouseClass* const pHouse, const DoctrineArsenalRole& role)
 	{
+		bool const honor = DoctrineConfig::Get().HonorPrereqForRush();
+		TechnoTypeClass* pOwned = nullptr;
 		for (auto const& id : role.Units)
 		{
 			auto const pType = TechnoTypeClass::Find(id.c_str());
@@ -168,22 +205,16 @@ namespace
 				WarnOnce("arsenal " + role.Role + ": " + id + " is not a mobile unit, skipped");
 				continue;
 			}
-			auto const canBuild = pHouse->CanBuild(pType, false, true);
+			bool const strict = CanBuildStrict(pHouse, pType, honor);
 			int const owned = CountOwned(pHouse, pType);
-			// Live tests showed CanBuild returning Buildable cross-faction in
-			// this modded stack (an Allied AI picked and built Flak Tracks),
-			// so the build path re-checks Owner= itself unless the modder
-			// opts out. Units the house physically owns are always usable.
-			bool const ownerOK = !DoctrineConfig::Get().StrictOwnership
-				|| pHouse->InOwners(pType);
 			if (DoctrineConfig::Get().DebugTicks)
-				Debug::Log("[DoctrineExt]   candidate %s for %s#%d: CanBuild=%d inOwners=%d owned=%d\n",
+				Debug::Log("[DoctrineExt]   candidate %s for %s#%d: CanBuild=%d buildable=%d owned=%d\n",
 					id.c_str(), pHouse->get_ID(), pHouse->ArrayIndex,
-					static_cast<int>(canBuild), ownerOK, owned);
-			if ((canBuild == CanBuildResult::Buildable && ownerOK) || owned > 0)
-				return pType;
+					static_cast<int>(pHouse->CanBuild(pType, false, true)), strict, owned);
+			if (strict) return pType;
+			if (owned > 0 && !pOwned) pOwned = pType;
 		}
-		return nullptr;
+		return pOwned;
 	}
 
 	// STRICT buildability for anything DoctrineExt PRODUCES. This stack's
@@ -280,7 +311,7 @@ namespace
 	// force-build a CLEG with no Battle Lab). Callers pass the per-task config toggle
 	// (HonorPrereqForCrate / HonorPrereqForRush); defaults to honoring.
 	bool CanBuildStrict(HouseClass* const pHouse, TechnoTypeClass* const pType,
-		bool const honorPrereq = true)
+		bool const honorPrereq)
 	{
 		if (!pType) return false;
 		int const tl = pType->TechLevel;
@@ -290,7 +321,7 @@ namespace
 		int maxTL = (pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10)
 			? pHouse->TechLevel : 10;
 		if (tl > maxTL) return false;                      // e.g. TechLevel=11
-		if (DoctrineConfig::Get().StrictOwnership && !pHouse->InOwners(pType))
+		if (DoctrineConfig::Get().StrictOwnership && !InOwnersByName(pHouse, pType))
 			return false;
 		// Our own prereq check FIRST (when honoring) — CanBuild leaks the generic TECH
 		// prereq for AI houses, so don't trust it alone.
@@ -299,15 +330,13 @@ namespace
 		return pHouse->CanBuild(pType, false, true) == CanBuildResult::Buildable;
 	}
 
-	// Is pType usable by pHouse right now (buildable respecting Owner=, or
+	// Is pType usable by pHouse right now (really buildable, CanBuildStrict, or
 	// already owned)? Same rule PickType applies, factored out for PickCounter.
 	bool IsEligible(HouseClass* const pHouse, TechnoTypeClass* const pType)
 	{
 		if (!pType || !IsTeamable(pType)) return false;
-		bool const ownerOK = !DoctrineConfig::Get().StrictOwnership
-			|| pHouse->InOwners(pType);
-		return (pHouse->CanBuild(pType, false, true) == CanBuildResult::Buildable
-			&& ownerOK) || CountOwned(pHouse, pType) > 0;
+		return CanBuildStrict(pHouse, pType, DoctrineConfig::Get().HonorPrereqForRush())
+			|| CountOwned(pHouse, pType) > 0;
 	}
 
 	// ─── Counter-selection (§10b Phase 6a) ──────────────────────────────────
@@ -964,6 +993,31 @@ bool Teams::Dispatch(HouseClass* pHouse, const DoctrineRule& rule, double obsVal
 	{
 		count = cfg.MaxTeamCost / cost;
 		if (count < 1) count = 1;
+	}
+
+	// A type the house can't really build (Owner=, tech level, prerequisites) is fielded only from units it
+	// owns that no team holds: the team asks for no more than those, since the engine fills a short team by
+	// building the rest through its own looser check (11-09: AIs with a GAPILE and no NAHAND / NARADR built
+	// Flak Troopers for AirRaid teams).
+	if (!CanBuildStrict(pHouse, pType, cfg.HonorPrereqForRush()))
+	{
+		int free = 0;
+		for (int i = 0; i < TechnoClass::Array.Count; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->Owner != pHouse || pT->InLimbo || pT->GetTechnoType() != pType) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Infantry && what != AbstractType::Unit && what != AbstractType::Aircraft) continue;
+			if (!static_cast<FootClass*>(pT)->Team) ++free;
+		}
+		if (free <= 0)
+		{
+			if (cfg.DebugTicks)
+				Debug::Log("[DoctrineExt] %s for %s#%d: %s isn't buildable and none are free to recruit.\n",
+					rule.Name.c_str(), pHouse->get_ID(), pHouse->ArrayIndex, pType->ID);
+			return false;
+		}
+		if (count > free) count = free;
 	}
 
 	int const frame = Unsorted::CurrentFrame;
@@ -2148,7 +2202,7 @@ namespace
 			auto const pTy = TechnoTypeClass::Find(e.ID.c_str());
 			if (!pTy || IsExcludedChaser(pTy)) continue;
 			if (pTy->ResourceGatherer || !HasOffensiveWeapon(pTy)) continue;
-			if (!pHouse->InOwners(pTy)) continue; // faction-correct always (never a
+			if (!InOwnersByName(pHouse, pTy)) continue; // faction-correct always (never a
 			                                      // Soviet DRON for an Allied AI etc.),
 			                                      // independent of StrictOwnership
 			if (!CanBuildStrict(pHouse, pTy, cfg.HonorPrereqForCrate())) continue;
@@ -3849,7 +3903,7 @@ void Teams::ForcedBudget(HouseClass* pHouse)
 		for (auto const& id : tier.Buildings)
 		{
 			auto const pBt = BuildingTypeClass::Find(id.c_str());
-			if (!pBt || !pHouse->InOwners(pBt)) continue;
+			if (!pBt || !InOwnersByName(pHouse, pBt)) continue;
 			if (pHouse->CountOwnedAndPresent(pBt) >= tier.Count) continue; // reached target
 			if (!CanBuildStrict(pHouse, pBt)) continue;                    // can't build yet
 			focus = pBt; focusTier = t; focusCount = tier.Count; break;
@@ -3933,7 +3987,7 @@ namespace
 		for (auto const pIt : InfantryTypeClass::Array)
 		{
 			if (!pIt || !pIt->Engineer) continue;
-			if (!pHouse->InOwners(pIt)) continue;                        // faction-correct
+			if (!InOwnersByName(pHouse, pIt)) continue;                        // faction-correct
 			if (!CanBuildStrict(pHouse, pIt, honorPrereq)) continue;
 			if (pIt->Cost < bestCost) { bestCost = pIt->Cost; best = pIt; }
 		}
@@ -4739,7 +4793,7 @@ namespace
 			if (!income && yard)
 				for (auto const pBt : BuildingTypeClass::Array)
 					if (pBt && IncomeKindOf(pBt) > 0 && pBt->TechLevel >= 0 && pBt->TechLevel <= maxTL
-						&& (!cfg.StrictOwnership || pHouse->InOwners(pBt))
+						&& (!cfg.StrictOwnership || InOwnersByName(pHouse, pBt))
 						&& (!pCheapest || pBt->GetActualCost(pHouse) < pCheapest->GetActualCost(pHouse)))
 						pCheapest = pBt;
 			if (pCheapest && worth >= pCheapest->GetActualCost(pHouse)) income = true;
@@ -4917,7 +4971,7 @@ namespace
 			if (!pIt || pIt->Engineer) continue;
 			if (!list.empty()) { if (!ListHas(list, pIt->ID)) continue; }
 			else if (!HasOffensiveWeapon(pIt)) continue;          // auto: must be armed
-			if (!pHouse->InOwners(pIt)) continue;
+			if (!InOwnersByName(pHouse, pIt)) continue;
 			if (!CanBuildStrict(pHouse, pIt, honorPrereq)) continue;
 			if (pIt->Speed > bestSpeed) { bestSpeed = pIt->Speed; best = pIt; }
 		}
@@ -5011,7 +5065,7 @@ namespace
 		{
 			TechnoTypeClass* pType = InfantryTypeClass::Find(id.c_str());
 			if (!pType) pType = UnitTypeClass::Find(id.c_str());
-			if (pType && pHouse->InOwners(pType) && CanBuildStrict(pHouse, pType, honor)) return pType;
+			if (pType && InOwnersByName(pHouse, pType) && CanBuildStrict(pHouse, pType, honor)) return pType;
 		}
 		return cfg.CounterEngPicketUnits.empty() ? BestAntiEngineer(pHouse, honor) : nullptr;
 	}
@@ -6528,7 +6582,7 @@ namespace
 			default:                match = (pBt->PowerBonus > 0); break;
 			}
 			if (!match) continue;
-			if (!pHouse->InOwners(pBt)) continue;
+			if (!InOwnersByName(pHouse, pBt)) continue;
 			if (!CanBuildStrict(pHouse, pBt, honorPrereq)) continue;
 			if (pBt->Cost < bestCost) { bestCost = pBt->Cost; best = pBt; }
 		}
@@ -6927,7 +6981,7 @@ namespace
 	bool NewTech(BuildingTypeClass* const pBt, HouseClass* const pHouse)
 	{
 		int const maxTL = (pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10) ? pHouse->TechLevel : 10;
-		return pBt->TechLevel < 0 || pBt->TechLevel > maxTL || !pHouse->InOwners(pBt);
+		return pBt->TechLevel < 0 || pBt->TechLevel > maxTL || !InOwnersByName(pHouse, pBt);
 	}
 
 	// Armed value within range of a point (Hold.Radius): ours and our allies', or everyone hostile to us.

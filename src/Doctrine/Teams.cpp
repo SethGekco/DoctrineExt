@@ -4657,43 +4657,6 @@ namespace
 		return true;
 	}
 
-	// Is this house past recovery (DenySell.Doomed)? The first enabled test that holds: no construction
-	// yard and no MCV to own or build (Doomed.NoYard); no income building or miner, and no yard plus cash
-	// for an income building it can build (Doomed.NoIncome); an army worth under Doomed.ArmyRatio times
-	// the engineer owner's. nullptr = it can still recover.
-	const char* DoomedWhy(HouseClass* const pHouse, int const ours, int const theirs)
-	{
-		auto const& cfg = DoctrineConfig::Get();
-		if (!cfg.CounterEngDenySellDoomed) return nullptr;
-		if (cfg.CounterEngDoomedNoYard && !CanRecoverMCV(pHouse))
-			return "no construction yard and no MCV to own or build (Doomed.NoYard)";
-		if (cfg.CounterEngDoomedNoIncome && !OwnsMiner(pHouse))
-		{
-			bool income = false, yard = false;
-			for (auto const pO : pHouse->Buildings)
-			{
-				if (!pO || !pO->Type || pO->InLimbo || pO->Health <= 0) continue;
-				if (pO->GetCurrentMission() == Mission::Selling) continue;
-				if (IncomeKindOf(pO->Type) > 0) income = true;
-				if (pO->Type->ConstructionYard) yard = true;
-			}
-			int const cash = static_cast<int>(pHouse->Available_Money());
-			if (!income && yard)
-				for (auto const pBt : BuildingTypeClass::Array)
-					if (pBt && IncomeKindOf(pBt) > 0 && CanBuildStrict(pHouse, pBt) && cash >= pBt->GetActualCost(pHouse))
-						{ income = true; break; }
-			if (!income) return "no income building or miner, and none we can build and pay for (Doomed.NoIncome)";
-		}
-		if (cfg.CounterEngDoomedArmyRatio > 0.0 && ours < theirs * cfg.CounterEngDoomedArmyRatio)
-		{
-			static char why[128];
-			std::snprintf(why, sizeof(why), "our army (%d) is under %.2fx theirs (%d) (Doomed.ArmyRatio)",
-				ours, cfg.CounterEngDoomedArmyRatio, theirs);
-			return why;
-		}
-		return nullptr;
-	}
-
 	// What the engineer cost its owner (DenySell.Trade). A transport: the engineer we know is aboard
 	// (Transports.Cargo=know), else [General] Engineer.
 	int EngineerCost(TechnoClass* const pEng, bool const carrier)
@@ -4727,6 +4690,66 @@ namespace
 		for (auto const pIt : InfantryTypeClass::Array)
 			if (pIt && pIt->Engineer && CanBuildStrict(pHouse, pIt) && cash >= pIt->GetActualCost(pHouse))
 				return "we can build an engineer to retake it";
+		return nullptr;
+	}
+
+	// Is this house past recovery (DenySell.Doomed)? The first enabled test that holds:
+	// - Doomed.NoYard: no construction yard, no MCV to own or build, and no yard it built that an enemy
+	//   holds and it could retake (RetakeWhy);
+	// - Doomed.NoIncome: no income building or miner, none in production, and no yard, or not enough cash
+	//   plus what its buildings would sell for to pay for an income building it may own (a young base has
+	//   spent its cash on the queue, and may still lack the refinery's prerequisites);
+	// - Doomed.ArmyRatio: an army worth under this times the engineer owner's.
+	// nullptr = it can still recover.
+	const char* DoomedWhy(HouseClass* const pHouse, int const ours, int const theirs)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (!cfg.CounterEngDenySellDoomed) return nullptr;
+		if (cfg.CounterEngDoomedNoYard && !CanRecoverMCV(pHouse))
+		{
+			bool retake = false;
+			for (auto const pO : BuildingClass::Array)
+			{
+				if (!pO || !pO->Type || !pO->Owner || pO->InLimbo || pO->Health <= 0) continue;
+				if (!pO->Type->ConstructionYard || !pO->Type->Capturable || pO->InitialOwner != pHouse) continue;
+				if (pO->Owner == pHouse || pHouse->IsAlliedWith(pO->Owner)) continue;
+				if (RetakeWhy(pHouse, ours, ArmyValue(pO->Owner))) { retake = true; break; }
+			}
+			if (!retake)
+				return "no construction yard, no MCV to own or build, and no captured yard we can retake (Doomed.NoYard)";
+		}
+		if (cfg.CounterEngDoomedNoIncome && !OwnsMiner(pHouse))
+		{
+			bool income = false, yard = false;
+			int worth = static_cast<int>(pHouse->Available_Money());
+			for (auto const pO : pHouse->Buildings)
+			{
+				if (!pO || !pO->Type || pO->InLimbo || pO->Health <= 0) continue;
+				if (pO->GetCurrentMission() == Mission::Selling) continue;
+				if (IncomeKindOf(pO->Type) > 0) income = true;
+				if (pO->Type->ConstructionYard) yard = true;
+				if (!pO->Type->Unsellable) worth += pO->Type->GetRefund(pHouse, false);
+			}
+			auto const pFac = pHouse->Primary_ForBuildings;
+			auto const pQ = pFac && pFac->Object ? pFac->Object->GetTechnoType() : nullptr;
+			if (pQ && pQ->WhatAmI() == AbstractType::BuildingType && IncomeKindOf(static_cast<BuildingTypeClass*>(pQ)) > 0)
+				income = true;
+			int const maxTL = pHouse->TechLevel >= 0 && pHouse->TechLevel <= 10 ? pHouse->TechLevel : 10;
+			if (!income && yard)
+				for (auto const pBt : BuildingTypeClass::Array)
+					if (pBt && IncomeKindOf(pBt) > 0 && pBt->TechLevel >= 0 && pBt->TechLevel <= maxTL
+						&& (!cfg.StrictOwnership || pHouse->InOwners(pBt)) && worth >= pBt->GetActualCost(pHouse))
+						{ income = true; break; }
+			if (!income)
+				return "no income building, miner or one in production, and nothing to build or pay for one with (Doomed.NoIncome)";
+		}
+		if (cfg.CounterEngDoomedArmyRatio > 0.0 && ours < theirs * cfg.CounterEngDoomedArmyRatio)
+		{
+			static char why[128];
+			std::snprintf(why, sizeof(why), "our army (%d) is under %.2fx theirs (%d) (Doomed.ArmyRatio)",
+				ours, cfg.CounterEngDoomedArmyRatio, theirs);
+			return why;
+		}
 		return nullptr;
 	}
 

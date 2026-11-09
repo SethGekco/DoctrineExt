@@ -619,14 +619,18 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.CapturedKeepNewTech = pINI->ReadBool("Doctrine.Captured", "KeepNewTech", cfg.CapturedKeepNewTech);
 	cfg.CapturedHoldRadius = pINI->ReadInteger("Doctrine.Captured", "Hold.Radius", cfg.CapturedHoldRadius);
 	cfg.CapturedHoldRatio = pINI->ReadDouble("Doctrine.Captured", "Hold.Ratio", cfg.CapturedHoldRatio);
+	cfg.CapturedHoldEnemyBarracks = pINI->ReadInteger("Doctrine.Captured", "Hold.EnemyBarracks",
+		cfg.CapturedHoldEnemyBarracks);
+	cfg.CapturedDenyRecapture = pINI->ReadBool("Doctrine.Captured", "DenyRecapture", cfg.CapturedDenyRecapture);
 	if (cfg.CapturedEnable)
 		Echo("[DoctrineExt] [Doctrine.Captured]: Enable=1 Keep=%u (empty=auto)%s Sell=%u KeepOnlyYard=%d "
 			"KeepYard=%d KeepYard.MustHold=%d DenyLastYard=%d KeepIfNeeded=%d KeepNewTech=%d Hold.Radius=%d "
-			"Hold.Ratio=%.2f\n",
+			"Hold.Ratio=%.2f Hold.EnemyBarracks=%d DenyRecapture=%d\n",
 			static_cast<unsigned>(cfg.CapturedKeep.size()), cfg.CapturedKeepNone ? " NONE" : "",
 			static_cast<unsigned>(cfg.CapturedSell.size()), cfg.CapturedKeepOnlyYard, cfg.CapturedKeepYard,
 			cfg.CapturedKeepYardMustHold, cfg.CapturedDenyLastYard,
-			cfg.CapturedKeepIfNeeded, cfg.CapturedKeepNewTech, cfg.CapturedHoldRadius, cfg.CapturedHoldRatio);
+			cfg.CapturedKeepIfNeeded, cfg.CapturedKeepNewTech, cfg.CapturedHoldRadius, cfg.CapturedHoldRatio,
+			cfg.CapturedHoldEnemyBarracks, cfg.CapturedDenyRecapture);
 	if (cfg.EconomyEnable)
 		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

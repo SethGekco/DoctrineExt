@@ -588,6 +588,11 @@ public:
 	int CapturedHoldRadius = 10;     // Hold.Radius — cells around it where the forces are compared
 	double CapturedHoldRatio = 1.0;  // Hold.Ratio — we can hold it when our armed value within Hold.Radius
 	                                 // is at least this times the enemies' (0 = always)
+	int CapturedHoldEnemyBarracks = 10; // Hold.EnemyBarracks — cells: an enemy barracks this close means we
+	                                 // can't hold it (an engineer walks out the door); 0 = ignore barracks
+	bool CapturedDenyRecapture = true; // DenyRecapture — sell a building we captured and kept when an engineer
+	                                 // will retake it before we can kill it, even where [Doctrine.CounterEngineer]
+	                                 // DenySell is off; DenySell's caps (PerEngineer / Max / Uncapped) still apply
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

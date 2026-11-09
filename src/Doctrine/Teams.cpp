@@ -4053,6 +4053,10 @@ namespace
 	// (ShouldBlockSell, reached from the BuildingClass::Sell hook inside that same call) lets it through.
 	bool g_denySelling = false;
 
+	// UniqueIDs of buildings an AI captured from another player and kept ([Doctrine.Captured]), so
+	// DenyRecapture can sell one before its old owner's engineer takes it back.
+	std::set<DWORD> g_keptCaptures;
+
 	// Every live engineer's last two position samples (>= 8 frames apart), so each has a MEASURED
 	// velocity from its second sighting on — the arrival estimate the deny-sell trusts. Sampled at
 	// most once per frame, by whichever house ticks.
@@ -4984,7 +4988,11 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		// (DenySell.Types), and never more than DenySell.PerEngineer sales to one engineer or
 		// DenySell.Max per DenySell.Window for the house: a bounced engineer just walks to the next
 		// building, and selling the whole base to stop one engineer is worse than losing a power plant.
-		if (!cfg.CounterEngDenySell || t.Eta > lead || t.ExpMax >= t.Hp * sellMargin
+		// A building we captured and kept is sold before it's retaken whatever DenySell says
+		// ([Doctrine.Captured] DenyRecapture): every kept capture was worth keeping, and keeping it for
+		// a retake hands it back. The sale caps still apply.
+		bool const recapture = cfg.CapturedDenyRecapture && g_keptCaptures.count(t.Goal->UniqueID);
+		if (!(cfg.CounterEngDenySell || recapture) || t.Eta > lead || t.ExpMax >= t.Hp * sellMargin
 			|| !CanDenySell(t.Goal, pHouse)) continue;
 		DWORD const uid = t.Eng->UniqueID;
 		const char* why = nullptr;
@@ -4994,11 +5002,11 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		else if (cfg.CounterEngDenySellMax > 0 && static_cast<int>(sellFrames.size()) >= cfg.CounterEngDenySellMax)
 			capped = "house sale cap reached (DenySell.Max per DenySell.Window)";
 		bool const uncapped = capped && DenyUncapped(t.Goal);
-		if (!WorthDenying(t.Goal, pHouse))
+		if (!recapture && !WorthDenying(t.Goal, pHouse))
 			why = "not worth denying (DenySell.Types)";
 		else if (capped && !uncapped)
 			why = capped;
-		else if (cfg.CounterEngDenySellKeepIrreplaceable && !Replaceable(t.Goal, pHouse))
+		else if (!recapture && cfg.CounterEngDenySellKeepIrreplaceable && !Replaceable(t.Goal, pHouse))
 		{
 			// Selling a building we can't build again loses it for good; captured, we can retake it.
 			// Only an army that can win without it (SellIfStronger) sells it anyway, to deny it.
@@ -5029,9 +5037,10 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 		sellFrames.push_back(now);
 		if (cfg.DebugTicks)
 			Debug::Log("[DoctrineExt] counter-eng DENY-SELL: house=%s#%d sold %s — %s#%u %.1f cells out, "
-				"eta=%.0ff, best-case damage %.0f < hp %d%s.\n", pHouse->get_ID(), hIdx,
+				"eta=%.0ff, best-case damage %.0f < hp %d%s%s.\n", pHouse->get_ID(), hIdx,
 				t.Goal->Type->ID, t.Eng->GetTechnoType()->ID, uid, t.Dist / 256.0,
-				t.Eta, t.ExpMax, t.Hp, uncapped ? " (DenySell.Uncapped: past the sale caps)" : "");
+				t.Eta, t.ExpMax, t.Hp, uncapped ? " (DenySell.Uncapped: past the sale caps)" : "",
+				recapture ? " (DenyRecapture: we captured it)" : "");
 	}
 
 	// Steer every responder onto its engineer (re-issued only when it drifted, so the attack isn't
@@ -6354,6 +6363,22 @@ namespace
 		}
 		return v;
 	}
+
+	// Cells from a point to the nearest barracks (infantry factory) of a house hostile to us
+	// (Hold.EnemyBarracks); -1 if none.
+	double NearestEnemyBarracks(HouseClass* const pHouse, CoordStruct const& at)
+	{
+		double best = -1.0;
+		for (int i = 0; i < BuildingClass::Array.Count; ++i)
+		{
+			auto const pB = BuildingClass::Array.GetItem(i);
+			if (!pB || !pB->Type || !pB->Owner || pB->InLimbo || pB->Health <= 0) continue;
+			if (pB->Type->Factory != AbstractType::InfantryType || !IsHostileTo(pHouse, pB->Owner)) continue;
+			double const d = Dist2D(at, pB->GetCoords()) / 256.0;
+			if (best < 0.0 || d < best) best = d;
+		}
+		return best;
+	}
 }
 
 bool Teams::KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew)
@@ -6368,7 +6393,8 @@ bool Teams::KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew
 	const char* why = nullptr;
 	static char whyBuf[192];
 	int ours = -1, theirs = -1;
-	auto const holds = [&]()                              // Hold.Radius / Hold.Ratio, measured once
+	double barracks = -1.0;
+	auto const holds = [&]()                              // Hold.Radius / Hold.Ratio / Hold.EnemyBarracks, measured once
 	{
 		if (ours < 0)
 		{
@@ -6376,7 +6402,12 @@ bool Teams::KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew
 			double const range = (cfg.CapturedHoldRadius > 0 ? cfg.CapturedHoldRadius : 10) * 256.0;
 			ours = ArmedValueNear(pNew, at, range, false);
 			theirs = ArmedValueNear(pNew, at, range, true);
+			barracks = NearestEnemyBarracks(pNew, at);
 		}
+		// An enemy barracks next door walks an engineer in before whatever stands here now (often just
+		// the rush's escorts, who move on) can be counted on.
+		if (cfg.CapturedHoldEnemyBarracks > 0 && barracks >= 0.0 && barracks <= cfg.CapturedHoldEnemyBarracks)
+			return false;
 		return cfg.CapturedHoldRatio <= 0.0 || ours >= theirs * cfg.CapturedHoldRatio;
 	};
 	if (cfg.CapturedKeepNone) why = "Keep=none: every capture is sold";
@@ -6417,12 +6448,14 @@ bool Teams::KeepCaptured(BuildingClass* pBld, HouseClass* pOld, HouseClass* pNew
 		g_captureSell = pBld;                             // past [Doctrine.Economy] PreventSelling
 		g_captureSellFrame = Unsorted::CurrentFrame;
 	}
+	else
+		g_keptCaptures.insert(pBld->UniqueID);            // DenyRecapture sells it before it's retaken
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] captured: house=%s#%d %s %s taken from %s#%d: %s. refund=%d cash=%d "
-			"armed near (Hold.Radius): ours=%d theirs=%d.\n", pNew->get_ID(), pNew->ArrayIndex,
+			"armed near (Hold.Radius): ours=%d theirs=%d, enemy barracks %.1fc.\n", pNew->get_ID(), pNew->ArrayIndex,
 			keep ? "keeps" : "sells", pBt->ID, pOld ? pOld->get_ID() : "?", pOld ? pOld->ArrayIndex : -1, why,
 			static_cast<int>(pBt->GetActualCost(pNew) * RulesClass::Instance->RefundPercent),
-			static_cast<int>(pNew->Available_Money()), ours, theirs);
+			static_cast<int>(pNew->Available_Money()), ours, theirs, barracks);
 	return keep;
 }
 
@@ -6549,6 +6582,7 @@ void Teams::Reset()
 	g_picketLastFire.clear();
 	g_denySelling = false;
 	g_engTracks.clear();
+	g_keptCaptures.clear();
 	g_engTrackFrame = -1;
 	g_denySells.clear();
 	g_denySellFrames.clear();

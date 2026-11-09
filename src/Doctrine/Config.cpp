@@ -631,6 +631,28 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			cfg.CapturedKeepYardMustHold, cfg.CapturedDenyLastYard,
 			cfg.CapturedKeepIfNeeded, cfg.CapturedKeepNewTech, cfg.CapturedHoldRadius, cfg.CapturedHoldRatio,
 			cfg.CapturedHoldEnemyBarracks, cfg.CapturedDenyRecapture);
+	// ─── [Doctrine.Walls] — wall in what engineers go for, early ─────────────
+	cfg.WallsEnable = pINI->ReadBool("Doctrine.Walls", "Enable", cfg.WallsEnable);
+	pINI->ReadString("Doctrine.Walls", "Protect", "", buf, sizeof(buf));
+	cfg.WallsProtect = SplitList(buf);
+	cfg.WallsProtectNone = IsNoneList(cfg.WallsProtect);
+	if (cfg.WallsProtectNone) cfg.WallsProtect.clear();
+	pINI->ReadString("Doctrine.Walls", "Types", "", buf, sizeof(buf));
+	cfg.WallsTypes = SplitList(buf);
+	cfg.WallsTypesNone = IsNoneList(cfg.WallsTypes);
+	if (cfg.WallsTypesNone) cfg.WallsTypes.clear();
+	cfg.WallsRing = pINI->ReadInteger("Doctrine.Walls", "Ring", cfg.WallsRing);
+	cfg.WallsUrgent = pINI->ReadBool("Doctrine.Walls", "Urgent", cfg.WallsUrgent);
+	cfg.WallsNeedIncome = pINI->ReadBool("Doctrine.Walls", "NeedIncome", cfg.WallsNeedIncome);
+	cfg.WallsOnSighting = pINI->ReadBool("Doctrine.Walls", "OnSighting", cfg.WallsOnSighting);
+	cfg.WallsMinCash = pINI->ReadInteger("Doctrine.Walls", "MinCash", cfg.WallsMinCash);
+	cfg.WallsInterval = pINI->ReadInteger("Doctrine.Walls", "Interval", cfg.WallsInterval);
+	if (cfg.WallsEnable)
+		Echo("[DoctrineExt] [Doctrine.Walls]: Enable=1 Protect=%u (empty=auto)%s Types=%u (empty=auto)%s Ring=%d "
+			"Urgent=%d NeedIncome=%d OnSighting=%d MinCash=%d Interval=%d\n",
+			static_cast<unsigned>(cfg.WallsProtect.size()), cfg.WallsProtectNone ? " NONE" : "",
+			static_cast<unsigned>(cfg.WallsTypes.size()), cfg.WallsTypesNone ? " NONE" : "", cfg.WallsRing,
+			cfg.WallsUrgent, cfg.WallsNeedIncome, cfg.WallsOnSighting, cfg.WallsMinCash, cfg.WallsInterval);
 	if (cfg.EconomyEnable)
 		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "

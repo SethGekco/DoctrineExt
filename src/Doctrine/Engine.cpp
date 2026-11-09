@@ -172,6 +172,8 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// so a picket it has just retasked is left to it). Pass throttled; steering every tick. Opt-in.
 	Teams::EngineerPickets(pHouse);
 	Teams::SteerPickets(pHouse);
+	// Walls: wall in what engineers go for, early, through the AI's own base plan. Pass throttled. Opt-in.
+	Teams::WallDoctrine(pHouse);
 
 	// Capture doctrine (§10j): grab neutral/enemy tech buildings (oil derricks etc.)
 	// with engineers, nearest-first. Additive production only — can't destabilise the

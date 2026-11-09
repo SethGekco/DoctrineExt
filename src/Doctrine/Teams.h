@@ -132,6 +132,11 @@ namespace Teams
 	void EngineerPickets(HouseClass* pHouse);
 	void SteerPickets(HouseClass* pHouse);
 
+	// Walls ([Doctrine.Walls]): ring the buildings engineers go for (construction yards by default) with
+	// walls, queued as nodes in the AI's own base plan, at its front with Urgent. Pass throttled. Opt-in.
+	// AI houses only.
+	void WallDoctrine(HouseClass* pHouse);
+
 	// Engineer rush (§10m): capture enemy buildings near the base with escorted engineers, only where
 	// the enemy's reachable firepower won't kill the engineer on its approach (the counter-engineer's
 	// damage model in reverse). Pass throttled; steering every tick. Opt-in. AI houses only.

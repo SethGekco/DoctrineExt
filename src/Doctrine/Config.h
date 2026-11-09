@@ -593,6 +593,23 @@ public:
 	bool CapturedDenyRecapture = true; // DenyRecapture — sell a building we captured and kept when an engineer
 	                                 // will retake it before we can kill it, even where [Doctrine.CounterEngineer]
 	                                 // DenySell is off; DenySell's caps (PerEngineer / Max / Uncapped) still apply
+
+	// ─── Walls ([Doctrine.Walls]) ─────────────────────────────────────────────
+	// Ring the buildings engineers go for with walls, early, through the AI's own base plan (the
+	// engine's wall nodes; its own walls only come with ProtectWithWall= defenses, by chance).
+	bool WallsEnable = false;        // Enable — opt-in
+	std::vector<std::string> WallsProtect; // Protect — empty = auto (construction yards), a list = exactly these
+	bool WallsProtectNone = false;   // Protect=none (or null): nothing walled
+	std::vector<std::string> WallsTypes; // Types — wall types, first the house can build; empty = auto ([AI]
+	                                 // ConcreteWalls, our side's first); none/null = no walls
+	bool WallsTypesNone = false;
+	int WallsRing = 1;               // Ring — cells out from the building's foundation (1 = touching it)
+	bool WallsUrgent = true;         // Urgent — walls go to the front of the AI's build plan; no = after it
+	bool WallsNeedIncome = true;     // NeedIncome — start once the house owns an income building
+	bool WallsOnSighting = false;    // OnSighting — start once an enemy engineer has come at the base
+	                                 // (the pickets' sightings; needs [Doctrine.CounterEngineer] Enable)
+	int WallsMinCash = 0;            // MinCash — queue walls only while cash >= this
+	int WallsInterval = 150;         // Interval — frames between passes
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

@@ -5351,11 +5351,157 @@ void Teams::SteerPickets(HouseClass* pHouse)
 	}
 }
 
+// ─── Walls ([Doctrine.Walls]) ────────────────────────────────────────────────
+namespace
+{
+	std::map<int, int> g_wallLastFire;
+
+	// The wall type a house builds (Types): the list's first it can build now; auto = [AI] ConcreteWalls,
+	// our side's (AIBasePlanningSide) first, as the engine's own wall nodes pick it.
+	BuildingTypeClass* WallTypeFor(HouseClass* const pHouse)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (!cfg.WallsTypes.empty())
+		{
+			for (auto const& id : cfg.WallsTypes)
+				if (auto const pBt = BuildingTypeClass::Find(id.c_str()))
+					if (pBt->Wall && CanBuildStrict(pHouse, pBt)) return pBt;
+			return nullptr;
+		}
+		BuildingTypeClass* other = nullptr;
+		int const side = pHouse->Type ? pHouse->Type->SideIndex : -1;
+		for (auto const pBt : RulesClass::Instance->ConcreteWalls)
+		{
+			if (!pBt || !CanBuildStrict(pHouse, pBt)) continue;
+			if (pBt->AIBasePlanningSide == side || pBt->AIBasePlanningSide == -1) return pBt;
+			if (!other) other = pBt;
+		}
+		return other;
+	}
+
+	// Is this building walled in (Protect)? Auto: a construction yard.
+	bool WallProtects(BuildingClass* const pB)
+	{
+		auto const& cfg = DoctrineConfig::Get();
+		if (!cfg.WallsProtect.empty()) return ListHas(cfg.WallsProtect, pB->Type->ID);
+		return pB->Type->ConstructionYard;
+	}
+}
+
+void Teams::WallDoctrine(HouseClass* pHouse)
+{
+	auto const& cfg = DoctrineConfig::Get();
+	if (!cfg.WallsEnable || cfg.WallsProtectNone || cfg.WallsTypesNone) return;
+	if (!pHouse || pHouse->Defeated || pHouse->IsNeutral() || pHouse->IsControlledByHuman()) return;
+	int const hIdx = pHouse->ArrayIndex;
+	int const now = Unsorted::CurrentFrame;
+	int const interval = cfg.WallsInterval > 0 ? cfg.WallsInterval : 150;
+	auto const fit = g_wallLastFire.find(hIdx);
+	if (fit != g_wallLastFire.end() && now - fit->second < interval) return;
+	g_wallLastFire[hIdx] = now;
+
+	auto const pWall = WallTypeFor(pHouse);
+	int const wallIdx = pWall ? BuildingTypeClass::Array.FindItemIndex(pWall) : -1;
+	int const cash = static_cast<int>(pHouse->Available_Money());
+	bool income = false;
+	for (auto const pB : pHouse->Buildings)
+		if (pB && pB->Type && !pB->InLimbo && pB->Health > 0 && IncomeKindOf(pB->Type) > 0) income = true;
+	const char* wait = nullptr;
+	if (wallIdx < 0) wait = "no wall type we can build yet (Types)";
+	else if (cfg.WallsNeedIncome && !income) wait = "no income building yet (NeedIncome)";
+	else if (cfg.WallsOnSighting && g_picketSightings[hIdx].empty()) wait = "no enemy engineer seen yet (OnSighting)";
+	else if (cash < cfg.WallsMinCash) wait = "cash below MinCash";
+
+	// The ring Ring cells out from each protected building's foundation. A cell already walled or built on
+	// is done (a building stops an engineer as well as a wall), one a wall can't stand on now is skipped
+	// (retried next pass), one with a node of ours pending is left alone; the rest are queued.
+	auto& nodes = pHouse->Base.BaseNodes;
+	int const ring = std::max(1, cfg.WallsRing);
+	int protect = 0, cells = 0, walled = 0, builtOn = 0, blocked = 0, pending = 0;
+	std::vector<CellStruct> want;
+	for (auto const pB : pHouse->Buildings)
+	{
+		if (!pB || !pB->Type || pB->InLimbo || pB->Health <= 0 || !WallProtects(pB)) continue;
+		++protect;
+		auto const tl = pB->GetMapCoords();
+		int const x0 = tl.X - ring, x1 = tl.X + pB->Type->GetFoundationWidth() - 1 + ring;
+		int const y0 = tl.Y - ring, y1 = tl.Y + pB->Type->GetFoundationHeight(false) - 1 + ring;
+		for (int x = x0; x <= x1; ++x)
+			for (int y = y0; y <= y1; ++y)
+			{
+				if (x != x0 && x != x1 && y != y0 && y != y1) continue;   // inside the ring
+				CellStruct const c{ static_cast<short>(x), static_cast<short>(y) };
+				++cells;
+				auto const pCell = MapClass::Instance.TryGetCellAt(c);
+				if (!pCell) { ++blocked; continue; }
+				int const ov = pCell->OverlayTypeIndex;
+				if (ov >= 0 && ov < OverlayTypeClass::Array.Count && OverlayTypeClass::Array.GetItem(ov)->Wall)
+					{ ++walled; continue; }
+				if (pCell->GetBuilding()) { ++builtOn; continue; }
+				bool queued = false;
+				for (int i = 0; i < nodes.Count && !queued; ++i)
+					queued = !nodes.Items[i].Placed && nodes.Items[i].MapCoords == c;
+				if (queued) { ++pending; continue; }
+				if (!pWall || !pCell->CanThisExistHere(pWall->SpeedType, pWall, pHouse)) { ++blocked; continue; }
+				if (std::find(want.begin(), want.end(), c) == want.end()) want.push_back(c);
+			}
+	}
+
+	// Queue them, the side facing the nearest enemy base first; with Urgent, ahead of the plan's next
+	// unbuilt node (where the engine puts its own wall nodes), else after the plan.
+	int queuedNow = 0;
+	if (!wait && !want.empty())
+	{
+		auto const home = pHouse->GetBaseCenter();
+		CellStruct foe{ 0, 0 };
+		double foeD = 1e18;
+		for (int i = 0; i < HouseClass::Array.Count; ++i)
+		{
+			auto const pH = HouseClass::Array.GetItem(i);
+			if (!pH || pH == pHouse || pH->Defeated || pH->IsNeutral() || pHouse->IsAlliedWith(pH)) continue;
+			auto const c = pH->GetBaseCenter();
+			if (c.X == 0 && c.Y == 0) continue;
+			double const d = std::hypot(double(c.X - home.X), double(c.Y - home.Y));
+			if (d < foeD) { foeD = d; foe = c; }
+		}
+		if (foeD < 1e18)
+			std::stable_sort(want.begin(), want.end(), [&](CellStruct const& a, CellStruct const& b)
+				{ return std::hypot(double(a.X - foe.X), double(a.Y - foe.Y))
+					< std::hypot(double(b.X - foe.X), double(b.Y - foe.Y)); });
+		int first = nodes.Count;
+		if (cfg.WallsUrgent)
+			for (int i = 0; i < nodes.Count; ++i)
+				if (!nodes.Items[i].Placed) { first = i; break; }
+		int const before = nodes.Count;
+		for (auto const& c : want)
+		{
+			BaseNodeClass node;
+			node.BuildingTypeIndex = wallIdx;
+			node.MapCoords = c;
+			node.Placed = false;
+			node.Attempts = 0;
+			if (nodes.AddItem(node)) ++queuedNow;
+		}
+		if (first < before)
+			std::rotate(nodes.Items + first, nodes.Items + before, nodes.Items + nodes.Count);
+	}
+
+	if (cfg.DebugTicks && protect > 0)
+		Debug::Log("[DoctrineExt] walls: house=%s#%d type=%s protect=%d ring=%d cells=%d walled=%d built-on=%d "
+			"blocked=%d pending=%d queued=%d%s cash=%d%s%s.\n", pHouse->get_ID(), hIdx, pWall ? pWall->ID : "-",
+			protect, ring, cells, walled, builtOn, blocked, pending, queuedNow,
+			queuedNow && cfg.WallsUrgent ? " (front of the plan)" : "", cash, wait ? "; waiting: " : "",
+			wait ? wait : "");
+}
+
 // ─── Engineer rush (§10m) ────────────────────────────────────────────────────
 namespace
 {
 	std::map<int, int> g_engRushLastFire;                         // house -> last pass frame
 	std::map<int, std::map<DWORD, DWORD>> g_engRushAssign;        // house -> engineer UID -> target UID
+	// Rush engineer UID -> {frame first seen within 2 cells of its target, frame last logged} (DebugTicks:
+	// an engineer that stands at the door instead of going in, Rex 11-08).
+	std::map<DWORD, std::pair<int, int>> g_rushAtDoor;
 	std::map<int, std::map<DWORD, int>> g_engRushCooldown;        // house -> target UID -> retry frame
 	std::map<int, std::set<DWORD>> g_engRushMine;                 // house -> its building UIDs last pass
 	std::map<int, std::set<DWORD>> g_engRushLost;                 // house -> its buildings the enemy captured
@@ -5754,10 +5900,52 @@ void Teams::SteerEngineerRush(HouseClass* pHouse)
 	{
 		if (!IsLiveEngineer(pF)) continue;
 		auto const a = assign.find(pF->UniqueID);
-		if (a == assign.end()) continue;
-		auto const t = targets.find(a->second);
-		if (t == targets.end()) continue;                               // captured/lost: next pass reassigns
-		if (pF->Target != t->second || pF->GetCurrentMission() != Mission::Capture)
+		auto const t = a == assign.end() ? targets.end() : targets.find(a->second);
+		if (t == targets.end())                                         // unassigned, or captured/lost:
+		{                                                               // next pass reassigns
+			if (cfg.DebugTicks)
+			{
+				int const now = Unsorted::CurrentFrame;
+				auto& door = g_rushAtDoor[pF->UniqueID];
+				if (!door.first) door = { now, now - 30 };
+				if (now - door.second >= 30)
+				{
+					door.second = now;
+					Debug::Log("[DoctrineExt] eng-rush idle: house=%s#%d %s#%u has no live target for %df: "
+						"mission=%d target=%s.\n", pHouse->get_ID(), hIdx, pF->GetTechnoType()->ID, pF->UniqueID,
+						now - door.first, static_cast<int>(pF->GetCurrentMission()),
+						pF->Target ? "set" : "none");
+				}
+			}
+			continue;
+		}
+		bool const reissue = pF->Target != t->second || pF->GetCurrentMission() != Mission::Capture;
+		if (cfg.DebugTicks)
+		{
+			// At the door: what it's doing each second it stays there, and whether we just re-ordered it.
+			int const now = Unsorted::CurrentFrame;
+			if (DistToFootprint(pF->GetCoords(), t->second) <= 2.0 * 256.0)
+			{
+				auto& door = g_rushAtDoor[pF->UniqueID];
+				if (!door.first) door = { now, now - 30 };
+				if (now - door.second >= 30)
+				{
+					door.second = now;
+					Debug::Log("[DoctrineExt] eng-rush door: house=%s#%d %s#%u at %s of %s#%d for %df: mission=%d "
+						"queued=%d target=%s destination=%s%s; building mission=%d health=%d/%d.\n",
+						pHouse->get_ID(), hIdx, pF->GetTechnoType()->ID, pF->UniqueID, t->second->Type->ID,
+						t->second->Owner->get_ID(), t->second->Owner->ArrayIndex, now - door.first,
+						static_cast<int>(pF->GetCurrentMission()), static_cast<int>(pF->QueuedMission),
+						pF->Target == t->second ? "ours" : pF->Target ? "other" : "none",
+						pF->Destination == t->second ? "ours" : pF->Destination ? "other" : "none",
+						reissue ? ", re-ordered" : "", static_cast<int>(t->second->GetCurrentMission()),
+						t->second->Health, t->second->Type->Strength);
+				}
+			}
+			else
+				g_rushAtDoor.erase(pF->UniqueID);
+		}
+		if (reissue)
 		{
 			pF->SetTarget(t->second);
 			pF->QueueMission(Mission::Capture, false);
@@ -6580,6 +6768,7 @@ void Teams::Reset()
 	g_picketPosts.clear();
 	g_picketAssign.clear();
 	g_picketLastFire.clear();
+	g_wallLastFire.clear();
 	g_denySelling = false;
 	g_engTracks.clear();
 	g_keptCaptures.clear();
@@ -6592,6 +6781,7 @@ void Teams::Reset()
 	g_urgentPicks.clear();
 	g_engRushLastFire.clear();
 	g_engRushAssign.clear();
+	g_rushAtDoor.clear();
 	g_engRushCooldown.clear();
 	g_engRushMine.clear();
 	g_engRushLost.clear();

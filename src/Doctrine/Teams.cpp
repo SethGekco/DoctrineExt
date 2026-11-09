@@ -688,18 +688,33 @@ namespace
 		return false;
 	}
 
-	// Send pF to pGoal, unless we sent it to pGoal less than [Doctrine.General] SteerReissue frames ago.
-	// Whatever mission it's on: when something took the order back, re-sending every tick only made the
-	// two orders alternate (run263: p90 20 sends per 300f while the squad team's guard step held it).
+	// Send pF to pGoal, unless we sent it there already and it's still on Move, or it isn't but we sent it
+	// less than [Doctrine.General] SteerReissue frames ago: when something took the order back, re-sending
+	// every tick only made the two orders alternate (run263: p90 20 sends per 300f while the squad team's
+	// guard step held it), and re-sending to a unit walking there restarts its path.
 	void SteerMove(FootClass* const pF, AbstractClass* const pGoal)
 	{
 		int const now = Unsorted::CurrentFrame;
 		auto& o = g_steerOrders[pF->UniqueID];
-		if (o.first == pGoal && now - o.second < DoctrineConfig::Get().SteerReissue) return;
+		bool const moving = pF->GetCurrentMission() == Mission::Move || pF->QueuedMission == Mission::Move;
+		if (o.first == pGoal && (moving || now - o.second < DoctrineConfig::Get().SteerReissue)) return;
 		pF->SetDestination(pGoal, true);
 		pF->QueueMission(Mission::Move, false);
 		o = { pGoal, now };
 	}
+
+	// Order pF onto pTarget with mission m (Attack, Capture), unless that's its order already: the same
+	// order re-sent every tick restarts the mission each time.
+	void SteerOnto(FootClass* const pF, AbstractClass* const pTarget, Mission const m)
+	{
+		if (pF->Target == pTarget && (pF->GetCurrentMission() == m || pF->QueuedMission == m)) return;
+		pF->SetTarget(pTarget);
+		pF->QueueMission(m, false);
+	}
+
+	// Is pF retasked onto an enemy engineer by the counter-engineer doctrine right now (g_responders)?
+	// Garrison and other squads' steering leave it alone until it's released.
+	bool IsResponder(FootClass* pF);
 
 	// A suspended doctrine team's recruiter doesn't run (TeamClass::AI), so take loose units of its type
 	// ourselves, as the dispatch does (built ones come out teamless).
@@ -758,10 +773,7 @@ namespace
 			if (Dist2D(pFoot->GetCoords(), cc) > 2.0 * 256.0)
 				SteerMove(pFoot, pCell);
 			else if (pStrike)
-			{
-				pFoot->SetTarget(pStrike);
-				pFoot->QueueMission(Mission::Attack, false);
-			}
+				SteerOnto(pFoot, pStrike, Mission::Attack);
 		}
 	}
 
@@ -1323,10 +1335,7 @@ void Teams::SteerDecap(HouseClass* pHouse)
 		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
 		{
 			if (pFoot->InLimbo || pFoot->Health <= 0) continue;
-			if (pFoot->Target == pBld && (pFoot->GetCurrentMission() == Mission::Attack
-				|| pFoot->QueuedMission == Mission::Attack)) continue;          // on it: re-sending restarts it
-			pFoot->SetTarget(pBld);
-			pFoot->QueueMission(Mission::Attack, false);
+			SteerOnto(pFoot, pBld, Mission::Attack);
 		}
 	}
 }
@@ -1910,6 +1919,7 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 		if (!itc || !itc->Occupier) continue;
 		++occAll;
 		auto const pFoot = static_cast<FootClass*>(pT);
+		if (IsResponder(pFoot)) continue;               // on an enemy engineer: garrison flags pulled it away
 		auto const touched = g_garrisonTouched.find(pFoot->UniqueID);
 		bool const flagged = pFoot->ShouldEnterOccupiable || pFoot->ShouldGarrisonStructure;
 		if (touched != g_garrisonTouched.end() && !flagged
@@ -2724,7 +2734,7 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 	{
 		auto const pF = tgt.first;
 		auto const pCell = tgt.second;
-		if (live.find(pF) == live.end()) continue;              // died / left squad
+		if (live.find(pF) == live.end() || IsResponder(pF)) continue;   // died / left squad / on an engineer
 		if (!pCell || !IsCrateOverlay(pCell->OverlayTypeIndex)) continue; // crate gone
 
 		auto const fc = pF->GetCoords();
@@ -2748,10 +2758,10 @@ void Teams::SteerCrateSquad(HouseClass* pHouse)
 			continue;
 		}
 
-		// Otherwise keep driving at the crate cell (re-issued every tick so the
-		// base AI can't countermand it between the throttled detection passes).
-		pF->SetDestination(pCell, true);
-		pF->QueueMission(Mission::Move, false);
+		// Otherwise keep driving at the crate cell (checked every tick so the base AI can't
+		// countermand it between the throttled detection passes; SteerMove re-sends it only when
+		// it's off it, since re-sending every tick restarted the unit).
+		SteerMove(pF, pCell);
 	}
 }
 
@@ -2919,8 +2929,7 @@ void Teams::SteerCrateWaterSquad(HouseClass* pHouse)
 			beyond.Y += static_cast<int>(dy / d * 768.0);
 			if (auto const pB = MapClass::Instance.TryGetCellAt(beyond)) pDest = pB;
 		}
-		pF->SetDestination(pDest, true);
-		pF->QueueMission(Mission::Move, false);
+		SteerMove(pF, pDest);
 	}
 }
 
@@ -3048,8 +3057,7 @@ void Teams::SteerCommander(HouseClass* pHouse)
 	for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
 	{
 		if (pFoot->InLimbo || pFoot->Health <= 0) continue;
-		pFoot->SetTarget(pBld);
-		pFoot->QueueMission(Mission::Attack, false);
+		SteerOnto(pFoot, pBld, Mission::Attack);
 	}
 }
 
@@ -3324,7 +3332,7 @@ void Teams::SteerAirDefense(HouseClass* pHouse)
 	{
 		auto const pF = tgt.first;
 		auto const pCell = tgt.second;
-		if (live.find(pF) == live.end() || !pCell) continue;
+		if (live.find(pF) == live.end() || !pCell || IsResponder(pF)) continue;
 		// Reposition only if it has drifted off its screen point; once there, leave
 		// it be so it actually FIRES at aircraft in range instead of re-pathing.
 		// A unit fighting within ScreenLeash cells of its point is left to it.
@@ -4141,9 +4149,9 @@ void Teams::SteerCapture(HouseClass* pHouse)
 		taken[best] = true;
 		auto const pB = targets[best].first;
 		// Canonical engineer-capture order: target the building + Mission::Capture (the
-		// mission handles the approach). Re-issued each tick so the base AI can't steal it.
-		pF->SetTarget(pB);
-		pF->QueueMission(Mission::Capture, false);
+		// mission handles the approach). Checked each tick so the base AI can't steal it; only
+		// re-sent when it's off it (the same order re-sent restarts the mission).
+		SteerOnto(pF, pB, Mission::Capture);
 	}
 }
 
@@ -4154,6 +4162,13 @@ namespace
 	// house -> responder UniqueID -> UniqueID of the engineer it was retasked onto. Squad members and
 	// loose responders alike: a unit the recruit gate refuses (e.g. one on Hunt) still gets the order.
 	std::map<int, std::map<DWORD, DWORD>> g_responders;
+
+	bool IsResponder(FootClass* const pF)
+	{
+		if (!pF || !pF->Owner) return false;
+		auto const it = g_responders.find(pF->Owner->ArrayIndex);
+		return it != g_responders.end() && it->second.count(pF->UniqueID) > 0;
+	}
 	// house -> responder UniqueID -> the cell it was sent to cut its engineer off (Predict.Intercept); our
 	// own record, since the engine rewrites FootClass::Destination mid-route.
 	std::map<int, std::map<DWORD, CellClass*>> g_interceptCells;
@@ -5001,6 +5016,8 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 				auto const pR = p.second;
 				if (!pSquad) pSquad = EnsureSquadTeam(pHouse, 1, nullptr, "DANT", 0);
 				TryAddToTeam(pSquad, pR);             // refused (e.g. on Hunt): a loose responder, still ordered
+				pR->ShouldGarrisonStructure = false;  // and not off to a building (11-08 audit: garrison vs
+				pR->ShouldEnterOccupiable = false;    // responder, re-ordered every tick)
 				resp[pR->UniqueID] = t.Eng->UniqueID;
 				committed[pR->UniqueID] = pR;
 				t.Exp += p.first; ++t.Resp;
@@ -5030,6 +5047,8 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 				auto const pR = p.second;
 				if (!pSquad) pSquad = EnsureSquadTeam(pHouse, 1, nullptr, "DANT", 0);
 				TryAddToTeam(pSquad, pR);
+				pR->ShouldGarrisonStructure = false;
+				pR->ShouldEnterOccupiable = false;
 				resp[pR->UniqueID] = t.Eng->UniqueID;
 				committed[pR->UniqueID] = pR;
 				++t.Resp;
@@ -5177,7 +5196,9 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 			auto& last = g_steerOrders[pR->UniqueID];
 			bool const shifted = moved > 3.0 * 256.0 || (moved > 256.0 && now - last.second >= cfg.SteerReissue);
 			bool const strayed = pR->GetCurrentMission() != Mission::Move               // countermanded short
-				&& Dist2D(pR->GetCoords(), prev ? prev->GetCellCoords() : cc) > 384.0;  // of it
+				&& pR->QueuedMission != Mission::Move                                   // of it, and not
+				&& Dist2D(pR->GetCoords(), prev ? prev->GetCellCoords() : cc) > 384.0   // just re-sent
+				&& now - last.second >= cfg.SteerReissue;
 			if (shifted || strayed)
 			{
 				pR->SetTarget(nullptr);
@@ -5189,11 +5210,7 @@ void Teams::CounterEngineers(HouseClass* pHouse)
 			continue;
 		}
 		cut.erase(pR->UniqueID);
-		if (pR->Target != eit->second || pR->GetCurrentMission() != Mission::Attack)
-		{
-			pR->SetTarget(eit->second);
-			pR->QueueMission(Mission::Attack, false);
-		}
+		SteerOnto(pR, eit->second, Mission::Attack);
 	}
 
 	// Standing interceptors (throttled): while some threat outruns everything we could send, keep

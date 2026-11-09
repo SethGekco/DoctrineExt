@@ -218,6 +218,8 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.StrictOwnership = pINI->ReadBool("Doctrine.General", "StrictOwnership", cfg.StrictOwnership);
 	cfg.AirAlertRadius = pINI->ReadInteger("Doctrine.General", "AirAlertRadius", cfg.AirAlertRadius);
 	cfg.InterceptStandoff = pINI->ReadInteger("Doctrine.General", "InterceptStandoff", cfg.InterceptStandoff);
+	cfg.InterceptLeash = pINI->ReadInteger("Doctrine.General", "InterceptLeash", cfg.InterceptLeash);
+	cfg.DefendLeash = pINI->ReadInteger("Doctrine.General", "DefendLeash", cfg.DefendLeash);
 	cfg.DefendPerimeter = pINI->ReadBool("Doctrine.General", "DefendPerimeter", cfg.DefendPerimeter);
 	cfg.BaseEdgeMargin = pINI->ReadInteger("Doctrine.General", "BaseEdgeMargin", cfg.BaseEdgeMargin);
 	cfg.LaneBucket = pINI->ReadInteger("Doctrine.General", "LaneBucket", cfg.LaneBucket);
@@ -235,6 +237,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.MinCounterScore = pINI->ReadDouble("Doctrine.General", "MinCounterScore", cfg.MinCounterScore);
 	cfg.SupportScanRadius = pINI->ReadInteger("Doctrine.General", "SupportScanRadius", cfg.SupportScanRadius);
 	cfg.HuntStandoff = pINI->ReadInteger("Doctrine.General", "HuntStandoff", cfg.HuntStandoff);
+	cfg.HuntLeash = pINI->ReadInteger("Doctrine.General", "HuntLeash", cfg.HuntLeash);
 	cfg.FloodThreshold = pINI->ReadInteger("Doctrine.General", "FloodThreshold", cfg.FloodThreshold);
 	cfg.FloodHuntFraction = pINI->ReadDouble("Doctrine.General", "FloodHuntFraction", cfg.FloodHuntFraction);
 	cfg.FloodCooldown = pINI->ReadInteger("Doctrine.General", "FloodCooldown", cfg.FloodCooldown);
@@ -685,11 +688,11 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
 	Echo("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d DebugOrders=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d LaneBucket=%d LaneSampleInterval=%d LaneRadius=%d LaneMinStrength=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
 		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.DebugOrders, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.InterceptStandoff, cfg.DefendPerimeter, cfg.BaseEdgeMargin, cfg.LaneBucket, cfg.LaneSampleInterval, cfg.LaneRadius, cfg.LaneMinStrength, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
-	Echo("[DoctrineExt] steering: SteerReissue=%d SquadEngineControl=%d [Doctrine.AirDefense] ScreenLeash=%d "
-		"[Doctrine.CounterEngineer] Picket.Leash=%d [Doctrine.EngineerRush] Escorts.Leash=%d [Doctrine.Garrison] "
-		"RedivertDelay=%d\n",
-		cfg.SteerReissue, cfg.SquadEngineControl, cfg.AirScreenLeash, cfg.CounterEngPicketLeash, cfg.EngRushEscortsLeash,
-		cfg.GarrisonRedivertDelay);
+	Echo("[DoctrineExt] steering: SteerReissue=%d SquadEngineControl=%d InterceptLeash=%d DefendLeash=%d HuntLeash=%d "
+		"[Doctrine.AirDefense] ScreenLeash=%d [Doctrine.CounterEngineer] Picket.Leash=%d [Doctrine.EngineerRush] "
+		"Escorts.Leash=%d [Doctrine.Garrison] RedivertDelay=%d\n",
+		cfg.SteerReissue, cfg.SquadEngineControl, cfg.InterceptLeash, cfg.DefendLeash, cfg.HuntLeash, cfg.AirScreenLeash,
+		cfg.CounterEngPicketLeash, cfg.EngRushEscortsLeash, cfg.GarrisonRedivertDelay);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");

@@ -657,8 +657,83 @@ namespace
 		return HasOffensiveWeapon(pType);
 	}
 
-	// Order a live doctrine team's members to move to (and hold at) a cell.
-	void MoveDoctrineTeam(int const hIdx, int const slot, CellClass* const pCell)
+	double Dist2D(CoordStruct const& a, CoordStruct const& b)
+	{
+		return std::sqrt(static_cast<double>(a.X - b.X) * (a.X - b.X)
+			+ static_cast<double>(a.Y - b.Y) * (a.Y - b.Y));
+	}
+
+	// Our own last move order per unit (UID -> {goal, frame}). The engine rewrites a moving unit's
+	// Destination mid-route (FootClass::Destination is volatile), so steering that re-sent its order whenever
+	// "Destination != goal", or on every tick while the unit walked back, restarted the unit every 15
+	// frames, and pulled it out of fights: the order-churn audit's top sources (Rex 11-08: "GIs being
+	// indecisive ... like they're given multiple orders at the same time").
+	std::map<DWORD, std::pair<AbstractClass*, int>> g_steerOrders;
+
+	// Is the unit in a fight to let it finish: a live target, and still within leash cells of `anchor`
+	// (leash 0 = however far)? Past the leash it drops the target, so the call back sticks.
+	bool LetFight(FootClass* const pF, CoordStruct const& anchor, int const leashCells)
+	{
+		auto const pT = pF->Target;
+		if (!pT) return false;
+		auto const what = pT->WhatAmI();
+		if (what == AbstractType::Infantry || what == AbstractType::Unit || what == AbstractType::Building
+			|| what == AbstractType::Aircraft)
+		{
+			auto const pTech = static_cast<TechnoClass*>(pT);
+			if (pTech->InLimbo || pTech->Health <= 0) return false;
+		}
+		if (leashCells <= 0 || Dist2D(pF->GetCoords(), anchor) <= leashCells * 256.0) return true;
+		pF->SetTarget(nullptr);
+		return false;
+	}
+
+	// Send pF to pGoal, unless we sent it to pGoal less than [Doctrine.General] SteerReissue frames ago.
+	// Whatever mission it's on: when something took the order back, re-sending every tick only made the
+	// two orders alternate (run263: p90 20 sends per 300f while the squad team's guard step held it).
+	void SteerMove(FootClass* const pF, AbstractClass* const pGoal)
+	{
+		int const now = Unsorted::CurrentFrame;
+		auto& o = g_steerOrders[pF->UniqueID];
+		if (o.first == pGoal && now - o.second < DoctrineConfig::Get().SteerReissue) return;
+		pF->SetDestination(pGoal, true);
+		pF->QueueMission(Mission::Move, false);
+		o = { pGoal, now };
+	}
+
+	// A suspended doctrine team's recruiter doesn't run (TeamClass::AI), so take loose units of its type
+	// ourselves, as the dispatch does (built ones come out teamless).
+	void TopUpDoctrineTeam(TeamClass* const pTeam)
+	{
+		auto const pTF = pTeam->Type ? pTeam->Type->TaskForce : nullptr;
+		if (!pTF || pTF->CountEntries < 1 || !pTF->Entries[0].Type || !pTeam->Owner) return;
+		auto const pType = pTF->Entries[0].Type;
+		int have = 0;
+		for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
+			if (pF->GetTechnoType() == pType) ++have;
+		for (int i = 0; i < TechnoClass::Array.Count && have < pTF->Entries[0].Amount; ++i)
+		{
+			auto const pT = TechnoClass::Array.GetItem(i);
+			if (!pT || pT->Owner != pTeam->Owner || pT->InLimbo || pT->Health <= 0
+				|| pT->GetTechnoType() != pType) continue;
+			auto const what = pT->WhatAmI();
+			if (what != AbstractType::Infantry && what != AbstractType::Unit
+				&& what != AbstractType::Aircraft) continue;
+			auto const pF = static_cast<FootClass*>(pT);
+			if (!pF->Team && pTeam->AddMember(pF, true)) ++have;
+		}
+	}
+
+	// Order a live doctrine team's members to move to (and hold at) a cell, and with pStrike, to attack
+	// it once there. Each call keeps the team suspended for two ticks so its script can't take the orders
+	// back while we steer it (TeamClass::AI: the guard step regroups members on the team's centre every
+	// frame; Do Hunt sends any member with no target and no destination hunting); when we stop, the
+	// script resumes (a guard step that ran out disbands the team). A member fighting within leashCells
+	// of the cell is left to it (0 = however far), one within 2 cells has arrived, and a move goes out
+	// again only after SteerReissue. It used to be re-sent to every member every tick, so hunters walked
+	// to the cell, started hunting, and were called back (11-08: "GIs being indecisive ... when attacking").
+	void MoveDoctrineTeam(int const hIdx, int const slot, CellClass* const pCell, int const leashCells,
+		TechnoClass* const pStrike = nullptr)
 	{
 		if (!pCell) return;
 		char id[0x18];
@@ -667,11 +742,26 @@ namespace
 		if (!pType || pType->cntInstances <= 0) return;
 		auto const pTeam = pType->FindFirstInstance();
 		if (!pTeam) return;
+		auto const& cfg = DoctrineConfig::Get();
+		if (!cfg.SquadEngineControl)
+		{
+			pTeam->IsSuspended = true;
+			pTeam->SuspendTimer.Start(2 * std::max(cfg.SenseInterval, 1));
+			TopUpDoctrineTeam(pTeam);
+		}
+		auto const cc = pCell->GetCoords();
 		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
 		{
 			if (pFoot->InLimbo || pFoot->Health <= 0) continue;
-			pFoot->SetDestination(pCell, true);
-			pFoot->QueueMission(Mission::Move, false);
+			if (pStrike && pFoot->Target == pStrike) continue;                  // on it already
+			if (LetFight(pFoot, cc, leashCells)) continue;
+			if (Dist2D(pFoot->GetCoords(), cc) > 2.0 * 256.0)
+				SteerMove(pFoot, pCell);
+			else if (pStrike)
+			{
+				pFoot->SetTarget(pStrike);
+				pFoot->QueueMission(Mission::Attack, false);
+			}
 		}
 	}
 
@@ -1105,7 +1195,7 @@ void Teams::SteerIntercepts(HouseClass* pHouse, TechnoClass* pRaider)
 	// base to chase a faster aircraft across the map.
 	for (auto const& key : g_interceptSlots)
 		if (key.first == hIdx)
-			MoveDoctrineTeam(hIdx, key.second, pCell);
+			MoveDoctrineTeam(hIdx, key.second, pCell, DoctrineConfig::Get().InterceptLeash);
 }
 
 void Teams::SteerDefenders(HouseClass* pHouse)
@@ -1191,7 +1281,7 @@ void Teams::SteerDefenders(HouseClass* pHouse)
 		CoordStruct pt = center;
 		pt.X = center.X + static_cast<int>(std::cos(a) * radius);
 		pt.Y = center.Y + static_cast<int>(std::sin(a) * radius);
-		MoveDoctrineTeam(hIdx, slots[k], MapClass::Instance.TryGetCellAt(pt));
+		MoveDoctrineTeam(hIdx, slots[k], MapClass::Instance.TryGetCellAt(pt), DoctrineConfig::Get().DefendLeash);
 	}
 }
 
@@ -1233,6 +1323,8 @@ void Teams::SteerDecap(HouseClass* pHouse)
 		for (auto pFoot = pTeam->FirstUnit; pFoot; pFoot = pFoot->NextTeamMember)
 		{
 			if (pFoot->InLimbo || pFoot->Health <= 0) continue;
+			if (pFoot->Target == pBld && (pFoot->GetCurrentMission() == Mission::Attack
+				|| pFoot->QueuedMission == Mission::Attack)) continue;          // on it: re-sending restarts it
 			pFoot->SetTarget(pBld);
 			pFoot->QueueMission(Mission::Attack, false);
 		}
@@ -1333,7 +1425,7 @@ void Teams::SteerHunters(HouseClass* pHouse, TechnoClass* pTarget)
 
 	for (auto const& key : g_huntSlots)
 		if (key.first == hIdx)
-			MoveDoctrineTeam(hIdx, key.second, pCell);
+			MoveDoctrineTeam(hIdx, key.second, pCell, DoctrineConfig::Get().HuntLeash, pTarget);
 }
 
 namespace
@@ -2174,50 +2266,6 @@ namespace
 	{
 		return pFoot && pFoot->Team && pFoot->Team->Type
 			&& std::strncmp(pFoot->Team->Type->ID, prefix, std::strlen(prefix)) == 0;
-	}
-
-	double Dist2D(CoordStruct const& a, CoordStruct const& b)
-	{
-		return std::sqrt(static_cast<double>(a.X - b.X) * (a.X - b.X)
-			+ static_cast<double>(a.Y - b.Y) * (a.Y - b.Y));
-	}
-
-	// Our own last move order per unit (UID -> {goal, frame}). The engine rewrites a moving unit's
-	// Destination mid-route (FootClass::Destination is volatile), so steering that re-sent its order whenever
-	// "Destination != goal", or on every tick while the unit walked back, restarted the unit every 15
-	// frames, and pulled it out of fights: the order-churn audit's top sources (Rex 11-08: "GIs being
-	// indecisive ... like they're given multiple orders at the same time").
-	std::map<DWORD, std::pair<AbstractClass*, int>> g_steerOrders;
-
-	// Is the unit in a fight to let it finish: a live target, and still within leash cells of `anchor`
-	// (leash 0 = however far)? Past the leash it drops the target, so the call back sticks.
-	bool LetFight(FootClass* const pF, CoordStruct const& anchor, int const leashCells)
-	{
-		auto const pT = pF->Target;
-		if (!pT) return false;
-		auto const what = pT->WhatAmI();
-		if (what == AbstractType::Infantry || what == AbstractType::Unit || what == AbstractType::Building
-			|| what == AbstractType::Aircraft)
-		{
-			auto const pTech = static_cast<TechnoClass*>(pT);
-			if (pTech->InLimbo || pTech->Health <= 0) return false;
-		}
-		if (leashCells <= 0 || Dist2D(pF->GetCoords(), anchor) <= leashCells * 256.0) return true;
-		pF->SetTarget(nullptr);
-		return false;
-	}
-
-	// Send pF to pGoal, unless we sent it to pGoal less than [Doctrine.General] SteerReissue frames ago.
-	// Whatever mission it's on: when something took the order back, re-sending every tick only made the
-	// two orders alternate (run263: p90 20 sends per 300f while the squad team's guard step held it).
-	void SteerMove(FootClass* const pF, AbstractClass* const pGoal)
-	{
-		int const now = Unsorted::CurrentFrame;
-		auto& o = g_steerOrders[pF->UniqueID];
-		if (o.first == pGoal && now - o.second < DoctrineConfig::Get().SteerReissue) return;
-		pF->SetDestination(pGoal, true);
-		pF->QueueMission(Mission::Move, false);
-		o = { pGoal, now };
 	}
 
 	// Leptons from c to the nearest edge of the building's foundation — an engineer captures on

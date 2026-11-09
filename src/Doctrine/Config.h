@@ -60,8 +60,9 @@ public:
 	int MaxTeamCost = 10000; // hard clamp on any procedural team's cost
 	bool DebugTicks = false; // log every rule evaluation (verbose)
 	int SteerReissue = 90;   // frames before a steered unit still on our move order is sent it again
-	bool SquadEngineControl = false; // let the engine's team update run on DoctrineExt's squads too (it
-	                                 // regroups them on the rally cell every frame; off = suspended teams)
+	bool SquadEngineControl = false; // let the engine's team update run on DoctrineExt's squads, and on the
+	                                 // teams it steers, too (their scripts take the orders back; off =
+	                                 // suspended while steered)
 	bool DebugOrders = false; // log AI units whose orders bounce between DoctrineExt steps and the engine
 	                          // ("orders churn:", OrderAudit)
 	int TeamTTL = 3600;      // frames before a stuck doctrine team is disbanded
@@ -71,6 +72,9 @@ public:
 	int AirAlertRadius = 40;     // cells: EnemyAirIncoming's alarm bubble
 	int InterceptStandoff = 12;  // cells from base toward the raider where
 	                             // interceptors form their screen (path block)
+	int InterceptLeash = 6;      // cells from its screen point an interceptor may fight before it's
+	                             // called back (0 = however far)
+	int DefendLeash = 6;         // same for a defender and its perimeter point
 	bool DefendPerimeter = true; // DefendBase teams hold the base outer edge
 	                             // (learned from buildings) not the centre
 	int BaseEdgeMargin = 2;      // cells beyond the outermost building for the
@@ -96,6 +100,8 @@ public:
 	                                 // supporting units (defines its weak side)
 	int HuntStandoff = 5;            // cells from the target the hunt force
 	                                 // stages on its weak side
+	int HuntLeash = 8;               // cells from its staging point a hunter may fight before it's
+	                                 // called back (0 = however far); arrived hunters attack the target
 	// Base-flood relief (§10d C)
 	int FloodThreshold = 0;          // idle armed units before relief fires
 	                                 // (0 = feature off)

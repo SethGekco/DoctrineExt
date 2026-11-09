@@ -1660,6 +1660,10 @@ namespace
 namespace
 {
 	std::map<int, int> g_garrisonLastFire;
+	// Unit UID -> frame we last took it off a team or flagged it to garrison. One the engine took back (a team
+	// recruited it, the flags got cleared) waits RedivertDelay: re-diverting it every pass made GIs on attack
+	// teams turn back and forth (the order-churn audit, 11-08).
+	std::map<DWORD, int> g_garrisonTouched;
 
 	// True if any cell within `nearCells` of `c` holds ore/gems (§10e-2 ore
 	// criterion — occupy buildings that overlook the enemy's, or our own,
@@ -1784,7 +1788,7 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 	// so to garrison at all we must DIVERT some off their teams — gently, capped
 	// by MaxDivert. Diag: allInf = infantry owned, occAll = Occupier=yes of
 	// those, teamlessN = of those not on a team.
-	int allInf = 0, occAll = 0, teamlessN = 0;
+	int allInf = 0, occAll = 0, teamlessN = 0, heldBack = 0;
 	std::vector<FootClass*> occFree;  // teamless: use freely
 	std::vector<FootClass*> occTeam;  // teamed: liberate if we still need more
 	for (int i = 0; i < TechnoClass::Array.Count; ++i)
@@ -1797,6 +1801,10 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 		if (!itc || !itc->Occupier) continue;
 		++occAll;
 		auto const pFoot = static_cast<FootClass*>(pT);
+		auto const touched = g_garrisonTouched.find(pFoot->UniqueID);
+		bool const flagged = pFoot->ShouldEnterOccupiable || pFoot->ShouldGarrisonStructure;
+		if (touched != g_garrisonTouched.end() && !flagged
+			&& now - touched->second < std::max(0, cfg.GarrisonRedivertDelay)) { ++heldBack; continue; }
 		if (pFoot->Team)
 		{
 			if (!IsDoctrineTeam(pFoot->Team)) occTeam.push_back(pFoot); // don't
@@ -1832,6 +1840,8 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 	int sent = 0;
 	for (auto const pFoot : occ)
 	{
+		bool const was = pFoot->ShouldEnterOccupiable || pFoot->ShouldGarrisonStructure;
+		if (pFoot->Team || !was) g_garrisonTouched[pFoot->UniqueID] = now;
 		if (pFoot->Team) pFoot->Team->LiberateMember(pFoot); // free it to garrison
 		if (ownedVac > 0)   pFoot->ShouldEnterOccupiable = true;
 		if (neutralVac > 0) pFoot->ShouldGarrisonStructure = true;
@@ -1871,9 +1881,9 @@ void Teams::GarrisonDoctrine(HouseClass* pHouse)
 
 	if (cfg.DebugTicks)
 		Debug::Log("[DoctrineExt] garrison: house=%s#%d effR=%d inband-slots=%d "
-			"allInf=%d occAll=%d teamless=%d divert=%d sent=%d prod=%s fac=%d queued=%d.\n",
+			"allInf=%d occAll=%d teamless=%d divert=%d sent=%d held-back=%d prod=%s fac=%d queued=%d.\n",
 			pHouse->get_ID(), hIdx, effR, static_cast<int>(slots.size()),
-			allInf, occAll, teamlessN, divert, sent, prodBest, facFound, queued);
+			allInf, occAll, teamlessN, divert, sent, heldBack, prodBest, facFound, queued);
 }
 
 void Teams::CrateDoctrine(HouseClass* pHouse)
@@ -2153,6 +2163,44 @@ namespace
 	{
 		return std::sqrt(static_cast<double>(a.X - b.X) * (a.X - b.X)
 			+ static_cast<double>(a.Y - b.Y) * (a.Y - b.Y));
+	}
+
+	// Our own last move order per unit (UID -> {goal, frame}). The engine rewrites a moving unit's
+	// Destination mid-route (FootClass::Destination is volatile), so steering that re-sent its order whenever
+	// "Destination != goal", or on every tick while the unit walked back, restarted the unit every 15
+	// frames, and pulled it out of fights: the order-churn audit's top sources (Rex 11-08: "GIs being
+	// indecisive ... like they're given multiple orders at the same time").
+	std::map<DWORD, std::pair<AbstractClass*, int>> g_steerOrders;
+
+	// Is the unit in a fight to let it finish: a live target, and still within leash cells of `anchor`
+	// (leash 0 = however far)? Past the leash it drops the target, so the call back sticks.
+	bool LetFight(FootClass* const pF, CoordStruct const& anchor, int const leashCells)
+	{
+		auto const pT = pF->Target;
+		if (!pT) return false;
+		auto const what = pT->WhatAmI();
+		if (what == AbstractType::Infantry || what == AbstractType::Unit || what == AbstractType::Building
+			|| what == AbstractType::Aircraft)
+		{
+			auto const pTech = static_cast<TechnoClass*>(pT);
+			if (pTech->InLimbo || pTech->Health <= 0) return false;
+		}
+		if (leashCells <= 0 || Dist2D(pF->GetCoords(), anchor) <= leashCells * 256.0) return true;
+		pF->SetTarget(nullptr);
+		return false;
+	}
+
+	// Send pF to pGoal, unless it's on our order to pGoal already (still moving) and [Doctrine.General]
+	// SteerReissue frames haven't passed since we sent it.
+	void SteerMove(FootClass* const pF, AbstractClass* const pGoal)
+	{
+		int const now = Unsorted::CurrentFrame;
+		auto& o = g_steerOrders[pF->UniqueID];
+		bool const moving = pF->GetCurrentMission() == Mission::Move || pF->QueuedMission == Mission::Move;
+		if (o.first == pGoal && moving && now - o.second < DoctrineConfig::Get().SteerReissue) return;
+		pF->SetDestination(pGoal, true);
+		pF->QueueMission(Mission::Move, false);
+		o = { pGoal, now };
 	}
 
 	// Leptons from c to the nearest edge of the building's foundation — an engineer captures on
@@ -3214,14 +3262,10 @@ void Teams::SteerAirDefense(HouseClass* pHouse)
 		if (live.find(pF) == live.end() || !pCell) continue;
 		// Reposition only if it has drifted off its screen point; once there, leave
 		// it be so it actually FIRES at aircraft in range instead of re-pathing.
-		auto const fc = pF->GetCoords();
+		// A unit fighting within ScreenLeash cells of its point is left to it.
 		auto const cc = pCell->GetCellCoords();
-		double const dx = cc.X - fc.X, dy = cc.Y - fc.Y;
-		if (std::sqrt(dx * dx + dy * dy) > 3.0 * 256.0)
-		{
-			pF->SetDestination(pCell, true);
-			pF->QueueMission(Mission::Move, false);
-		}
+		if (LetFight(pF, cc, DoctrineConfig::Get().AirScreenLeash)) continue;
+		if (Dist2D(pF->GetCoords(), cc) > 3.0 * 256.0) SteerMove(pF, pCell);
 	}
 }
 
@@ -5338,16 +5382,15 @@ void Teams::SteerPickets(HouseClass* pHouse)
 	auto const& resp = g_responders[hIdx];
 	for (auto pF = pTeam->FirstUnit; pF; pF = pF->NextTeamMember)
 	{
-		if (pF->InLimbo || pF->Health <= 0 || resp.count(pF->UniqueID) || pF->Target) continue;   // busy
+		if (pF->InLimbo || pF->Health <= 0 || resp.count(pF->UniqueID)) continue;   // the counter-engineer's
 		auto const a = ait->second.find(pF->UniqueID);
 		if (a == ait->second.end() || a->second >= static_cast<int>(pit->second.size())) continue;
 		auto const pCell = pit->second[a->second];
-		// Back to its post only once it has drifted off it; there, it stands guard and shoots.
-		if (Dist2D(pF->GetCoords(), pCell->GetCellCoords()) > 2.0 * 256.0)
-		{
-			pF->SetDestination(pCell, true);
-			pF->QueueMission(Mission::Move, false);
-		}
+		// Back to its post only once it has drifted off it and isn't fighting within Picket.Leash of it;
+		// there, it stands guard and shoots.
+		auto const pc = pCell->GetCellCoords();
+		if (LetFight(pF, pc, DoctrineConfig::Get().CounterEngPicketLeash)) continue;
+		if (Dist2D(pF->GetCoords(), pc) > 2.0 * 256.0) SteerMove(pF, pCell);
 	}
 }
 
@@ -6079,12 +6122,9 @@ void Teams::SteerEngineerRush(HouseClass* pHouse)
 				pF->QueueMission(Mission::Attack, false);
 			}
 		}
-		else if (Dist2D(pF->GetCoords(), engs[e].first->GetCoords()) > 3.0 * 256.0
-			&& (pF->Destination != engs[e].first || pF->GetCurrentMission() != Mission::Move))
-		{
-			pF->SetDestination(engs[e].first, true);
-			pF->QueueMission(Mission::Move, false);
-		}
+		else if (!LetFight(pF, engs[e].first->GetCoords(), cfg.EngRushEscortsLeash)
+			&& Dist2D(pF->GetCoords(), engs[e].first->GetCoords()) > 3.0 * 256.0)
+			SteerMove(pF, engs[e].first);                               // shadow it, fights within Escorts.Leash aside
 	}
 }
 
@@ -6836,6 +6876,8 @@ void Teams::Reset()
 	g_navalLastFire.clear();
 	g_expandLastFire.clear();
 	g_garrisonLastFire.clear();
+	g_garrisonTouched.clear();
+	g_steerOrders.clear();
 	g_prereqAudited.clear();
 	g_moneyHistory.clear();
 	g_captureLastFire.clear();

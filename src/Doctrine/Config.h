@@ -59,6 +59,7 @@ public:
 	int MaxTeamSize = 12;    // hard clamp on any procedural team
 	int MaxTeamCost = 10000; // hard clamp on any procedural team's cost
 	bool DebugTicks = false; // log every rule evaluation (verbose)
+	int SteerReissue = 90;   // frames before a steered unit still on our move order is sent it again
 	bool DebugOrders = false; // log AI units whose orders bounce between DoctrineExt steps and the engine
 	                          // ("orders churn:", OrderAudit)
 	int TeamTTL = 3600;      // frames before a stuck doctrine team is disbanded
@@ -159,6 +160,8 @@ public:
 	int AAMaxProduce = 2;            // AntiAir units queued per pass when short
 	int AirDefenseStandoff = 12;     // cells forward of base the AA screen forms
 	int AirScreenRadius = 30;        // cells around base scanned for incoming air
+	int AirScreenLeash = 6;          // ScreenLeash — a screen unit fighting within this many cells of its
+	                                 // screen point is left to it (0 = however far)
 	double AirDeathFloor = 200.0;    // baseline AA firepower kept once air has
 	                                 // repeatedly hit near base (AA P1c), even
 	                                 // between raids (0 = no floor)
@@ -293,6 +296,8 @@ public:
 	int GarrisonMaxDivert = 4;       // occupiers pulled off AI combat teams per
 	                                 // pass for garrison duty (AI teams own ~all
 	                                 // infantry, so we must divert, but gently)
+	int GarrisonRedivertDelay = 1800; // RedivertDelay — frames before a unit we diverted or flagged, that the
+	                                 // engine took back (a team recruited it), is diverted again
 	double GPerimeterW = 3.0;        // weight: closer to base = higher priority
 	double GCreepW = 1.0;            // weight: farther out = higher (creep bias)
 	double GOreW = 2.0;              // weight: building near ore
@@ -465,6 +470,8 @@ public:
 	bool CounterEngPicketBuildUrgent = false; // Picket.Build.Urgent — a picket (infantry) becomes the AI's
 	                                 // next infantry build, as Build.Urgent does for the interceptor
 	int CounterEngPicketInterval = 150; // Picket.Interval — frames between placement passes
+	int CounterEngPicketLeash = 0;   // Picket.Leash — a picket fighting within this many cells of its post is
+	                                 // left to it; past it, it drops the fight and comes back (0 = however far)
 	std::vector<std::string> CounterEngTransports; // Transports — enemy carriers watched; empty = auto
 	                                 // (any type with Passengers); a list = exactly these
 	bool CounterEngTransportsNone = false; // Transports=none (or null): none
@@ -538,6 +545,8 @@ public:
 	                                 // the best target's), 1 nearest (the nearest target), 2 release (leaves
 	                                 // the squad); before, it stood in Guard on the squad
 	int EngRushEscorts = 2;          // Escorts — armed units per engineer (0 = none)
+	int EngRushEscortsLeash = 6;     // Escorts.Leash — an escort fighting within this many cells of its engineer
+	                                 // is left to it (0 = however far)
 	double EngRushSafety = 1.0;      // Safety — rush only if expected enemy damage x this < engineer HP
 	int EngRushMinCash = 0;          // MinCash — build new rush engineers only at or above this cash
 	int EngRushRetryDelay = 900;     // RetryDelay — frames before re-rushing a target that killed one

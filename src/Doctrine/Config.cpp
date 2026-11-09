@@ -211,6 +211,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.MaxTeamCost = pINI->ReadInteger("Doctrine.General", "MaxTeamCost", cfg.MaxTeamCost);
 	cfg.DebugTicks = pINI->ReadBool("Doctrine.General", "DebugTicks", cfg.DebugTicks);
 	cfg.DebugOrders = pINI->ReadBool("Doctrine.General", "DebugOrders", cfg.DebugOrders);
+	cfg.SteerReissue = pINI->ReadInteger("Doctrine.General", "SteerReissue", cfg.SteerReissue);
 	cfg.TeamTTL = pINI->ReadInteger("Doctrine.General", "TeamTTL", cfg.TeamTTL);
 	cfg.TeamsPerHouse = pINI->ReadInteger("Doctrine.General", "TeamsPerHouse", cfg.TeamsPerHouse);
 	cfg.StrictOwnership = pINI->ReadBool("Doctrine.General", "StrictOwnership", cfg.StrictOwnership);
@@ -292,6 +293,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.AAMaxProduce = pINI->ReadInteger("Doctrine.AirDefense", "MaxProduce", cfg.AAMaxProduce);
 	cfg.AirDefenseStandoff = pINI->ReadInteger("Doctrine.AirDefense", "Standoff", cfg.AirDefenseStandoff);
 	cfg.AirScreenRadius = pINI->ReadInteger("Doctrine.AirDefense", "ScreenRadius", cfg.AirScreenRadius);
+	cfg.AirScreenLeash = pINI->ReadInteger("Doctrine.AirDefense", "ScreenLeash", cfg.AirScreenLeash);
 	cfg.AirDeathFloor = pINI->ReadDouble("Doctrine.AirDefense", "AirDeathFloor", cfg.AirDeathFloor);
 	cfg.NavalEnable = pINI->ReadBool("Doctrine.Naval", "Enable", cfg.NavalEnable);
 	cfg.NavalInterval = pINI->ReadInteger("Doctrine.Naval", "Interval", cfg.NavalInterval);
@@ -346,6 +348,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.GarrisonCreepRate = pINI->ReadInteger("Doctrine.Garrison", "CreepRate", cfg.GarrisonCreepRate);
 	cfg.GarrisonScanNear = pINI->ReadInteger("Doctrine.Garrison", "ScanNear", cfg.GarrisonScanNear);
 	cfg.GarrisonMaxDivert = pINI->ReadInteger("Doctrine.Garrison", "MaxDivert", cfg.GarrisonMaxDivert);
+	cfg.GarrisonRedivertDelay = pINI->ReadInteger("Doctrine.Garrison", "RedivertDelay", cfg.GarrisonRedivertDelay);
 	cfg.GPerimeterW = pINI->ReadDouble("Doctrine.Garrison", "PerimeterWeight", cfg.GPerimeterW);
 	cfg.GCreepW = pINI->ReadDouble("Doctrine.Garrison", "CreepWeight", cfg.GCreepW);
 	cfg.GOreW = pINI->ReadDouble("Doctrine.Garrison", "OreWeight", cfg.GOreW);
@@ -472,6 +475,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 		cfg.CounterEngPicketBuildUrgent);
 	cfg.CounterEngPicketInterval = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.Interval",
 		cfg.CounterEngPicketInterval);
+	cfg.CounterEngPicketLeash = pINI->ReadInteger("Doctrine.CounterEngineer", "Picket.Leash", cfg.CounterEngPicketLeash);
 	pINI->ReadString("Doctrine.CounterEngineer", "Transports", "", buf, sizeof(buf));
 	cfg.CounterEngTransports = SplitList(buf);
 	cfg.CounterEngTransportsNone = IsNoneList(cfg.CounterEngTransports);
@@ -573,6 +577,7 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 		cfg.EngRushSpare = SameWord(spare[0].c_str(), "release") ? 2
 			: SameWord(spare[0].c_str(), "nearest") ? 1 : 0;                  // best / anything else
 	cfg.EngRushEscorts = pINI->ReadInteger("Doctrine.EngineerRush", "Escorts", cfg.EngRushEscorts);
+	cfg.EngRushEscortsLeash = pINI->ReadInteger("Doctrine.EngineerRush", "Escorts.Leash", cfg.EngRushEscortsLeash);
 	cfg.EngRushSafety = pINI->ReadDouble("Doctrine.EngineerRush", "Safety", cfg.EngRushSafety);
 	cfg.EngRushMinCash = pINI->ReadInteger("Doctrine.EngineerRush", "MinCash", cfg.EngRushMinCash);
 	cfg.EngRushRetryDelay = pINI->ReadInteger("Doctrine.EngineerRush", "RetryDelay", cfg.EngRushRetryDelay);
@@ -679,6 +684,9 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 	cfg.MaxProducePerDispatch = pINI->ReadInteger("Doctrine.General", "MaxProducePerDispatch", cfg.MaxProducePerDispatch);
 	Echo("[DoctrineExt] [Doctrine.General]: SenseInterval=%d RulePeriod=%d MaxTeamSize=%d MaxTeamCost=%d DebugTicks=%d DebugOrders=%d TeamTTL=%d TeamsPerHouse=%d StrictOwnership=%d AirAlertRadius=%d InterceptStandoff=%d DefendPerimeter=%d BaseEdgeMargin=%d LaneBucket=%d LaneSampleInterval=%d LaneRadius=%d LaneMinStrength=%d AceMobileOnly=%d AutoProduce=%d MaxProducePerDispatch=%d\n",
 		cfg.SenseInterval, cfg.RulePeriod, cfg.MaxTeamSize, cfg.MaxTeamCost, cfg.DebugTicks, cfg.DebugOrders, cfg.TeamTTL, cfg.TeamsPerHouse, cfg.StrictOwnership, cfg.AirAlertRadius, cfg.InterceptStandoff, cfg.DefendPerimeter, cfg.BaseEdgeMargin, cfg.LaneBucket, cfg.LaneSampleInterval, cfg.LaneRadius, cfg.LaneMinStrength, cfg.AceMobileOnly, cfg.AutoProduce, cfg.MaxProducePerDispatch);
+	Echo("[DoctrineExt] steering: SteerReissue=%d [Doctrine.AirDefense] ScreenLeash=%d [Doctrine.CounterEngineer] "
+		"Picket.Leash=%d [Doctrine.EngineerRush] Escorts.Leash=%d [Doctrine.Garrison] RedivertDelay=%d\n",
+		cfg.SteerReissue, cfg.AirScreenLeash, cfg.CounterEngPicketLeash, cfg.EngRushEscortsLeash, cfg.GarrisonRedivertDelay);
 
 	// ─── [Doctrine.Arsenal] — key = role, value = unit IDs best-first ───
 	int const roleCount = pINI->GetKeyCount("Doctrine.Arsenal");

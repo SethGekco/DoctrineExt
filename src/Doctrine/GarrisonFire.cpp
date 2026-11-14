@@ -56,12 +56,19 @@ namespace
 		return pBld;
 	}
 
-	// An AI's shooter whose difficulty holds fire at this building: that difficulty's tags, else null.
+	// An AI's shooter whose difficulty holds fire at this building: that difficulty's tags, else null. Not an
+	// engineer: its weapons (DefuseKit, the AI's VirtualScanner) aim it at buildings to capture, not to shoot.
 	DoctrineConfig const* HoldsFire(TechnoClass* const pShooter, BuildingClass* const pBld)
 	{
 		auto const pOwner = pShooter->Owner;
 		if (!pOwner || pOwner->IsNeutral() || pOwner->IsControlledByHuman())
 			return nullptr;
+		if (pShooter->WhatAmI() == AbstractType::Infantry)
+		{
+			auto const pType = static_cast<InfantryClass*>(pShooter)->Type;
+			if (pType && pType->Engineer)
+				return nullptr;
+		}
 		auto const& cfg = DoctrineConfig::For(pOwner);   // never parses: before the first parse, all defaults (off)
 		if (!cfg.HoldFireEnable || cfg.HoldFireUnitsNone || cfg.HoldFireBuildingsNone)
 			return nullptr;

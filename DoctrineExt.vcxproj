@@ -41,6 +41,7 @@
     <ClCompile Include="src\Doctrine\OrderAudit.cpp" />
     <ClCompile Include="src\Doctrine\Deploy.cpp" />
     <ClCompile Include="src\Doctrine\GarrisonFire.cpp" />
+    <ClCompile Include="src\Doctrine\Verses.cpp" />
   </ItemGroup>
 
   <!-- Header files -->
@@ -58,6 +59,7 @@
     <ClInclude Include="src\Doctrine\OrderAudit.h" />
     <ClInclude Include="src\Doctrine\Deploy.h" />
     <ClInclude Include="src\Doctrine\GarrisonFire.h" />
+    <ClInclude Include="src\Doctrine\Verses.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">

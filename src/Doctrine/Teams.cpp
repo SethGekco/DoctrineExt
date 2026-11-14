@@ -3,6 +3,7 @@
 #include "Doctrine/LaneTracker.h"
 #include "Doctrine/DeathZones.h"
 #include "Doctrine/ArsenalGrader.h"
+#include "Doctrine/Verses.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -359,8 +360,7 @@ namespace
 			if (!canHit) continue;
 			int const burst = w->Burst > 0 ? w->Burst : 1;
 			double dps = double(w->Damage) * burst / (w->ROF / 10.0);
-			if (targetArmor >= 0 && targetArmor < 11)
-				dps *= w->Warhead->Verses[targetArmor];
+			dps *= Verses::Of(w->Warhead, targetArmor);   // the mod's Verses (Ares keeps them: Verses.h)
 			if (dps > best) best = dps;
 		}
 		return best;

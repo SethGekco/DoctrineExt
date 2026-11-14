@@ -710,8 +710,8 @@ public:
 	                                 // (moving with its team, retreating) it only drops the building as a target
 	bool HoldFireMissionsNone = false; // HoldFire.Missions=none (or null): never sent in, only drops it
 	unsigned HoldFireMissionMask = 0; // HoldFire.Missions as a bit per Mission value (worked out when read)
-	int HoldFireRetry = 900;         // HoldFire.Retry — frames before an occupier is sent at the same building
-	                                 // again (it didn't get in: no path, or beaten to it); meanwhile it drops it
+	int HoldFireRetry = 900;         // HoldFire.Retry — an occupier sent in that came back for the same building
+	                                 // (no path, beaten to it) won't target that building for this many frames
 	int HoldFireInterval = 15;       // HoldFire.Interval — frames between looks at each unit
 	bool HoldFireDebug = false;      // HoldFire.Debug — log each one ("garrison-fire:" in debug.log)
 

@@ -1,5 +1,6 @@
 #include "Doctrine/Deploy.h"
 #include "Doctrine/Config.h"
+#include "Doctrine/Verses.h"
 
 #include <InfantryClass.h>
 #include <InfantryTypeClass.h>
@@ -148,15 +149,17 @@ namespace
 			return 0.0;
 		if (pTarget->IsInAir() ? !pWeapon->Projectile->AA : !pWeapon->Projectile->AG)
 			return 0.0;
-		double verses = 1.0;
-		if (auto const pType = pTarget->GetTechnoType())
-		{
-			int const armor = static_cast<int>(pType->Armor);
-			if (armor >= 0 && armor < 11)   // [ArmorTypes] additions have no vanilla Verses slot
-				verses = pWeapon->Warhead->Verses[armor];
-		}
+		auto const pType = pTarget->GetTechnoType();
+		double const verses = pType ? Verses::Of(pWeapon->Warhead, static_cast<int>(pType->Armor)) : 1.0;
 		int const burst = pWeapon->Burst > 0 ? pWeapon->Burst : 1;
 		return pWeapon->Damage * burst * verses / pWeapon->ROF;
+	}
+
+	// The unit's target, when it's a fight: a neutral one (a civilian building, say) never decides a deploy.
+	TechnoClass* FightTarget(InfantryClass* const pInf)
+	{
+		auto const pTarget = abstract_cast<TechnoClass*>(pInf->Target);
+		return pTarget && pTarget->Owner && !pTarget->Owner->IsNeutral() ? pTarget : nullptr;
 	}
 
 	bool Settled(DoctrineConfig const& cfg, InfantryClass* const pInf, int const now)
@@ -247,7 +250,7 @@ namespace
 		if (seq == Sequence::Undeploy || pInf->IsInAir())
 			return;
 		auto const mission = pInf->GetCurrentMission();
-		auto const pTarget = abstract_cast<TechnoClass*>(pInf->Target);
+		auto const pTarget = FightTarget(pInf);
 		int const depIndex = DeployedIndex(pInf->Type);
 		auto const pDep = WeaponOf(pInf, depIndex), pUp = WeaponOf(pInf, 0);
 		bool const antiAir = HitsAir(pDep) && !HitsAir(pUp);
@@ -309,7 +312,7 @@ namespace
 		auto const pCfg = ConfigFor(pInf);
 		if (!pCfg || !pCfg->DeployApproach || approachOnly)
 			return false;
-		auto const pTarget = abstract_cast<TechnoClass*>(pInf->Target);
+		auto const pTarget = FightTarget(pInf);
 		int const now = Unsorted::CurrentFrame;
 		if (!pTarget || !Settled(*pCfg, pInf, now))
 			return false;
@@ -336,7 +339,7 @@ namespace
 			return HuntIdle::StandUp;
 		auto coords = pInf->GetCoords();
 		pInf->TargetAndEstimateDamage(coords, ThreatType::Range);
-		auto const pTarget = abstract_cast<TechnoClass*>(pInf->Target);
+		auto const pTarget = FightTarget(pInf);
 		int const depIndex = DeployedIndex(pInf->Type);
 		auto const pDep = WeaponOf(pInf, depIndex), pUp = WeaponOf(pInf, 0);
 		if (!pTarget)

@@ -1,4 +1,5 @@
 #include "Doctrine/ArsenalGrader.h"
+#include "Doctrine/Verses.h"
 
 #include <TechnoTypeClass.h>
 #include <InfantryTypeClass.h>
@@ -15,7 +16,7 @@
 
 namespace
 {
-	// Armor class indices into WarheadTypeClass::Verses[11].
+	// Armor class indices (TechnoTypeClass::Armor) for Verses::Of.
 	enum { ARM_NONE = 0, ARM_FLAK = 1, ARM_PLATE = 2, ARM_LIGHT = 3, ARM_MEDIUM = 4,
 	       ARM_HEAVY = 5, ARM_WOOD = 6, ARM_STEEL = 7, ARM_CONCRETE = 8 };
 
@@ -34,8 +35,7 @@ namespace
 			if (!canHit) continue;
 			int const burst = w->Burst > 0 ? w->Burst : 1;
 			double dps = double(w->Damage) * burst / (w->ROF / 10.0);
-			if (armor >= 0 && armor < 11)
-				dps *= w->Warhead->Verses[armor];
+			dps *= Verses::Of(w->Warhead, armor);
 			if (dps > best) best = dps;
 		}
 		return best;

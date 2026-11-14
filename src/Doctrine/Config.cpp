@@ -9,6 +9,7 @@
 #include "Doctrine/OrderAudit.h"
 #include "Doctrine/Deploy.h"
 #include "Doctrine/GarrisonFire.h"
+#include "Doctrine/Verses.h"
 
 #include <CCINIClass.h>
 #include <GeneralDefinitions.h>
@@ -950,6 +951,7 @@ DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 	OrderAudit::Reset();
 	Deploy::Reset();
 	GarrisonFire::Reset();
+	Verses::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

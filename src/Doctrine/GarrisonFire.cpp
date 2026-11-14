@@ -13,6 +13,7 @@
 #include <Utilities/Macro.h>
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -22,6 +23,12 @@ namespace
 	// UniqueID -> the building it was last sent into and when ([Doctrine.Garrison] HoldFire.Retry).
 	struct Sent { DWORD Building; int Frame; };
 	std::map<DWORD, Sent> g_sent;
+	// An occupier that was sent in and came back for the same building within HoldFire.Retry: for Retry frames
+	// GetFireError says ILLEGAL for that building, so the engine's target scans stop picking it (and Hunt stops
+	// sending it back to the door). Fixed slots by UniqueID (a collision forgets the older one): the hook reads
+	// it on PerfExt's workers, the pass writes it on the game thread, and a slot never moves.
+	struct Failed { DWORD Unit, Building; int Frame; };
+	Failed g_failed[1024];
 	int g_lastSweep = -1;
 
 	// Since the last summary line (HoldFire.Debug).
@@ -79,6 +86,13 @@ namespace
 		return pType && pType->Occupier && pBld->Occupants.Count < pBld->Type->MaxNumberOccupants;
 	}
 
+	bool FailedLately(DoctrineConfig const& cfg, TechnoClass* const pUnit, BuildingClass* const pBld)
+	{
+		auto const& f = g_failed[pUnit->UniqueID % std::size(g_failed)];
+		return f.Unit == pUnit->UniqueID && f.Building == pBld->UniqueID
+			&& Unsorted::CurrentFrame - f.Frame < cfg.HoldFireRetry;
+	}
+
 	const char* TypeId(TechnoClass* const pTechno)
 	{
 		auto const pType = pTechno ? pTechno->GetTechnoType() : nullptr;
@@ -119,7 +133,8 @@ namespace
 					return;
 				}
 				++g_counts.Retried;
-				Log(cfg, pUnit, "didn't get in lately, drops", pBld);
+				g_failed[pInf->UniqueID % std::size(g_failed)] = { pInf->UniqueID, pBld->UniqueID, now };
+				Log(cfg, pUnit, "didn't get in, won't target it for HoldFire.Retry frames:", pBld);
 				pUnit->SetTarget(nullptr);
 				return;
 			}
@@ -169,6 +184,7 @@ void GarrisonFire::Sweep()
 void GarrisonFire::Reset()
 {
 	g_sent.clear();
+	std::fill(std::begin(g_failed), std::end(g_failed), Failed{});
 	g_lastSweep = -1;
 	g_counts = Counts{};
 }
@@ -176,7 +192,9 @@ void GarrisonFire::Reset()
 // TechnoClass::GetFireError, past the "no target" and "already firing at it" checks: ESI = this,
 // EBX = the target. An AI shooter, an empty neutral garrisonable building: an occupier that might go in
 // waits (REARM, as 0x6FC0DF: it keeps the target for the pass to send it in), anything else may not fire
-// (ILLEGAL, as 0x6FC86A: the engine drops the target). Both exits pop the same frame.
+// (ILLEGAL, as 0x6FC86A: the engine drops the target, and its scans skip it). Both exits pop the same frame.
+// PerfExt lane 3 runs this on worker threads (CanAutoTargetObject -> GetFireErrorWithoutRange ->
+// 0x6FC0B0): reads only, no logging, no writes, no RNG.
 DEFINE_HOOK(0x6FC105, DoctrineExt_TechnoClass_GetFireError_GarrisonHoldFire, 0xA)
 {
 	enum { Rearm = 0x6FC0DF, Illegal = 0x6FC86A };
@@ -188,5 +206,5 @@ DEFINE_HOOK(0x6FC105, DoctrineExt_TechnoClass_GetFireError_GarrisonHoldFire, 0xA
 	auto const pCfg = HoldsFire(pThis, pBld);
 	if (!pCfg)
 		return 0;
-	return MightEnter(*pCfg, pThis, pBld) ? Rearm : Illegal;
+	return MightEnter(*pCfg, pThis, pBld) && !FailedLately(*pCfg, pThis, pBld) ? Rearm : Illegal;
 }

@@ -6,6 +6,8 @@
 #include "Doctrine/DeathZones.h"
 #include "Doctrine/AITriggerDifficulty.h"
 #include "Doctrine/OrderAudit.h"
+#include "Doctrine/Deploy.h"
+#include "Doctrine/GarrisonFire.h"
 
 #include <HouseClass.h>
 #include <TechnoClass.h>
@@ -57,6 +59,10 @@ void Engine::TickHouse(HouseClass* pHouse)
 	// AITrigger gate: hold triggers off for AITriggerDelay frames so DoctrineExt
 	// gets a head start (no-op when the delay is 0).
 	AITriggerDifficulty::GateTick(Unsorted::CurrentFrame);
+	// Per-unit passes over every AI's units (once per frame however many houses tick; each reads the unit's
+	// owner's difficulty).
+	Deploy::Sweep();
+	GarrisonFire::Sweep();
 
 	if (!pHouse)
 		return;

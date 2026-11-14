@@ -7,8 +7,11 @@
 #include "Doctrine/ArsenalGrader.h"
 #include "Doctrine/AITriggerDifficulty.h"
 #include "Doctrine/OrderAudit.h"
+#include "Doctrine/Deploy.h"
+#include "Doctrine/GarrisonFire.h"
 
 #include <CCINIClass.h>
+#include <GeneralDefinitions.h>
 #include <HouseClass.h>
 #include <Utilities/Debug.h>
 #include <Utilities/Macro.h>
@@ -17,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 DoctrineConfig DoctrineConfig::Instance;
 DoctrineConfig DoctrineConfig::ByDifficulty[3];
@@ -150,6 +154,48 @@ namespace
 		for (auto const& s : list)
 			if (same(s, "none") || same(s, "null")) return true;
 		return false;
+	}
+
+	// A list of mission names as a bit per Mission value; empty = the given auto set. Names are the
+	// Mission enum's, any case ("AreaGuard" or "Area_Guard"); an unknown one is echoed and skipped.
+	unsigned MissionMask(std::vector<std::string> const& names, bool const none,
+		std::initializer_list<Mission> const automatic, const char* const pTag)
+	{
+		struct Name { const char* Text; Mission Value; };
+		static Name const kNames[] = {
+			{ "Sleep", Mission::Sleep }, { "Attack", Mission::Attack }, { "Move", Mission::Move },
+			{ "QMove", Mission::QMove }, { "Retreat", Mission::Retreat }, { "Guard", Mission::Guard },
+			{ "Sticky", Mission::Sticky }, { "Enter", Mission::Enter }, { "Capture", Mission::Capture },
+			{ "Harvest", Mission::Harvest }, { "AreaGuard", Mission::Area_Guard },
+			{ "Area_Guard", Mission::Area_Guard }, { "Return", Mission::Return }, { "Stop", Mission::Stop },
+			{ "Ambush", Mission::Ambush }, { "Hunt", Mission::Hunt }, { "Unload", Mission::Unload },
+			{ "Sabotage", Mission::Sabotage }, { "Repair", Mission::Repair }, { "Rescue", Mission::Rescue },
+			{ "Harmless", Mission::Harmless }, { "Patrol", Mission::Patrol }, { "Wait", Mission::Wait },
+			{ "AttackMove", Mission::AttackMove },
+		};
+		auto const bit = [](Mission const m)
+		{
+			auto const v = static_cast<int>(m);
+			return v >= 0 && v < 32 ? 1u << v : 0u;
+		};
+		unsigned mask = 0;
+		if (none)
+			return mask;
+		if (names.empty())
+		{
+			for (auto const m : automatic)
+				mask |= bit(m);
+			return mask;
+		}
+		for (auto const& s : names)
+		{
+			bool found = false;
+			for (auto const& n : kNames)
+				if (_strcmpi(s.c_str(), n.Text) == 0) { mask |= bit(n.Value); found = true; }
+			if (!found)
+				Echo("[DoctrineExt] WARNING: %s lists %s, which isn't a mission: skipped.\n", pTag, s.c_str());
+		}
+		return mask;
 	}
 
 	// Split When= into observation / op / threshold. Two-char ops first so
@@ -691,6 +737,70 @@ static void Parse(DoctrineConfig& cfg, TagReader* const pINI)
 			static_cast<unsigned>(cfg.WallsTypes.size()), cfg.WallsTypesNone ? " NONE" : "", cfg.WallsRing,
 			cfg.WallsUrgent, cfg.WallsNeedIncome, cfg.WallsOnSighting, cfg.WallsMinCash, cfg.WallsInterval,
 			cfg.WallsRetry);
+	// ─── [Doctrine.Deploy] — AI infantry deploy to fight ─────────────────────
+	cfg.DeployEnable = pINI->ReadBool("Doctrine.Deploy", "Enable", cfg.DeployEnable);
+	pINI->ReadString("Doctrine.Deploy", "Types", "", buf, sizeof(buf));
+	cfg.DeployTypes = SplitList(buf);
+	cfg.DeployTypesNone = IsNoneList(cfg.DeployTypes);
+	if (cfg.DeployTypesNone) cfg.DeployTypes.clear();
+	pINI->ReadString("Doctrine.Deploy", "Exclude", "", buf, sizeof(buf));
+	cfg.DeployExclude = SplitList(buf);
+	if (IsNoneList(cfg.DeployExclude)) cfg.DeployExclude.clear();
+	pINI->ReadString("Doctrine.Deploy", "Missions", "", buf, sizeof(buf));
+	cfg.DeployMissions = SplitList(buf);
+	cfg.DeployMissionsNone = IsNoneList(cfg.DeployMissions);
+	if (cfg.DeployMissionsNone) cfg.DeployMissions.clear();
+	cfg.DeployMissionMask = MissionMask(cfg.DeployMissions, cfg.DeployMissionsNone, { Mission::Attack, Mission::Hunt,
+		Mission::Guard, Mission::Area_Guard, Mission::Ambush, Mission::Sticky }, "[Doctrine.Deploy] Missions=");
+	cfg.DeployRatio = pINI->ReadDouble("Doctrine.Deploy", "Ratio", cfg.DeployRatio);
+	cfg.DeployApproach = pINI->ReadBool("Doctrine.Deploy", "Approach", cfg.DeployApproach);
+	cfg.DeployInRange = pINI->ReadBool("Doctrine.Deploy", "InRange", cfg.DeployInRange);
+	cfg.DeployAntiAir = pINI->ReadBool("Doctrine.Deploy", "AntiAir", cfg.DeployAntiAir);
+	cfg.DeployAntiAirReach = pINI->ReadInteger("Doctrine.Deploy", "AntiAir.Reach", cfg.DeployAntiAirReach);
+	cfg.DeployHold = pINI->ReadBool("Doctrine.Deploy", "Hold", cfg.DeployHold);
+	cfg.DeployUndeploy = pINI->ReadBool("Doctrine.Deploy", "Undeploy", cfg.DeployUndeploy);
+	cfg.DeployUndeployRatio = pINI->ReadDouble("Doctrine.Deploy", "Undeploy.Ratio", cfg.DeployUndeployRatio);
+	cfg.DeploySettle = pINI->ReadInteger("Doctrine.Deploy", "Settle", cfg.DeploySettle);
+	cfg.DeployInterval = pINI->ReadInteger("Doctrine.Deploy", "Interval", cfg.DeployInterval);
+	cfg.DeployDebug = pINI->ReadBool("Doctrine.Deploy", "Debug", cfg.DeployDebug);
+	if (cfg.DeployEnable)
+		Echo("[DoctrineExt] [Doctrine.Deploy]: Enable=1 Types=%u (empty=auto)%s Exclude=%u Missions=%u (empty=auto)%s "
+			"Ratio=%.2f Approach=%d InRange=%d AntiAir=%d AntiAir.Reach=%d Hold=%d Undeploy=%d Undeploy.Ratio=%.2f "
+			"Settle=%d Interval=%d Debug=%d\n",
+			static_cast<unsigned>(cfg.DeployTypes.size()), cfg.DeployTypesNone ? " NONE" : "",
+			static_cast<unsigned>(cfg.DeployExclude.size()), static_cast<unsigned>(cfg.DeployMissions.size()),
+			cfg.DeployMissionsNone ? " NONE" : "", cfg.DeployRatio, cfg.DeployApproach, cfg.DeployInRange,
+			cfg.DeployAntiAir, cfg.DeployAntiAirReach, cfg.DeployHold, cfg.DeployUndeploy, cfg.DeployUndeployRatio,
+			cfg.DeploySettle, cfg.DeployInterval, cfg.DeployDebug);
+	// ─── [Doctrine.Garrison] HoldFire — AI units don't shoot neutral buildings they could garrison ──
+	cfg.HoldFireEnable = pINI->ReadBool("Doctrine.Garrison", "HoldFire", cfg.HoldFireEnable);
+	pINI->ReadString("Doctrine.Garrison", "HoldFire.Units", "", buf, sizeof(buf));
+	cfg.HoldFireUnits = SplitList(buf);
+	cfg.HoldFireUnitsNone = IsNoneList(cfg.HoldFireUnits);
+	if (cfg.HoldFireUnitsNone) cfg.HoldFireUnits.clear();
+	pINI->ReadString("Doctrine.Garrison", "HoldFire.Buildings", "", buf, sizeof(buf));
+	cfg.HoldFireBuildings = SplitList(buf);
+	cfg.HoldFireBuildingsNone = IsNoneList(cfg.HoldFireBuildings);
+	if (cfg.HoldFireBuildingsNone) cfg.HoldFireBuildings.clear();
+	cfg.HoldFireEnter = pINI->ReadBool("Doctrine.Garrison", "HoldFire.Enter", cfg.HoldFireEnter);
+	pINI->ReadString("Doctrine.Garrison", "HoldFire.Missions", "", buf, sizeof(buf));
+	cfg.HoldFireMissions = SplitList(buf);
+	cfg.HoldFireMissionsNone = IsNoneList(cfg.HoldFireMissions);
+	if (cfg.HoldFireMissionsNone) cfg.HoldFireMissions.clear();
+	cfg.HoldFireMissionMask = MissionMask(cfg.HoldFireMissions, cfg.HoldFireMissionsNone, { Mission::Guard,
+		Mission::Area_Guard, Mission::Attack, Mission::Hunt, Mission::Ambush, Mission::Sticky },
+		"[Doctrine.Garrison] HoldFire.Missions=");
+	cfg.HoldFireRetry = pINI->ReadInteger("Doctrine.Garrison", "HoldFire.Retry", cfg.HoldFireRetry);
+	cfg.HoldFireInterval = pINI->ReadInteger("Doctrine.Garrison", "HoldFire.Interval", cfg.HoldFireInterval);
+	cfg.HoldFireDebug = pINI->ReadBool("Doctrine.Garrison", "HoldFire.Debug", cfg.HoldFireDebug);
+	if (cfg.HoldFireEnable)
+		Echo("[DoctrineExt] [Doctrine.Garrison]: HoldFire=1 HoldFire.Units=%u (empty=auto)%s HoldFire.Buildings=%u "
+			"(empty=auto)%s HoldFire.Enter=%d HoldFire.Missions=%u (empty=auto)%s HoldFire.Retry=%d "
+			"HoldFire.Interval=%d HoldFire.Debug=%d\n",
+			static_cast<unsigned>(cfg.HoldFireUnits.size()), cfg.HoldFireUnitsNone ? " NONE" : "",
+			static_cast<unsigned>(cfg.HoldFireBuildings.size()), cfg.HoldFireBuildingsNone ? " NONE" : "",
+			cfg.HoldFireEnter, static_cast<unsigned>(cfg.HoldFireMissions.size()),
+			cfg.HoldFireMissionsNone ? " NONE" : "", cfg.HoldFireRetry, cfg.HoldFireInterval, cfg.HoldFireDebug);
 	if (cfg.EconomyEnable)
 		Echo("[DoctrineExt] [Doctrine.Economy]: Enable=1 Interval=%d Radius=%d IncomeBuildings=%u "
 			"DerrickTargets=%u CaptureForIncome=%d BarracksFirst=%d/%d IncomeRequiresMiner=%d "
@@ -838,6 +948,8 @@ DEFINE_HOOK(0x685659, DoctrineExt_Scenario_ClearClasses, 0xA)
 	ArsenalGrader::Reset();
 	AITriggerDifficulty::Reset();
 	OrderAudit::Reset();
+	Deploy::Reset();
+	GarrisonFire::Reset();
 	DoctrineConfig::EnsureParsed();
 	return 0;
 }

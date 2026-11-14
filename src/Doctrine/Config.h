@@ -660,6 +660,61 @@ public:
 	int WallsInterval = 150;         // Interval — frames between passes
 	int WallsRetry = 900;            // Retry — frames before a cell whose wall node the engine dropped unbuilt
 	                                 // is queued again (0 = next pass)
+
+	// ─── Deploy ([Doctrine.Deploy]) ───────────────────────────────────────────
+	// AI infantry that fight better deployed (GI, Guardian GI) deploy to fight, against the targets their
+	// deployed weapon does more to. The engine's own AI deploy call in InfantryClass::ApproachTarget is
+	// skipped by an early return (Phobos InfantryAutoDeploy restores it for every target alike), so in a
+	// fight AI GIs only deployed while standing in Guard.
+	bool DeployEnable = false;       // Enable — opt-in
+	std::vector<std::string> DeployTypes; // Types — empty = auto (infantry with Deployer=yes, DeployFire=yes, no
+	                                 // UndeployDelay and a deployed weapon other than the first), a list = exactly
+	                                 // these
+	bool DeployTypesNone = false;    // Types=none (or null): no infantry
+	std::vector<std::string> DeployExclude; // Exclude — never these
+	std::vector<std::string> DeployMissions; // Missions — the missions a unit may deploy in; empty = auto (Attack,
+	                                 // Hunt, Guard, AreaGuard, Ambush, Sticky)
+	bool DeployMissionsNone = false; // Missions=none (or null): the pass deploys nothing (the hooks still may)
+	unsigned DeployMissionMask = 0;  // Missions as a bit per Mission value (worked out when read)
+	double DeployRatio = 1.0;        // Ratio — deploy when the deployed weapon's damage per second against the
+	                                 // target (its Verses for the target's armor) >= the undeployed one's x this
+	bool DeployApproach = true;      // Approach — closing on its target: deploy once the target is in the deployed
+	                                 // weapon's range
+	bool DeployInRange = true;       // InRange — the target is already in range (it came to us): deploy too
+	bool DeployAntiAir = true;       // AntiAir — deploy for enemy aircraft that only the deployed weapon can hit
+	int DeployAntiAirReach = 2;      // AntiAir.Reach — cells beyond the deployed weapon's range to start deploying
+	bool DeployHold = true;          // Hold — a hunting deployed unit whose target is gone takes the next enemy in
+	                                 // range instead of standing up
+	bool DeployUndeploy = true;      // Undeploy — stand up to fight a target the undeployed weapon does more to
+	double DeployUndeployRatio = 2.0; // Undeploy.Ratio — undeployed damage per second >= deployed x this
+	int DeploySettle = 90;           // Settle — frames after DoctrineExt deploys or stands a unit up before it
+	                                 // changes it back
+	int DeployInterval = 15;         // Interval — frames between looks at each unit
+	bool DeployDebug = false;        // Debug — log each decision ("deploy:" in debug.log)
+
+	// ─── Garrison fire ([Doctrine.Garrison] HoldFire) ─────────────────────────
+	// AI units never shoot a neutral building they could garrison: an AI Occupier with one as its target goes
+	// in (the engine's own garrison order), anything else drops it. The engine lets AI Occupiers take an
+	// empty neutral building as a target so they will enter it, and only Attack and Hunt turn that into
+	// entering; the rest (a building filled up first, a guarding unit, a vehicle given its team's target)
+	// shot it.
+	bool HoldFireEnable = false;     // HoldFire — opt-in
+	std::vector<std::string> HoldFireUnits; // HoldFire.Units — the AI units that hold fire; empty = auto (all)
+	bool HoldFireUnitsNone = false;  // HoldFire.Units=none (or null): none
+	std::vector<std::string> HoldFireBuildings; // HoldFire.Buildings — empty = auto (every CanBeOccupied=yes
+	                                 // building)
+	bool HoldFireBuildingsNone = false; // HoldFire.Buildings=none (or null): none
+	bool HoldFireEnter = true;       // HoldFire.Enter — an AI Occupier that may enter it goes in
+	std::vector<std::string> HoldFireMissions; // HoldFire.Missions — the missions an occupier is sent in from;
+	                                 // empty = auto (Guard, AreaGuard, Attack, Hunt, Ambush, Sticky); in any other
+	                                 // (moving with its team, retreating) it only drops the building as a target
+	bool HoldFireMissionsNone = false; // HoldFire.Missions=none (or null): never sent in, only drops it
+	unsigned HoldFireMissionMask = 0; // HoldFire.Missions as a bit per Mission value (worked out when read)
+	int HoldFireRetry = 900;         // HoldFire.Retry — frames before an occupier is sent at the same building
+	                                 // again (it didn't get in: no path, or beaten to it); meanwhile it drops it
+	int HoldFireInterval = 15;       // HoldFire.Interval — frames between looks at each unit
+	bool HoldFireDebug = false;      // HoldFire.Debug — log each one ("garrison-fire:" in debug.log)
+
 	int EngRushHonorPrereq = -1;     // HonorPrereq — -1 inherit, 0 ignore, 1 obey
 	bool HonorPrereqForEngRush() const
 		{ return EngRushHonorPrereq < 0 ? HonorPrerequisites : (EngRushHonorPrereq != 0); }

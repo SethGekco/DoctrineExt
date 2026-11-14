@@ -39,6 +39,8 @@
     <ClCompile Include="src\Doctrine\ArsenalGrader.cpp" />
     <ClCompile Include="src\Doctrine\AITriggerDifficulty.cpp" />
     <ClCompile Include="src\Doctrine\OrderAudit.cpp" />
+    <ClCompile Include="src\Doctrine\Deploy.cpp" />
+    <ClCompile Include="src\Doctrine\GarrisonFire.cpp" />
   </ItemGroup>
 
   <!-- Header files -->
@@ -54,6 +56,8 @@
     <ClInclude Include="src\Doctrine\ArsenalGrader.h" />
     <ClInclude Include="src\Doctrine\AITriggerDifficulty.h" />
     <ClInclude Include="src\Doctrine\OrderAudit.h" />
+    <ClInclude Include="src\Doctrine\Deploy.h" />
+    <ClInclude Include="src\Doctrine\GarrisonFire.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">
